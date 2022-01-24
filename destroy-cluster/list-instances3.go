@@ -194,6 +194,7 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	if serviceGuid == "" {
 		return nil, "", fmt.Errorf("%s not found in list of service instances!\n", *ptrServiceName)
 	}
+	log.Printf("serviceGuid = %v\n", serviceGuid)
 
 	serviceInstance, err := resourceClientV2.GetInstance(serviceGuid)
 	if err != nil {

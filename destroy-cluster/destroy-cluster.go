@@ -481,13 +481,13 @@ func cleanupISVPCs (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1) {
 
 // ibmcloud resource service-instances --output JSON --service-name cloud-object-storage | jq -r '.[] | select(.name|test("rdr-hamzy.*")) | .name'
 
-func cleanupServiceInstances (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, context context.Context) {
+func cleanupServiceInstances (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, ctx context.Context) {
 
 	options := controllerSvc.NewListResourceInstancesOptions()
 	options.SetResourceID(cosResourceID)
 	options.SetType("service_instance")
 
-	resources, _, err := controllerSvc.ListResourceInstancesWithContext(context, options)
+	resources, _, err := controllerSvc.ListResourceInstancesWithContext(ctx, options)
 	if err != nil {
 		log.Fatalf("Failed to list COS instances: %v", err)
 	}
@@ -522,7 +522,7 @@ func cleanupServiceInstances (rSearch *regexp.Regexp, controllerSvc *resourcecon
 
 // $ ibmcloud is security-groups --json | jq -r '.[] | select (.name|test("rdr-hamzy.*")) | [ .name, .id ]'
 
-func cleanupSecurityGroups (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1, context context.Context) {
+func cleanupSecurityGroups (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1, ctx context.Context) {
 
 	var start string = ""
 
@@ -567,7 +567,7 @@ func cleanupSecurityGroups (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1, con
 
 				deleteSecurityGroupOptions := vpcService.NewDeleteSecurityGroupOptions(*securityGroup.ID)
 
-				response, err := vpcService.DeleteSecurityGroupWithContext(context, deleteSecurityGroupOptions)
+				response, err := vpcService.DeleteSecurityGroupWithContext(ctx, deleteSecurityGroupOptions)
 				if err != nil {
 					log.Fatalf("Failed to delete ID: %s, %v", *securityGroup.ID, err)
 				}
@@ -652,7 +652,7 @@ func cleanupImages (rSearch *regexp.Regexp, piImageClient *instance.IBMPIImageCl
 // $ export DNS_DOMAIN_ID=$(ibmcloud cis domains --output json | jq -r '.[].id')
 // $ ibmcloud cis dns-records ${DNS_DOMAIN_ID} --output json | jq -r '.[] | select (.name|test("rdr-hamzy.*")) | .name'
 
-func cleanupDNS (rSearch *regexp.Regexp, dnsRecordsService *dnsrecordsv1.DnsRecordsV1, context context.Context) {
+func cleanupDNS (rSearch *regexp.Regexp, dnsRecordsService *dnsrecordsv1.DnsRecordsV1, ctx context.Context) {
 
 	var perPage int64 = 20
 	var page int64 = 1
@@ -665,7 +665,7 @@ func cleanupDNS (rSearch *regexp.Regexp, dnsRecordsService *dnsrecordsv1.DnsReco
 
 	for moreData {
 
-		dnsResources, detailedResponse, err := dnsRecordsService.ListAllDnsRecordsWithContext(context, dnsRecordsOptions)
+		dnsResources, detailedResponse, err := dnsRecordsService.ListAllDnsRecordsWithContext(ctx, dnsRecordsOptions)
 
 		if err != nil {
 			log.Fatalf("Failed to list DNS records: %v and the response is: %s", err, detailedResponse)
@@ -693,7 +693,7 @@ func cleanupDNS (rSearch *regexp.Regexp, dnsRecordsService *dnsrecordsv1.DnsReco
 				}
 
 				deleteDNSOptions := dnsRecordsService.NewDeleteDnsRecordOptions(*record.ID)
-				_, details, err := dnsRecordsService.DeleteDnsRecordWithContext(context, deleteDNSOptions)
+				_, details, err := dnsRecordsService.DeleteDnsRecordWithContext(ctx, deleteDNSOptions)
 
 				if err != nil {
 					log.Printf("Failed to delete the DNS entry, err: %v\n", err)
@@ -738,7 +738,7 @@ func cleanupDNS (rSearch *regexp.Regexp, dnsRecordsService *dnsrecordsv1.DnsReco
 
 func cleanupSSHKeys (rSearch *regexp.Regexp, piSession *ibmpisession.IBMPISession, serviceGuid string) {
 
-	var tenantId = piSession.UserAccount
+	var tenantId string = piSession.UserAccount
 	var err error
 
 	params := p_cloud_tenants_ssh_keys.NewPcloudTenantsSshkeysGetallParamsWithTimeout(helpers.PIGetTimeOut).WithTenantID(tenantId)
@@ -789,6 +789,68 @@ func cleanupISResourceGroups (rSearch *regexp.Regexp, mgmtService *resourcemanag
 		}
 	}
 
+}
+
+func cleanupReclamations (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, ctx context.Context) {
+	var getReclamationOptions *resourcecontrollerv2.ListReclamationsOptions
+	var reclamations *resourcecontrollerv2.ReclamationsList
+	var reclamation resourcecontrollerv2.Reclamation
+	var response *core.DetailedResponse
+	var err error
+	var getInstanceOptions *resourcecontrollerv2.GetResourceInstanceOptions
+	var cosInstance *resourcecontrollerv2.ResourceInstance
+
+	getReclamationOptions = controllerSvc.NewListReclamationsOptions()
+
+	reclamations, response, err = controllerSvc.ListReclamationsWithContext(ctx, getReclamationOptions)
+	if err != nil {
+		log.Fatal("Error: ListReclamationsWithContext: %v, response = %v\n", err, response)
+	}
+
+	// ibmcloud resource reclamations --output json
+	for _, reclamation = range reclamations.Resources {
+		getInstanceOptions = controllerSvc.NewGetResourceInstanceOptions(*reclamation.ResourceInstanceID)
+
+		cosInstance, response, err = controllerSvc.GetResourceInstanceWithContext(ctx, getInstanceOptions)
+		if err != nil {
+			log.Fatal("Error: GetResourceInstanceWithContext: %v, response = %v\n", err, response)
+		}
+
+		if rSearch.MatchString(*cosInstance.Name) {
+			log.Printf("Found: reclamation for: %v / %v\n", *reclamation.ID, *cosInstance.Name)
+
+			if shouldDebug {
+				log.Printf("reclamation: %v / %v\n", *reclamation.ID, *reclamation.ResourceInstanceID)
+				log.Printf("cosInstance: %v / %v", *cosInstance.Name, *cosInstance.GUID)
+			}
+
+			if !shouldDelete {
+				continue
+			}
+
+			var reclamationActionOptions *resourcecontrollerv2.RunReclamationActionOptions
+
+			reclamationActionOptions = controllerSvc.NewRunReclamationActionOptions(*reclamation.ID, "reclaim")
+
+			_, response, err = controllerSvc.RunReclamationActionWithContext(ctx, reclamationActionOptions)
+			if err != nil {
+				log.Fatal("Error: RunReclamationActionWithContext: %v, response = %v\n", err, response)
+			}
+		}
+	}
+}
+
+func test1 (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, ctx context.Context) {
+	deleteResourceInstanceOptions := controllerSvc.NewDeleteResourceInstanceOptions(
+		"rdr-hamzy-test-7nzrm-cos",
+	)
+	deleteResourceInstanceOptions.SetRecursive(true)
+	response, err := controllerSvc.DeleteResourceInstance(deleteResourceInstanceOptions)
+	log.Printf("%v", response)
+	log.Printf("%v", err)
+}
+
+func test2 (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, ctx context.Context) {
 }
 
 func main() {
@@ -851,7 +913,7 @@ func main() {
 
 	rSearch, _ := regexp.Compile(*ptrSearch)
 
-	var context context.Context
+	var ctx context.Context
 	var vpcService *vpcv1.VpcV1
 	var controllerSvc *resourcecontrollerv2.ResourceControllerV2
 	var err error
@@ -905,7 +967,7 @@ func main() {
 
 	// Get the Zone ID
 	zoneOptions := zonesSvc.NewListZonesOptions()
-	zoneResources, detailedResponse, err := zonesSvc.ListZonesWithContext(context, zoneOptions)
+	zoneResources, detailedResponse, err := zonesSvc.ListZonesWithContext(ctx, zoneOptions)
 	if err != nil {
 		log.Fatalf("Failed to list Zones: %v and the response is: %s", err, detailedResponse)
 	}
@@ -951,16 +1013,56 @@ func main() {
 	piImageClient = instance.NewIBMPIImageClient(piSession, serviceGuid)
 	if shouldDebug { log.Printf("piImageClient = %v\n", piImageClient) }
 
-	cleanupServiceInstances(rSearch, controllerSvc, context)
+	cleanupServiceInstances(rSearch, controllerSvc, ctx)
 	cleanupLoadBalancers(rSearch, vpcService)
-	cleanupSecurityGroups(rSearch, vpcService, context)
+	cleanupSecurityGroups(rSearch, vpcService, ctx)
 	cleanupInstances(rSearch, piInstanceClient, serviceGuid)
 	cleanupISPublicGateways (rSearch, vpcService)
 	cleanupISFloatingIPs(rSearch, vpcService)
 	cleanupISVPCs(rSearch, vpcService)
 	cleanupISSubnets(rSearch, vpcService)
 	cleanupImages(rSearch, piImageClient, serviceGuid)
-	cleanupDNS(rSearch, dnsRecordsService, context)
+	cleanupDNS(rSearch, dnsRecordsService, ctx)
 	cleanupSSHKeys(rSearch, piSession, serviceGuid)
 	cleanupISResourceGroups(rSearch, mgmtService)			// @TBD
+	cleanupReclamations(rSearch, controllerSvc, ctx)
+
+	return
+
+	// In case the cleanupXXX functions get moved, this gets rid of compile errors
+	log.Printf("%v", rSearch)
+	log.Printf("%v", vpcService)
+	log.Printf("%v", controllerSvc)
+	log.Printf("%v", dnsRecordsService)
+	log.Printf("%v", mgmtService)
+}
+
+// You can move all cleanupXXX functions here if you don't want to execute them for a new test
+func main2() {
+	var piInstanceClient *instance.IBMPIInstanceClient
+	var piImageClient *instance.IBMPIImageClient
+	var piSession *ibmpisession.IBMPISession
+	var controllerSvc *resourcecontrollerv2.ResourceControllerV2
+	var mgmtService *resourcemanagerv2.ResourceManagerV2
+	var dnsRecordsService *dnsrecordsv1.DnsRecordsV1
+	var vpcService *vpcv1.VpcV1
+	var serviceGuid string
+	var ctx context.Context
+	var rSearch *regexp.Regexp
+
+	return
+
+	// In case the cleanupXXX functions get moved, this gets rid of compile errors
+	rSearch, _ = regexp.Compile("")
+
+	log.Printf("%v", piInstanceClient)
+	log.Printf("%v", piImageClient)
+	log.Printf("%v", piSession)
+	log.Printf("%v", controllerSvc)
+	log.Printf("%v", mgmtService)
+	log.Printf("%v", dnsRecordsService)
+	log.Printf("%v", vpcService)
+	log.Printf("%v", serviceGuid)
+	log.Printf("%v", ctx)
+	log.Printf("%v", rSearch)
 }
