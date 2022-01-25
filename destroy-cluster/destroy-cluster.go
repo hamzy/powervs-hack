@@ -56,7 +56,6 @@ import (
 	"regexp"
 	"reflect"
 	"strings"
-	"time"
 )
 
 var shouldDebug = false
@@ -244,7 +243,6 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	piSession, err = ibmpisession.New(bxSession.Config.IAMAccessToken,
 		region,
 		false,
-		60*time.Minute,
 		user.Account,
 		serviceInstance.RegionID)
 	if err != nil {
@@ -593,7 +591,7 @@ func cleanupInstances (rSearch *regexp.Regexp, piInstanceClient *instance.IBMPII
 
 	var err error
 
-	instances, err := piInstanceClient.GetAll(serviceGuid, 5*time.Minute)
+	instances, err := piInstanceClient.GetAll()
 	if err != nil {
 		log.Fatal("Error piInstanceClient.GetAll: %v\n", err)
 	}
@@ -607,7 +605,7 @@ func cleanupInstances (rSearch *regexp.Regexp, piInstanceClient *instance.IBMPII
 				continue
 			}
 
-			err = piInstanceClient.Delete(*instance.PvmInstanceID, serviceGuid, 5*time.Minute)
+			err = piInstanceClient.Delete(*instance.PvmInstanceID)
 			if err != nil {
 				log.Fatal("Error piInstanceClient.Delete: %v\n", err)
 			}
@@ -624,7 +622,7 @@ func cleanupImages (rSearch *regexp.Regexp, piImageClient *instance.IBMPIImageCl
 
 	var err error
 
-	images, err := piImageClient.GetAll(serviceGuid)
+	images, err := piImageClient.GetAll()
 	if err != nil {
 		log.Fatal("Error piImageClient.GetAll: %v\n", err)
 	}
@@ -638,7 +636,7 @@ func cleanupImages (rSearch *regexp.Regexp, piImageClient *instance.IBMPIImageCl
 				continue
 			}
 
-			err = piImageClient.Delete(*image.ImageID, serviceGuid)
+			err = piImageClient.Delete(*image.ImageID)
 			if err != nil {
 				log.Fatal("Error piImageClient.Delete: %v\n", err)
 			}
@@ -840,6 +838,33 @@ func cleanupReclamations (rSearch *regexp.Regexp, controllerSvc *resourcecontrol
 	}
 }
 
+func cleanupJobs (rSearch *regexp.Regexp, piJobClient *instance.IBMPIJobClient, serviceGuid string) {
+	var jobs *models.Jobs
+	var job *models.Job
+	var err error
+
+	jobs, err = piJobClient.GetAll()
+	if err != nil {
+		log.Fatal("Error piJobClient.GetAll: %v\n", err)
+	}
+
+	for _, job = range jobs.Jobs {
+		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/job.go
+		if rSearch.MatchString(*job.Operation.ID) {
+			log.Printf("Found: job: %s (%s) (%s)\n", *job.Operation.ID, *job.ID, *job.Status.State)
+
+			if !shouldDelete {
+				continue
+			}
+
+			if *job.Status.State != "completed" {
+				piJobClient.Delete(*job.ID)
+				log.Printf("Deleted %s\n", *job.Operation.ID)
+			}
+		}
+	}
+}
+
 func test1 (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, ctx context.Context) {
 	deleteResourceInstanceOptions := controllerSvc.NewDeleteResourceInstanceOptions(
 		"rdr-hamzy-test-7nzrm-cos",
@@ -1003,15 +1028,18 @@ func main() {
 
 	var piInstanceClient *instance.IBMPIInstanceClient
 
-	//piInstanceClient = instance.NewIBMPIInstanceClient(context.Background(), piSession, serviceGuid)
-	piInstanceClient = instance.NewIBMPIInstanceClient(piSession, serviceGuid)
+	piInstanceClient = instance.NewIBMPIInstanceClient(context.Background(), piSession, serviceGuid)
 	if shouldDebug { log.Printf("piInstanceClient = %v\n", piInstanceClient) }
 
 	var piImageClient *instance.IBMPIImageClient
 
-	//piImageClient = instance.NewIBMPIImageClient(context.Background(), piSession, serviceGuid)
-	piImageClient = instance.NewIBMPIImageClient(piSession, serviceGuid)
+	piImageClient = instance.NewIBMPIImageClient(context.Background(), piSession, serviceGuid)
 	if shouldDebug { log.Printf("piImageClient = %v\n", piImageClient) }
+
+	var piJobClient *instance.IBMPIJobClient
+
+	piJobClient = instance.NewIBMPIJobClient(context.Background(), piSession, serviceGuid)
+	if shouldDebug { log.Printf("piJobClient = %v\n", piJobClient) }
 
 	cleanupServiceInstances(rSearch, controllerSvc, ctx)
 	cleanupLoadBalancers(rSearch, vpcService)
@@ -1026,6 +1054,7 @@ func main() {
 	cleanupSSHKeys(rSearch, piSession, serviceGuid)
 	cleanupISResourceGroups(rSearch, mgmtService)			// @TBD
 	cleanupReclamations(rSearch, controllerSvc, ctx)
+	cleanupJobs(rSearch, piJobClient, serviceGuid)
 
 	return
 
