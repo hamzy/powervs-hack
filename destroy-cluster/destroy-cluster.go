@@ -26,10 +26,24 @@
 // package dnsrecordsv1
 // https://raw.githubusercontent.com/IBM/networking-go-sdk/master/dnsrecordsv1/dns_records_v1.go
 
+// How to run:
+// NOTE: This program is considered safe by default and will only delete objects when "-shouldDelete true" is an argument
+//
+// (export IBMCLOUD_API_KEY="blah"; if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1; then ibmcloud login --apikey "${IBMCLOUD_API_KEY}"; fi; go run destroy-cluster.go -apiKey "${IBMCLOUD_API_KEY}" -search '.*rdr-hamzy-.*' -serviceName powervs-ipi-lon04 -CISInstanceCRN $(ibmcloud cis instances --output json | jq -r '.[] | select (.name|test("powervs-ipi-cis")) | .crn') -dnsZone scnl-ibm.com -region eu-gb -shouldDebug false -shouldDelete true)
+//
+// or
+//
+// (export IBMCLOUD_API_KEY="blah"; if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1; then ibmcloud login --apikey "${IBMCLOUD_API_KEY}"; fi; go run destroy-cluster.go -metadata /home/OpenShift/git/powervs-installer.good/ocp-test/metadata.json -apiKey "${IBMCLOUD_API_KEY}" -serviceName powervs-ipi-lon04 -CISInstanceCRN $(ibmcloud cis instances --output json | jq -r '.[] | select (.name|test("powervs-ipi-cis")) | .crn') -dnsZone scnl-ibm.com -region eu-gb -shouldDebug false -shouldDelete false)
+//
+// or
+//
+// (go run destroy-cluster.go -metadata /home/OpenShift/git/hamzy-powervs-installer/ocp-test/metadata.json)
+
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/golang-jwt/jwt"
@@ -50,6 +64,7 @@ import (
 	"github.com/IBM-Cloud/power-go-client/ibmpisession"
 	"github.com/IBM-Cloud/power-go-client/power/client/p_cloud_tenants_ssh_keys"
 	"github.com/IBM-Cloud/power-go-client/power/models"
+	"io/ioutil"
 	"log"
 	gohttp "net/http"
 	"net/url"
@@ -60,6 +75,38 @@ import (
 
 var shouldDebug = false
 var shouldDelete = false
+
+type PowerVSStruct struct {
+	APIKey         string `json:"APIKey"`
+	BaseDomain     string `json:"BaseDomain"`
+	CISInstanceCRN string `json:"cisInstanceCRN"`
+	Region         string `json:"region"`
+	VPCRegion      string `json:"vpcRegion"`
+	Zone           string `json:"zone"`
+}
+type Metadata struct {
+	ClusterName string `json:"ClusterName"`
+	ClusterID   string `json:"ClusterID"`
+	InfraID     string `json:"InfraID"`
+	PowerVS *PowerVSStruct
+}
+
+func readMetadata(fileName string) (*Metadata, error) {
+	var data = Metadata{}
+	var err error
+
+	file, err := ioutil.ReadFile(fileName)
+	if err != nil {
+		return &data, fmt.Errorf("Error: ReadFile returns %v", err)
+	}
+
+	err = json.Unmarshal([]byte(file), &data)
+	if err != nil {
+		return &data, fmt.Errorf("Error: Unmarshal returns %v", err)
+	}
+
+	return &data, nil
+}
 
 // $ ibmcloud catalog service cloud-object-storage --output json | jq -r '.[].id'
 // dff97f5c-bc5e-4455-b470-411c3edbe49c
@@ -155,7 +202,82 @@ func GetRegion(zone string) (region string, err error) {
 	return
 }
 
-func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.IBMPISession, string, error) {
+func getServiceGuid(ptrApiKey *string, ptrRegionID *string, ptrServiceName *string) (string, error) {
+
+	var bxSession *bxsession.Session
+	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
+	var err error
+	var serviceGuid string = ""
+
+	bxSession, err = bxsession.New(&bluemix.Config{
+		BluemixAPIKey:         *ptrApiKey,
+		TokenProviderEndpoint: &tokenProviderEndpoint,
+		Debug:                 false,
+	})
+	if err != nil {
+		return "", fmt.Errorf("Error bxsession.New: %v", err)
+	}
+	if shouldDebug { log.Printf("bxSession = %v\n", bxSession) }
+
+	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
+		DefaultHeader: gohttp.Header{
+			"User-Agent": []string{http.UserAgent()},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
+	}
+	if shouldDebug { log.Printf("tokenRefresher = %v\n", tokenRefresher) }
+	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
+	if err != nil {
+		return "", fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
+	}
+
+	ctrlv2, err := controllerv2.New(bxSession)
+	if err != nil {
+		return "", fmt.Errorf("Error controllerv2.New: %v", err)
+	}
+	if shouldDebug { log.Printf("ctrlv2 = %v\n", ctrlv2) }
+
+	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
+	if err != nil {
+		return "", fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
+	}
+	if shouldDebug { log.Printf("resourceClientV2 = %v\n", resourceClientV2) }
+
+	svcs, err := resourceClientV2.ListInstances(controllerv2.ServiceInstanceQuery{
+		Type: "service_instance",
+	})
+	if err != nil {
+		return "", fmt.Errorf("Error resourceClientV2.ListInstances: %v", err)
+	}
+
+	for _, svc := range svcs {
+		if shouldDebug {
+			log.Printf("Guid = %v\n", svc.Guid)
+			log.Printf("RegionID = %v\n", svc.RegionID)
+			log.Printf("Name = %v\n", svc.Name)
+			log.Printf("Crn = %v\n", svc.Crn)
+		}
+		if (ptrServiceName != nil) && (svc.Name == *ptrServiceName) {
+			serviceGuid = svc.Guid
+			break
+		}
+		if (ptrRegionID != nil) && (svc.RegionID == *ptrRegionID) {
+			serviceGuid = svc.Guid
+			break
+		}
+	}
+
+	if serviceGuid == "" {
+		return "", fmt.Errorf("%s not found in list of service instances!\n", *ptrServiceName)
+	} else {
+		return serviceGuid, nil
+	}
+
+}
+
+func createPiSession(ptrApiKey *string, serviceGuid string, ptrRegionID *string, ptrServiceName *string) (*ibmpisession.IBMPISession, error) {
 
 	var bxSession *bxsession.Session
 	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
@@ -167,7 +289,7 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 		Debug:                 false,
 	})
 	if err != nil {
-		return nil, "", fmt.Errorf("Error bxsession.New: %v", err)
+		return nil, fmt.Errorf("Error bxsession.New: %v", err)
 	}
 	if shouldDebug { log.Printf("bxSession = %v\n", bxSession) }
 
@@ -177,65 +299,40 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 		},
 	})
 	if err != nil {
-		return nil, "", fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
+		return nil, fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
 	}
 	if shouldDebug { log.Printf("tokenRefresher = %v\n", tokenRefresher) }
 	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
 	if err != nil {
-		return nil, "", fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
+		return nil, fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
 	}
 
 	user, err := fetchUserDetails(bxSession, 2)
 	if err != nil {
-		return nil, "", fmt.Errorf("Error fetchUserDetails: %v", err)
+		return nil, fmt.Errorf("Error fetchUserDetails: %v", err)
 	}
 
 	ctrlv2, err := controllerv2.New(bxSession)
 	if err != nil {
-		return nil, "", fmt.Errorf("Error controllerv2.New: %v", err)
+		return nil, fmt.Errorf("Error controllerv2.New: %v", err)
 	}
 	if shouldDebug { log.Printf("ctrlv2 = %v\n", ctrlv2) }
 
 	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
 	if err != nil {
-		return nil, "", fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
+		return nil, fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
 	}
 	if shouldDebug { log.Printf("resourceClientV2 = %v\n", resourceClientV2) }
 
-	svcs, err := resourceClientV2.ListInstances(controllerv2.ServiceInstanceQuery{
-		Type: "service_instance",
-	})
-	if err != nil {
-		return nil, "", fmt.Errorf("Error resourceClientV2.ListInstances: %v", err)
-	}
-
-	var serviceGuid string = ""
-
-	for _, svc := range svcs {
-		if shouldDebug {
-			log.Printf("Guid = %v\n", svc.Guid)
-			log.Printf("RegionID = %v\n", svc.RegionID)
-			log.Printf("Name = %v\n", svc.Name)
-			log.Printf("Crn = %v\n", svc.Crn)
-		}
-		if svc.Name == *ptrServiceName {
-			serviceGuid = svc.Guid
-			break
-		}
-	}
-	if serviceGuid == "" {
-		return nil, "", fmt.Errorf("%s not found in list of service instances!\n", *ptrServiceName)
-	}
-
 	serviceInstance, err := resourceClientV2.GetInstance(serviceGuid)
 	if err != nil {
-		return nil, "", fmt.Errorf("Error resourceClientV2.GetInstance: %v", err)
+		return nil, fmt.Errorf("Error resourceClientV2.GetInstance: %v", err)
 	}
 	if shouldDebug { log.Printf("serviceInstance = %v\n", serviceInstance) }
 
 	region, err:= GetRegion(serviceInstance.RegionID)
 	if err != nil {
-		return nil, "", fmt.Errorf("Error GetRegion: %v", err)
+		return nil, fmt.Errorf("Error GetRegion: %v", err)
 	}
 
 	var piSession *ibmpisession.IBMPISession
@@ -246,11 +343,11 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 		user.Account,
 		serviceInstance.RegionID)
 	if err != nil {
-		return nil, "", fmt.Errorf("Error ibmpisession.New: %v", err)
+		return nil, fmt.Errorf("Error ibmpisession.New: %v", err)
 	}
 	if shouldDebug { log.Printf("piSession = %v\n", piSession) }
 
-	return piSession, serviceGuid, nil
+	return piSession, nil
 
 }
 
@@ -789,6 +886,8 @@ func cleanupISResourceGroups (rSearch *regexp.Regexp, mgmtService *resourcemanag
 
 }
 
+// $ ibmcloud resource reclamations
+
 func cleanupReclamations (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, ctx context.Context) {
 	var getReclamationOptions *resourcecontrollerv2.ListReclamationsOptions
 	var reclamations *resourcecontrollerv2.ReclamationsList
@@ -838,6 +937,8 @@ func cleanupReclamations (rSearch *regexp.Regexp, controllerSvc *resourcecontrol
 	}
 }
 
+// $ ibmcloud pi jobs
+
 func cleanupJobs (rSearch *regexp.Regexp, piJobClient *instance.IBMPIJobClient, serviceGuid string) {
 	var jobs *models.Jobs
 	var job *models.Job
@@ -851,16 +952,17 @@ func cleanupJobs (rSearch *regexp.Regexp, piJobClient *instance.IBMPIJobClient, 
 	for _, job = range jobs.Jobs {
 		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/job.go
 		if rSearch.MatchString(*job.Operation.ID) {
+			if *job.Status.State == "completed" {
+				continue
+			}
 			log.Printf("Found: job: %s (%s) (%s)\n", *job.Operation.ID, *job.ID, *job.Status.State)
 
 			if !shouldDelete {
 				continue
 			}
 
-			if *job.Status.State != "completed" {
-				piJobClient.Delete(*job.ID)
-				log.Printf("Deleted %s\n", *job.Operation.ID)
-			}
+			piJobClient.Delete(*job.ID)
+			log.Printf("Deleted %s\n", *job.Operation.ID)
 		}
 	}
 }
@@ -880,45 +982,39 @@ func test2 (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.Resource
 
 func main() {
 
+	var data *Metadata = nil
+	var err error
+
 	// CLI parameters:
+	var ptrMetadaFilename *string
 	var ptrApiKey *string
 	var ptrSearch *string
+	var ptrRegionID *string = nil
 	var ptrServiceName *string
 	var ptrCISInstanceCRN *string
 	var ptrDNSZone *string
 	var ptrRegion *string
 	var ptrShouldDebug *string
 	var ptrShouldDelete *string
+	var needAPIKey = true
+	var needSearch = true
+	var needRegion = true
+	var needServiceName = true
+	var needCISInstanceCRN = true
+	var needDNSZone = true
 
+	ptrMetadaFilename = flag.String("metadata", "", "The filename containing cluster metadata")
 	ptrApiKey = flag.String("apiKey", "", "Your IBM Cloud API key")
 	ptrSearch = flag.String("search", "", "The search string to match for deletes")
 	ptrServiceName = flag.String("serviceName", "", "The cloud service to use")
 	ptrCISInstanceCRN = flag.String("CISInstanceCRN", "", "ibmcloud cis instances --output json | jq -r '.[] | select (.name|test(\"powervs-ipi-cis\")) | .crn'")
 	ptrDNSZone = flag.String("dnsZone", "", "The DNS zone Ex: scnl-ibm.com")
 	ptrRegion = flag.String("region", "", "The region to use")
-	ptrShouldDebug = flag.String("shouldDebug", "true", "Should output debug output")
+	ptrShouldDebug = flag.String("shouldDebug", "false", "Should output debug output")
 	ptrShouldDelete = flag.String("shouldDelete", "false", "Should delete matching records")
 
 	flag.Parse()
 
-	if *ptrApiKey == "" {
-		log.Fatal("Error: No API key set, use -apiKey")
-	}
-	if *ptrSearch == "" {
-		log.Fatal("Error: No search term set, use -search")
-	}
-	if *ptrServiceName == "" {
-		log.Fatal("Error: No cloud service set, use -serviceName")
-	}
-	if *ptrCISInstanceCRN == "" {
-		log.Fatal("Error: No CISInstanceCRN set, use -CISInstanceCRN")
-	}
-	if *ptrDNSZone == "" {
-		log.Fatal("Error: No DNS zone set, use -dnsZone")
-	}
-	if *ptrRegion == "" {
-		log.Fatal("Error: No region set, use -region")
-	}
 	switch strings.ToLower(*ptrShouldDebug) {
 	case "true":
 		shouldDebug = true
@@ -926,6 +1022,96 @@ func main() {
 		shouldDebug = false
 	default:
 		log.Fatal("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+	}
+
+	if *ptrMetadaFilename != "" {
+		data, err = readMetadata(*ptrMetadaFilename)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if shouldDebug {
+			log.Printf("ClusterName    = %v", data.ClusterName)
+			log.Printf("ClusterID      = %v", data.ClusterID)
+			log.Printf("InfraID        = %v", data.InfraID)
+//			log.Printf("APIKey         = %v", data.PowerVS.APIKey)
+			log.Printf("BaseDomain     = %v", data.PowerVS.BaseDomain)
+			log.Printf("CISInstanceCRN = %v", data.PowerVS.CISInstanceCRN)
+			log.Printf("Region         = %v", data.PowerVS.Region)
+			log.Printf("VPCRegion      = %v", data.PowerVS.VPCRegion)
+			log.Printf("Zone           = %v", data.PowerVS.Zone)
+		}
+
+		// Handle:
+		// {
+  		//   "clusterName": "rdr-hamzy-test",
+  		//   "clusterID": "ffbb8a77-1ae7-445b-83ad-44cae63a8679",
+  		//   "infraID": "rdr-hamzy-test-rwmtj",
+  		//   "powervs": {
+    		//     "APIKey": "blah",
+    		//     "BaseDomain": "scnl-ibm.com",
+    		//     "cisInstanceCRN": "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::",
+    		//     "region": "lon",
+    		//     "vpcRegion": "eu-gb",
+    		//     "zone": "lon04"
+  		//   }
+		// }
+		// Handle:
+		// {
+		//   "clusterName": "rdr-hamzy-test",
+		//   "clusterID": "11f1f0d9-bd35-4cd1-bc67-61f244d824c8",
+		//   "infraID": "rdr-hamzy-test-xdh26",
+		//   "powervs": {
+		//     "cisInstanceCRN": "",
+		//     "region": "lon",
+		//     "zone": "lon04"
+		//   }
+		// }
+
+		if data.PowerVS.APIKey != "" {
+			ptrApiKey = &data.PowerVS.APIKey
+			needAPIKey = false
+		}
+
+		ptrSearch = &data.InfraID
+		needSearch = false
+
+		ptrServiceName = nil
+		ptrRegionID = &data.PowerVS.Zone
+		needServiceName = false
+
+		if data.PowerVS.CISInstanceCRN != "" {
+			ptrCISInstanceCRN= &data.PowerVS.CISInstanceCRN
+			needCISInstanceCRN = false
+		}
+
+		if data.PowerVS.BaseDomain != "" {
+			ptrDNSZone = &data.PowerVS.BaseDomain
+			needDNSZone = false
+		}
+
+		if data.PowerVS.VPCRegion != "" {
+			ptrRegion = &data.PowerVS.VPCRegion
+			needRegion = false
+		}
+	}
+	if needAPIKey && *ptrApiKey == "" {
+		log.Fatal("Error: No API key set, use -apiKey")
+	}
+	if needSearch && *ptrSearch == "" {
+		log.Fatal("Error: No search term set, use -search")
+	}
+	if needServiceName && *ptrServiceName == "" {
+		log.Fatal("Error: No cloud service set, use -serviceName")
+	}
+	if needCISInstanceCRN && *ptrCISInstanceCRN == "" {
+		log.Fatal("Error: No CISInstanceCRN set, use -CISInstanceCRN")
+	}
+	if needDNSZone && *ptrDNSZone == "" {
+		log.Fatal("Error: No DNS zone set, use -dnsZone")
+	}
+	if needRegion && *ptrRegion == "" {
+		log.Fatal("Error: No region set, use -region")
 	}
 	switch strings.ToLower(*ptrShouldDelete) {
 	case "true":
@@ -941,7 +1127,6 @@ func main() {
 	var ctx context.Context
 	var vpcService *vpcv1.VpcV1
 	var controllerSvc *resourcecontrollerv2.ResourceControllerV2
-	var err error
 
 	// Instantiate the service with an API key based IAM authenticator
 	vpcService, err = vpcv1.NewVpcV1(&vpcv1.VpcV1Options{
@@ -1021,9 +1206,14 @@ func main() {
 	var piSession *ibmpisession.IBMPISession
 	var serviceGuid string
 
-	piSession, serviceGuid, err = createPiSession(ptrApiKey, ptrServiceName)
+	serviceGuid, err = getServiceGuid(ptrApiKey, ptrRegionID, ptrServiceName)
 	if err != nil {
-		log.Fatal("Error createPiSession: %v\n", err)
+		log.Fatal("Error: getServiceGuid: %v\n", err)
+	}
+
+	piSession, err = createPiSession(ptrApiKey, serviceGuid, ptrRegionID, ptrServiceName)
+	if err != nil {
+		log.Fatal("Error: createPiSession: %v\n", err)
 	}
 
 	var piInstanceClient *instance.IBMPIInstanceClient

@@ -96,7 +96,7 @@ func main() {
 	}
 
 	var region string = "eu-gb"
-	var search string = ".*rdr-hamzy-test.*"
+	var search string = ".*" // ".*rdr-hamzy-test.*"
 
 	rSearch, _ := regexp.Compile(search)
 
