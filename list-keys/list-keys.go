@@ -32,7 +32,6 @@ import (
 	gohttp "net/http"
 	"regexp"
 	"strings"
-	"time"
 )
 
 type User struct {
@@ -237,7 +236,6 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	piSession, err = ibmpisession.New(bxSession.Config.IAMAccessToken,
 		region,
 		false,
-		60*time.Minute,
 		user.Account,
 		serviceInstance.RegionID)
 	if err != nil {

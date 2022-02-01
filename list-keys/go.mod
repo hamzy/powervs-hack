@@ -1,18 +1,15 @@
-module example/user/destroy-cluster
+module example/user/list-keys
 
 go 1.17
 
 require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20220119131246-2af2dee48688
 	github.com/IBM-Cloud/power-go-client v1.0.88
-	github.com/IBM/go-sdk-core/v5 v5.9.1
-	github.com/IBM/networking-go-sdk v0.25.0
-	github.com/IBM/platform-services-go-sdk v0.22.7
-	github.com/IBM/vpc-go-sdk v1.0.1
 	github.com/golang-jwt/jwt v3.2.2+incompatible
 )
 
 require (
+	github.com/IBM/go-sdk-core/v5 v5.9.1 // indirect
 	github.com/PuerkitoBio/purell v1.1.1 // indirect
 	github.com/PuerkitoBio/urlesc v0.0.0-20170810143723-de5bf2ad4578 // indirect
 	github.com/asaskevich/govalidator v0.0.0-20210307081110-f21760c49a8d // indirect

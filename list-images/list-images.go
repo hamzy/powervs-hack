@@ -15,7 +15,7 @@
 package main
 
 import (
-//	"context"
+	"context"
 	"flag"
 	"fmt"
 	"github.com/golang-jwt/jwt"
@@ -31,7 +31,6 @@ import (
 	gohttp "net/http"
 	"regexp"
 	"strings"
-	"time"
 )
 
 type User struct {
@@ -112,7 +111,7 @@ func listImages (rSearch *regexp.Regexp, piImageClient *instance.IBMPIImageClien
 
 	var err error
 
-	images, err := piImageClient.GetAll(serviceGuid)
+	images, err := piImageClient.GetAll()
 	if err != nil {
 		log.Fatal("Error piImageClient.GetAll: %v\n", err)
 	}
@@ -211,7 +210,6 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	piSession, err = ibmpisession.New(bxSession.Config.IAMAccessToken,
 		region,
 		false,
-		60*time.Minute,
 		user.Account,
 		serviceInstance.RegionID)
 	if err != nil {
@@ -260,8 +258,7 @@ func main() {
 
 	var piImageClient *instance.IBMPIImageClient
 
-	//piImageClient = instance.NewIBMPIImageClient(context.Background(), piSession, serviceGuid)
-	piImageClient = instance.NewIBMPIImageClient(piSession, serviceGuid)
+	piImageClient = instance.NewIBMPIImageClient(context.Background(), piSession, serviceGuid)
 	log.Printf("piImageClient = %v\n", piImageClient)
 
 	listImages(rSearch, piImageClient, serviceGuid)
