@@ -53,7 +53,7 @@ stringData:
 type: Opaque
 ___EOF___
 
-curl --silent --output - https://raw.githubusercontent.com/openshift/cluster-cloud-controller-manager-operator/release-4.10/manifests/0000_26_cloud-controller-manager-operator_15_credentialsrequest-ibm.yaml | sed 's,IBMCloudProviderSpec,PowerVSProviderSpec,' > ocp-test/manifests/0000_26_cloud-controller-manager-operator_15_credentialsrequest-powervs.yaml
+curl --silent --output - https://raw.githubusercontent.com/openshift/cluster-cloud-controller-manager-operator/release-4.11/manifests/0000_26_cloud-controller-manager-operator_15_credentialsrequest-powervs.yaml
 
 oc adm release extract --cloud=powervs --credentials-requests quay.io/openshift-release-dev/ocp-release:4.10.0-rc.2-ppc64le --to=ocp-test/credreqs
 
