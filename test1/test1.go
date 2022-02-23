@@ -54,12 +54,12 @@ type DNSZoneResponse struct {
 // NewClient initializes a client with a session.
 func NewClient() (*Client, error) {
 	apiKey := os.Getenv("IC_API_KEY")
-	log.Printf("NewClient: apiKey = %v", apiKey)
+//	log.Printf("NewClient: apiKey = %v", apiKey)
 	authenticator := &core.IamAuthenticator{
 		ApiKey: apiKey,
 //		URL :"https://iam.cloud.ibm.com",
 	}
-	log.Printf("NewClient: authenticator = %v", prettyPrint(&authenticator))
+//	log.Printf("NewClient: authenticator = %v", prettyPrint(&authenticator))
 
 	client := &Client{
 		Authenticator: authenticator,
@@ -115,10 +115,13 @@ func (c *Client) GetDNSZones(ctx context.Context) ([]DNSZoneResponse, error) {
 	options := c.controllerAPI.NewListResourceInstancesOptions()
 	options.SetResourceID(cisServiceID)
 
+	log.Printf("GetDNSZones: before c = %s", prettyPrint(c))
 	listResourceInstancesResponse, _, err := c.controllerAPI.ListResourceInstances(options)
 	if err != nil {
+		log.Printf("GetDNSZones: c.controllerAPI.ListResourceInstances: %v %v", listResourceInstancesResponse, err)
 		return nil, errors.Wrap(err, "failed to get cis instance")
 	}
+	log.Printf("GetDNSZones: after c = %s", prettyPrint(c))
 
 	var allZones []DNSZoneResponse
 	for _, instance := range listResourceInstancesResponse.Resources {
@@ -128,6 +131,7 @@ func (c *Client) GetDNSZones(ctx context.Context) ([]DNSZoneResponse, error) {
 			Crn:           crnstr,
 		})
 		if err != nil {
+			log.Printf("GetDNSZones: zonesv1.NewZonesV1: %v %v", zonesService, err)
 			return nil, errors.Wrap(err, "failed to list DNS zones")
 		}
 
