@@ -29,15 +29,15 @@
 // How to run:
 // NOTE: This program is considered safe by default and will only delete objects when "-shouldDelete true" is an argument
 //
-// (export IBMCLOUD_API_KEY="blah"; if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1; then ibmcloud login --apikey "${IBMCLOUD_API_KEY}"; fi; go run destroy-cluster.go -apiKey "${IBMCLOUD_API_KEY}" -search '.*rdr-hamzy-.*' -serviceName powervs-ipi-lon04 -CISInstanceCRN $(ibmcloud cis instances --output json | jq -r '.[] | select (.name|test("powervs-ipi-cis")) | .crn') -dnsZone scnl-ibm.com -region eu-gb -shouldDebug false -shouldDelete true)
+// (export IBMCLOUD_API_KEY="blah"; if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1; then ibmcloud login --apikey "${IBMCLOUD_API_KEY}"; fi; ./destroy-cluster -apiKey "${IBMCLOUD_API_KEY}" -search '.*rdr-hamzy-.*' -serviceName powervs-ipi-lon04 -CISInstanceCRN $(ibmcloud cis instances --output json | jq -r '.[] | select (.name|test("powervs-ipi-cis")) | .crn') -dnsZone scnl-ibm.com -region eu-gb -shouldDebug false -shouldDelete false)
 //
 // or
 //
-// (export IBMCLOUD_API_KEY="blah"; if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1; then ibmcloud login --apikey "${IBMCLOUD_API_KEY}"; fi; go run destroy-cluster.go -metadata /home/OpenShift/git/powervs-installer.good/ocp-test/metadata.json -apiKey "${IBMCLOUD_API_KEY}" -serviceName powervs-ipi-lon04 -CISInstanceCRN $(ibmcloud cis instances --output json | jq -r '.[] | select (.name|test("powervs-ipi-cis")) | .crn') -dnsZone scnl-ibm.com -region eu-gb -shouldDebug false -shouldDelete false)
+// (export IBMCLOUD_API_KEY="blah"; if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1; then ibmcloud login --apikey "${IBMCLOUD_API_KEY}"; fi; ./destroy-cluster -metadata /home/OpenShift/git/powervs-installer.good/ocp-test/metadata.json -apiKey "${IBMCLOUD_API_KEY}" -serviceName powervs-ipi-lon04 -CISInstanceCRN $(ibmcloud cis instances --output json | jq -r '.[] | select (.name|test("powervs-ipi-cis")) | .crn') -dnsZone scnl-ibm.com -region eu-gb -shouldDebug false -shouldDelete false)
 //
 // or
 //
-// (go run destroy-cluster.go -metadata /home/OpenShift/git/hamzy-powervs-installer/ocp-test/metadata.json)
+// (./destroy-cluster -metadata /home/OpenShift/git/hamzy-powervs-installer/ocp-test/metadata.json)
 
 package main
 
