@@ -18,8 +18,7 @@ function init_ibmcloud()
 {
 	if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1
 	then
-		ibmcloud login --apikey "${IBMCLOUD_API_KEY}"
-		ibmcloud target -r eu-gb
+		ibmcloud login --apikey "${IBMCLOUD_API_KEY}" -r ${VPCREGION}
 	fi
 }
 
