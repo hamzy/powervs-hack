@@ -81,6 +81,55 @@ function fix_load_balancer_hostname()
 	echo "fix_load_balancer_hostname: FINISHED!"
 }
 
+function delete_wildcard_dns()
+{	
+	log_to_file /tmp/delete-wildcard-dns.log
+
+	HOSTNAME_WILDCARD="apps.rdr-hamzy-test.scnl-ibm.com"
+	ID_DOMAIN=$(ibmcloud cis domains --output json | jq -r '.[] | select (.name|test("^scnl-ibm.com$")) | .id')
+
+	FOUND=false
+	FILE=$(mktemp)
+
+	while ! ${FOUND}
+	do
+		sleep 1m
+
+		ibmcloud cis dns-records ${ID_DOMAIN} --output json > ${FILE}
+		RC=$?
+		if [ ${RC} -gt 0 ]
+		then
+			continue
+		fi
+
+		ibmcloud cis dns-records ${ID_DOMAIN} --output json | jq -r '.[] | select (.name|test("'${HOSTNAME_WILDCARD}'$"))' > ${FILE}
+		RC=$?
+		if [ ${RC} -eq 0 ]
+		then
+			LINE_OUTPUT=$(wc -l ${FILE})
+			RC=$?
+			if [ ${RC} -eq 0 ]
+			then
+				LINES=$(echo "${LINE_OUTPUT}" | cut -f1 -d' ')
+				RC=$?
+				if (( ${LINES} > 0 ))
+				then
+					FOUND=true
+				fi
+			fi
+		fi
+
+		if ${FOUND}
+		then
+			ID_WILDCARD=$(jq -r --slurp '.[0].id' ${FILE})
+			ibmcloud cis dns-record-delete ${ID_DOMAIN} ${ID_WILDCARD}
+		fi
+	done
+
+	/bin/rm ${FILE}
+	echo "delete_wildcard_dns: FINISHED!"
+}
+
 declare -a ENV_VARS
 #ENV_VARS=( "IBMCLOUD_API_KEY" "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
 ENV_VARS=( "IBMCLOUD_API_KEY" )
@@ -220,6 +269,9 @@ create_ibm_cloud_credentials_secret &
 JOBS+=( "$!" )
 
 fix_load_balancer_hostname &
+JOBS+=( "$!" )
+
+delete_wildcard_dns &
 JOBS+=( "$!" )
 
 wait ${PID_INSTALL}
