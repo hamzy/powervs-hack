@@ -4,6 +4,7 @@ function log_to_file()
 {
 	local LOG_FILE=$1
 
+	/bin/rm -f ${LOG_FILE}
 	# Close STDOUT file descriptor
 	exec 1<&-
 	# Close STDERR FD
