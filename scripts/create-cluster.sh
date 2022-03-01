@@ -48,7 +48,7 @@ function fix_load_balancer_hostname()
 	log_to_file /tmp/fix-load-balancer-hostname.log
 
 	CLUSTER_ID=$(jq -r '.infraID' ./ocp-test/metadata.json)
-	HOSTNAME_EXTERNAL="apps.rdr-hamzy-test.scnl-ibm.com"
+	HOSTNAME_EXTERNAL="apps.${CLUSTER_NAME}.scnl-ibm.com"
 
 	FOUND=false
 	FILE=$(mktemp)
@@ -86,7 +86,7 @@ function delete_wildcard_dns()
 {	
 	log_to_file /tmp/delete-wildcard-dns.log
 
-	HOSTNAME_WILDCARD="apps.rdr-hamzy-test.scnl-ibm.com"
+	HOSTNAME_WILDCARD="apps.${CLUSTER_NAME}.scnl-ibm.com"
 	ID_DOMAIN=$(ibmcloud cis domains --output json | jq -r '.[] | select (.name|test("^scnl-ibm.com$")) | .id')
 
 	FOUND=false
@@ -155,6 +155,7 @@ set -euo pipefail
 export PATH=${PATH}:$(pwd)/bin
 export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:4.10-powervs"
 export IBMID="hamzy@us.ibm.com"
+export CLUSTER_NAME="rdr-hamzy-test"
 export IBMCLOUD_REGION="lon"
 export IBMCLOUD_ZONE="lon04"
 export VPCREGION="eu-gb"
@@ -192,7 +193,7 @@ controlPlane:
   replicas: 3
 metadata:
   creationTimestamp: null
-  name: rdr-hamzy-test
+  name: "${CLUSTER_NAME}"
 networking:
   clusterNetwork:
   - cidr: 10.128.0.0/14
@@ -272,7 +273,7 @@ JOBS+=( "$!" )
 fix_load_balancer_hostname &
 JOBS+=( "$!" )
 
-delete_wildcard_dns &
-JOBS+=( "$!" )
+#delete_wildcard_dns &
+#JOBS+=( "$!" )
 
 wait ${PID_INSTALL}
