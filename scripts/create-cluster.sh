@@ -77,7 +77,12 @@ function fix_load_balancer_hostname()
 	HOSTNAME_LB=$(ibmcloud is load-balancers --json | jq -r '.[] | select (.name|test("^kube-'${CLUSTER_ID}'")) | .hostname')
 	ID_DOMAIN=$(ibmcloud cis domains --output json | jq -r '.[] | select (.name|test("^scnl-ibm.com$")) | .id')
 	ID_HOSTNAME=$(ibmcloud cis dns-records ${ID_DOMAIN} --output json | jq -r '.[] | select (.name|test("'${HOSTNAME_EXTERNAL}'$")) | .id')
-	ibmcloud cis dns-record-update ${ID_DOMAIN} ${ID_HOSTNAME} --json '{ "name": "*.'${HOSTNAME_EXTERNAL}'", "type": "CNAME", "content": "'${HOSTNAME_LB}'" }'
+	if [ -n "${ID_HOSTNAME}" ]
+	then
+		ibmcloud cis dns-record-update ${ID_DOMAIN} ${ID_HOSTNAME} --json '{ "name": "*.'${HOSTNAME_EXTERNAL}'", "type": "CNAME", "content": "'${HOSTNAME_LB}'" }'
+	else
+		ibmcloud cis dns-record-create ${ID_DOMAIN} --json '{ "name": "*.'${HOSTNAME_EXTERNAL}'", "type": "CNAME", "content": "'${HOSTNAME_LB}'" }'
+	fi
 	/bin/rm ${FILE}
 	echo "fix_load_balancer_hostname: FINISHED!"
 }
@@ -162,6 +167,8 @@ export VPCREGION="eu-gb"
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
 export KUBECONFIG=./ocp-test/auth/kubeconfig
 
+export IC_API_KEY=${IBMCLOUD_API_KEY}
+
 set -x
 
 declare -a JOBS
@@ -206,13 +213,13 @@ networking:
 platform:
   powervs:
     userid: "${IBMID}"
-    APIKey: "${IBMCLOUD_API_KEY}"
+#   APIKey: "${IBMCLOUD_API_KEY}"
     powervsResourceGroup: "powervs-ipi-resource-group"
     pvsNetworkName: "pvs-ipi-net"
     region: "${IBMCLOUD_REGION}"
     vpcRegion: "${VPCREGION}"
     zone: "${IBMCLOUD_ZONE}"
-    serviceInstance: "e449d86e-c3a0-4c07-959e-8557fdf55482"
+    serviceInstanceID: "e449d86e-c3a0-4c07-959e-8557fdf55482"
     vpc: "powervs-ipi"
     subnets:
     - subnet2
