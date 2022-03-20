@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+#
+# (export CLUSTER_DIR="./ocp-test"; export IBMID="hamzy@us.ibm.com"; export CLUSTER_NAME="rdr-hamzy-test"; export IBMCLOUD_REGION="lon"; export IBMCLOUD_ZONE="lon04"; export VPCREGION="eu-gb"; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
+#
+
 function log_to_file()
 {
 	local LOG_FILE=$1
@@ -47,7 +51,7 @@ function fix_load_balancer_hostname()
 {	
 	log_to_file /tmp/fix-load-balancer-hostname.log
 
-	CLUSTER_ID=$(jq -r '.infraID' ./ocp-test/metadata.json)
+	CLUSTER_ID=$(jq -r '.infraID' ${CLUSTER_DIR}/metadata.json)
 	HOSTNAME_EXTERNAL="apps.${CLUSTER_NAME}.scnl-ibm.com"
 
 	FOUND=false
@@ -136,9 +140,95 @@ function delete_wildcard_dns()
 	echo "delete_wildcard_dns: FINISHED!"
 }
 
+function reboot_master_nodes()
+{	
+	log_to_file /tmp/reboot-master-nodes.log
+
+	CLUSTER_ID=$(jq -r '.infraID' ${CLUSTER_DIR}/metadata.json)
+
+	FOUND=false
+	FILE=$(mktemp)
+
+	while ! ${FOUND}
+	do
+		ibmcloud is load-balancers --json | jq -r '.[] | select (.name|test("^'${CLUSTER_ID}'-loadbalancer$"))' > ${FILE}
+		RC=$?
+		if [ ${RC} -eq 0 ]
+		then
+			LINE_OUTPUT=$(wc -l ${FILE})
+			RC=$?
+			if [ ${RC} -eq 0 ]
+			then
+				LINES=$(echo "${LINE_OUTPUT}" | cut -f1 -d' ')
+				RC=$?
+				if (( ${LINES} > 0 ))
+				then
+					FOUND=true
+				fi
+			fi
+		else
+			sleep 1m
+		fi
+	done
+
+	LB_ID=$(ibmcloud is load-balancers --json | jq -r '.[] | select (.name|test("^'${CLUSTER_ID}'-loadbalancer$")) | .id')
+
+	READY=false
+
+	while ! ${READY}
+	do
+		STATUS=$(ibmcloud is load-balancers --json | jq -r '.[] | select (.id|test("'${LB_ID}'")) | .operating_status')
+		if [ "${STATUS}" == "online" ]
+		then
+			READY=true
+		fi
+	done
+
+	SELECT="${CLUSTER_ID}-master"
+	W_FILE=$(mktemp)
+	
+	while true
+	do
+		ibmcloud pi ins --json | jq '.Payload.pvmInstances[] | select (.serverName|test("'${SELECT}'"))' > ${W_FILE}
+	
+		MASTER0=$(jq -r '. | select(.serverName|test("master-0")) | .addresses[].ip' ${W_FILE})
+		MASTER1=$(jq -r '. | select(.serverName|test("master-1")) | .addresses[].ip' ${W_FILE})
+		MASTER2=$(jq -r '. | select(.serverName|test("master-2")) | .addresses[].ip' ${W_FILE})
+
+		if [ -n "${MASTER0}" ] && [ -n "${MASTER1}" ] && [ -n "${MASTER2}" ]
+		then
+			break
+		fi
+
+		sleep 1m
+	done
+
+	OUTPUT0=$(ssh cloud-user@161.156.204.62 ssh-keyscan ${MASTER0} || true)
+	OUTPUT1=$(ssh cloud-user@161.156.204.62 ssh-keyscan ${MASTER1} || true)
+	OUTPUT2=$(ssh cloud-user@161.156.204.62 ssh-keyscan ${MASTER2} || true)
+
+	if [ -z "${OUTPUT0}" ]
+	then
+		echo ibmcloud pi instance-hard-reboot "${CLUSTER_ID}-master-0"
+	fi
+
+	if [ -z "${OUTPUT1}" ]
+	then
+		echo ibmcloud pi instance-hard-reboot "${CLUSTER_ID}-master-1"
+	fi
+
+	if [ -z "${OUTPUT2}" ]
+	then
+		echo ibmcloud pi instance-hard-reboot "${CLUSTER_ID}-master-2"
+	fi
+
+	/bin/rm ${FILE} ${W_FILE}
+	echo "reboot_master_nodes: FINISHED!"
+}
+
 declare -a ENV_VARS
-#ENV_VARS=( "IBMCLOUD_API_KEY" "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
-ENV_VARS=( "IBMCLOUD_API_KEY" )
+ENV_VARS=( "IBMCLOUD_API_KEY" "CLUSTER_DIR" "IBMID" "CLUSTER_NAME" "IBMCLOUD_REGION" "IBMCLOUD_ZONE" "VPCREGION" )
+#ENV_VARS+=( "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
 
 for VAR in ${ENV_VARS[@]}
 do
@@ -157,16 +247,11 @@ done
 
 set -euo pipefail
 
-export PATH=${PATH}:$(pwd)/bin
 export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:4.10-powervs"
-export IBMID="hamzy@us.ibm.com"
-export CLUSTER_NAME="rdr-hamzy-test"
-export IBMCLOUD_REGION="lon"
-export IBMCLOUD_ZONE="lon04"
-export VPCREGION="eu-gb"
-export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
-export KUBECONFIG=./ocp-test/auth/kubeconfig
 
+export PATH=${PATH}:$(pwd)/bin
+export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
+export KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig
 export IC_API_KEY=${IBMCLOUD_API_KEY}
 
 set -x
@@ -175,15 +260,24 @@ declare -a JOBS
 
 trap 'echo "Killing JOBS"; for PID in ${JOBS[@]}; do kill -9 ${PID} >/dev/null 2>&1 || true; done' TERM
 
+if [ -f ~/.powervs/config.json ]
+then
+	/bin/rm ~/.powervs/config.json
+fi
+if [ -d ~/.powervs/ ]
+then
+	/bin/rm -rf ~/.powervs/
+fi
+
 init_ibmcloud
 
-rm -rf ocp-test/
-mkdir ocp-test
+rm -rf ${CLUSTER_DIR}
+mkdir ${CLUSTER_DIR}
 
 SSH_KEY=$(cat ~/.ssh/id_rsa.pub)
 PULL_SECRET=$(cat ~/.pullSecret)
 
-cat << ___EOF___ > ./ocp-test/install-config.yaml
+cat << ___EOF___ > ${CLUSTER_DIR}/install-config.yaml
 apiVersion: v1
 baseDomain: scnl-ibm.com
 compute:
@@ -229,14 +323,14 @@ sshKey: |
   ${SSH_KEY}
 ___EOF___
 
-sed -i '/credentialsMode/d' ocp-test/install-config.yaml
-sed -i '/^baseDomain:.*$/a credentialsMode: Manual' ocp-test/install-config.yaml
+sed -i '/credentialsMode/d' ${CLUSTER_DIR}/install-config.yaml
+sed -i '/^baseDomain:.*$/a credentialsMode: Manual' ${CLUSTER_DIR}/install-config.yaml
 
-openshift-install create ignition-configs --dir ocp-test --log-level=debug
+openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
 
-openshift-install create manifests --dir ocp-test --log-level=debug
+openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
 
-cat << ___EOF___ > ocp-test/manifests/openshift-ingress-operator-cloud-credentials-credentials.yaml
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-ingress-operator-cloud-credentials-credentials.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -251,7 +345,7 @@ stringData:
 type: Opaque
 ___EOF___
 
-cat << ___EOF___ > ocp-test/manifests/openshift-machine-api-powervs-credentials-credentials.yaml
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-machine-api-powervs-credentials-credentials.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -268,9 +362,9 @@ ___EOF___
 
 curl --silent --output - https://raw.githubusercontent.com/openshift/cluster-cloud-controller-manager-operator/release-4.11/manifests/0000_26_cloud-controller-manager-operator_15_credentialsrequest-powervs.yaml
 
-oc adm release extract --cloud=powervs --credentials-requests quay.io/openshift-release-dev/ocp-release:4.10.0-rc.2-ppc64le --to=ocp-test/credreqs
+oc adm release extract --cloud=powervs --credentials-requests quay.io/openshift-release-dev/ocp-release:4.10.0-rc.2-ppc64le --to=${CLUSTER_DIR}/credreqs
 
-openshift-install create cluster --dir ocp-test --log-level=debug &
+openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
