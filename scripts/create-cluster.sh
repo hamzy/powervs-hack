@@ -254,6 +254,10 @@ export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
 export KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig
 export IC_API_KEY=${IBMCLOUD_API_KEY}
 
+#export TF_LOG=TRACE
+#export TF_LOG_PATH=/tmp
+#export IBMCLOUD_TRACE=true
+
 set -x
 
 declare -a JOBS

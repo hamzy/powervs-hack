@@ -110,8 +110,8 @@ function reboot_master_nodes()
 }
 
 declare -a ENV_VARS
-#ENV_VARS=( "IBMCLOUD_API_KEY" "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
-ENV_VARS=( "IBMCLOUD_API_KEY" )
+ENV_VARS=( "IBMCLOUD_API_KEY" "CLUSTER_DIR" "IBMID" "CLUSTER_NAME" "IBMCLOUD_REGION" "IBMCLOUD_ZONE" "VPCREGION" )
+#ENV_VARS+=( "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
 
 for VAR in ${ENV_VARS[@]}
 do
@@ -130,14 +130,12 @@ done
 
 set -euo pipefail
 
-export PATH=${PATH}:$(pwd)/bin
 export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:4.10-powervs"
-export IBMID="hamzy@us.ibm.com"
-export IBMCLOUD_REGION="lon"
-export IBMCLOUD_ZONE="lon04"
-export VPCREGION="eu-gb"
+
+export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
-export KUBECONFIG=/home/OpenShift/git/hamzyorg-installer/ocp-test/auth/kubeconfig
+export KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig
+export IC_API_KEY=${IBMCLOUD_API_KEY}
 
 set -x
 
