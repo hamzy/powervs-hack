@@ -351,6 +351,128 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrRegionID *string,
 
 }
 
+// ibmcloud resource service-instances --output JSON --service-name cloud-object-storage | jq -r '.[] | select(.name|test("rdr-hamzy.*")) | .name'
+
+func cleanupServiceInstances (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, ctx context.Context) {
+
+	options := controllerSvc.NewListResourceInstancesOptions()
+	options.SetResourceID(cosResourceID)
+	options.SetType("service_instance")
+
+	resources, _, err := controllerSvc.ListResourceInstancesWithContext(ctx, options)
+	if err != nil {
+		log.Fatalf("Failed to list COS instances: %v", err)
+	}
+
+	for _, resource := range resources.Resources {
+		if rSearch.MatchString(*resource.Name) {
+			log.Printf("Found: serviceInstance: %s\n", *resource.Name)
+
+			if !shouldDelete {
+				continue
+			}
+
+			deleteResourceInstanceOptions := controllerSvc.NewDeleteResourceInstanceOptions(
+				*resource.GUID,
+			)
+			deleteResourceInstanceOptions.SetRecursive(true)
+
+			response, err := controllerSvc.DeleteResourceInstance(deleteResourceInstanceOptions)
+			if err != nil {
+				log.Fatalf("Failed to delete GUID: %s, %v", *resource.GUID, err)
+			}
+			if shouldDebug { log.Printf("DeleteResourceInstance: response = %v\n", response.StatusCode) }
+			if (response.StatusCode != gohttp.StatusAccepted) && (response.StatusCode != gohttp.StatusNoContent) {
+				log.Fatalf("Bad StatusCode!\n")
+			}
+
+			log.Printf("Deleted %s\n", *resource.Name)
+		}
+	}
+
+}
+
+// $ ibmcloud pi connections --json | jq -r '.Payload.cloudConnections[] | select (.name|test(".*rdr-hamzy.*")) | .name'
+
+func cleanupCloudConnections (rSearch *regexp.Regexp, piCloudConnectionClient *instance.IBMPICloudConnectionClient, serviceGuid string) {
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connections.go#L20-L25
+	var cloudConnections *models.CloudConnections
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection.go#L20-L71
+	var cloudConnection *models.CloudConnection
+	var err error
+
+	cloudConnections, err = piCloudConnectionClient.GetAll()
+	if err != nil {
+		log.Fatalf("Failed to list cloud connections: %v", err)
+	}
+
+	for _, cloudConnection = range cloudConnections.CloudConnections {
+		if rSearch.MatchString(*cloudConnection.Name) {
+			log.Printf("Found: cloudConnection: %s\n", *cloudConnection.Name)
+
+			if !shouldDelete {
+				continue
+			}
+
+			log.Printf("Deleted %s\n", *cloudConnection.Name)
+		}
+	}
+
+}
+
+func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClient, DHCPNetworks map[string]struct{}, serviceGuid string) {
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_servers.go#L19
+	var dhcpServers models.DHCPServers
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_server.go#L18-L31
+	var dhcpServer *models.DHCPServer
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_server_detail.go#L20-L36
+	var dhcpServerDetail *models.DHCPServerDetail
+	var err error
+
+	dhcpServers, err = piDhcpClient.GetAll()
+	if err != nil {
+		log.Fatalf("Failed to list DHCP servers: %v", err)
+	}
+
+	// Not helpful yet
+	// 2022/03/24 15:30:51 Found: DHCPServer: 40687c22-782a-475c-af46-be765aecdf4a
+	// 2022/03/24 15:30:54 DHCPServerDetail: 40687c22-782a-475c-af46-be765aecdf4a
+	// 2022/03/24 15:30:54 Network.Name: DHCPSERVER2dc32880758344f08c8ff6933e87d27a_Private
+
+	for _, dhcpServer = range dhcpServers {
+		if shouldDebug { log.Printf("Found: DHCPServer: %s\n", *dhcpServer.ID) }
+
+		dhcpServerDetail, err = piDhcpClient.Get(*dhcpServer.ID)
+		if err != nil {
+			log.Fatalf("Failed to get DHCP detail: %v", err)
+		}
+
+		if shouldDebug { log.Printf("DHCPServerDetail: %s\n", *dhcpServerDetail.ID) }
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_server_network.go#L18-L27
+		if shouldDebug { log.Printf("Network.Name: %s\n", *dhcpServerDetail.Network.Name) }
+
+		if _, ok := DHCPNetworks[*dhcpServerDetail.Network.Name]; ok {
+			if shouldDebug { log.Printf("We should delete this!\n") }
+
+			if !shouldDelete {
+				continue
+			}
+
+			err = piDhcpClient.Delete(*dhcpServerDetail.Network.ID)
+			if err != nil {
+				log.Fatalf("Failed to get delete DHCP id %s: %v", *dhcpServerDetail.Network.ID, err)
+			}
+		}
+	}
+
+}
+
 // $ ibmcloud is load-balancers --json | jq -r '.[] | select (.name|test("rdr-hamzy.*")) | "\(.name) - \(.id)"'
 
 func cleanupLoadBalancers (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1) {
@@ -574,47 +696,6 @@ func cleanupISVPCs (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1) {
 
 }
 
-// ibmcloud resource service-instances --output JSON --service-name cloud-object-storage | jq -r '.[] | select(.name|test("rdr-hamzy.*")) | .name'
-
-func cleanupServiceInstances (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, ctx context.Context) {
-
-	options := controllerSvc.NewListResourceInstancesOptions()
-	options.SetResourceID(cosResourceID)
-	options.SetType("service_instance")
-
-	resources, _, err := controllerSvc.ListResourceInstancesWithContext(ctx, options)
-	if err != nil {
-		log.Fatalf("Failed to list COS instances: %v", err)
-	}
-
-	for _, resource := range resources.Resources {
-		if rSearch.MatchString(*resource.Name) {
-			log.Printf("Found: serviceInstance: %s\n", *resource.Name)
-
-			if !shouldDelete {
-				continue
-			}
-
-			deleteResourceInstanceOptions := controllerSvc.NewDeleteResourceInstanceOptions(
-				*resource.GUID,
-			)
-			deleteResourceInstanceOptions.SetRecursive(true)
-
-			response, err := controllerSvc.DeleteResourceInstance(deleteResourceInstanceOptions)
-			if err != nil {
-				log.Fatalf("Failed to delete GUID: %s, %v", *resource.GUID, err)
-			}
-			if shouldDebug { log.Printf("DeleteResourceInstance: response = %v\n", response.StatusCode) }
-			if (response.StatusCode != gohttp.StatusAccepted) && (response.StatusCode != gohttp.StatusNoContent) {
-				log.Fatalf("Bad StatusCode!\n")
-			}
-
-			log.Printf("Deleted %s\n", *resource.Name)
-		}
-	}
-
-}
-
 // $ ibmcloud is security-groups --json | jq -r '.[] | select (.name|test("rdr-hamzy.*")) | [ .name, .id ]'
 
 func cleanupSecurityGroups (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1, ctx context.Context) {
@@ -684,19 +765,42 @@ func cleanupSecurityGroups (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1, ctx
 // $ ibmcloud pi service-target ${SERVICE_ID}
 // $ ibmcloud pi instances --json | jq -r '.Payload.pvmInstances[] | select (.serverName|test("rdr-hamzy.*")) | .serverName'
 
-func cleanupInstances (rSearch *regexp.Regexp, piInstanceClient *instance.IBMPIInstanceClient, serviceGuid string) {
+func cleanupInstances (rSearch *regexp.Regexp, piInstanceClient *instance.IBMPIInstanceClient, serviceGuid string) map[string]struct{} {
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/p_vm_instances.go#L20-L25
+	var instances *models.PVMInstances
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/p_vm_instance_reference.go#L21-L140
+	var instance *models.PVMInstanceReference
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/p_vm_instance_network.go#L16-L44
+	var network *models.PVMInstanceNetwork
 
 	var err error
 
-	instances, err := piInstanceClient.GetAll()
+	instances, err = piInstanceClient.GetAll()
 	if err != nil {
 		log.Fatal("Error piInstanceClient.GetAll: %v\n", err)
 	}
 
-	for _, instance := range instances.PvmInstances {
+	var DHCPNetworks map[string]struct{}
+
+	DHCPNetworks = make(map[string]struct{})
+
+	for _, instance = range instances.PvmInstances {
 		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/p_vm_instance.go
 		if rSearch.MatchString(*instance.ServerName) {
 			log.Printf("Found: instance: %s\n", *instance.ServerName)
+
+			for _, network = range instance.Networks {
+//				if shouldDebug {
+					log.Printf("instance.NetworkID: %s\n", network.NetworkID)
+					log.Printf("instance.NetworkName: %s\n", network.NetworkName)
+//				}
+				if strings.HasPrefix(network.NetworkName, "DHCPSERVER") {
+					DHCPNetworks[network.NetworkName] = struct{}{}
+				}
+			}
 
 			if !shouldDelete {
 				continue
@@ -710,6 +814,8 @@ func cleanupInstances (rSearch *regexp.Regexp, piInstanceClient *instance.IBMPII
 			log.Printf("Deleted %s\n", *instance.ServerName)
 		}
 	}
+
+	return DHCPNetworks
 
 }
 
@@ -1231,14 +1337,28 @@ func main() {
 	piJobClient = instance.NewIBMPIJobClient(context.Background(), piSession, serviceGuid)
 	if shouldDebug { log.Printf("piJobClient = %v\n", piJobClient) }
 
+	var piCloudConnectionClient *instance.IBMPICloudConnectionClient
+
+	piCloudConnectionClient = instance.NewIBMPICloudConnectionClient(context.Background(), piSession, serviceGuid)
+	if shouldDebug { log.Printf("piCloudConnectionClient = %v\n", piCloudConnectionClient) }
+
+	var piDhcpClient *instance.IBMPIDhcpClient
+
+	piDhcpClient = instance.NewIBMPIDhcpClient(context.Background(), piSession, serviceGuid)
+	if shouldDebug { log.Printf("piDhcpClient = %v\n", piDhcpClient) }
+
+	var DHCPNetworks map[string]struct{}
+
 	cleanupServiceInstances(rSearch, controllerSvc, ctx)
+	cleanupCloudConnections(rSearch, piCloudConnectionClient, serviceGuid)
 	cleanupLoadBalancers(rSearch, vpcService)
 	cleanupSecurityGroups(rSearch, vpcService, ctx)
-	cleanupInstances(rSearch, piInstanceClient, serviceGuid)
+	DHCPNetworks = cleanupInstances(rSearch, piInstanceClient, serviceGuid)
+	cleanupDHCPs (rSearch, piDhcpClient, DHCPNetworks, serviceGuid)
 	cleanupISPublicGateways (rSearch, vpcService)
 	cleanupISFloatingIPs(rSearch, vpcService)
-	cleanupISVPCs(rSearch, vpcService)
 	cleanupISSubnets(rSearch, vpcService)
+	cleanupISVPCs(rSearch, vpcService)
 	cleanupImages(rSearch, piImageClient, serviceGuid)
 	cleanupDNS(rSearch, dnsRecordsService, ctx)
 	cleanupSSHKeys(rSearch, piSession, serviceGuid)
