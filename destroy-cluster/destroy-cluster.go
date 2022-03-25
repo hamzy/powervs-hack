@@ -394,7 +394,7 @@ func cleanupServiceInstances (rSearch *regexp.Regexp, controllerSvc *resourcecon
 
 // $ ibmcloud pi connections --json | jq -r '.Payload.cloudConnections[] | select (.name|test(".*rdr-hamzy.*")) | .name'
 
-func cleanupCloudConnections (rSearch *regexp.Regexp, piCloudConnectionClient *instance.IBMPICloudConnectionClient, serviceGuid string) {
+func cleanupCloudConnections (rSearch *regexp.Regexp, piCloudConnectionClient *instance.IBMPICloudConnectionClient, piJobClient *instance.IBMPIJobClient, serviceGuid string) {
 
 	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connections.go#L20-L25
 	var cloudConnections *models.CloudConnections
@@ -408,12 +408,41 @@ func cleanupCloudConnections (rSearch *regexp.Regexp, piCloudConnectionClient *i
 		log.Fatalf("Failed to list cloud connections: %v", err)
 	}
 
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job_reference.go#L18-L27
+	var jobReference *models.JobReference
+
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job.go#L18-L35
+	var job *models.Job
+
 	for _, cloudConnection = range cloudConnections.CloudConnections {
 		if rSearch.MatchString(*cloudConnection.Name) {
 			log.Printf("Found: cloudConnection: %s\n", *cloudConnection.Name)
 
 			if !shouldDelete {
 				continue
+			}
+
+			jobReference, err = piCloudConnectionClient.Delete(*cloudConnection.CloudConnectionID)
+			if err != nil {
+				log.Fatalf("Failed to delete cloud connection (%s): %v", *cloudConnection.CloudConnectionID, err)
+			}
+
+			if shouldDebug { log.Printf("jobReference: id = %s\n", *jobReference.ID) }
+
+			var waiting bool = true
+
+			for waiting {
+				job, err = piJobClient.Get(*jobReference.ID)
+				if err != nil {
+					log.Fatalf("Failed to get job %s: %v", jobReference.ID, err)
+				}
+
+				if shouldDebug { log.Printf("Status.State: %s\n", *job.Status.State) }
+
+				// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/status.go#L18-L30
+				if *job.Status.State == "completed" {
+					waiting = false
+				}
 			}
 
 			log.Printf("Deleted %s\n", *cloudConnection.Name)
@@ -464,9 +493,9 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 				continue
 			}
 
-			err = piDhcpClient.Delete(*dhcpServerDetail.Network.ID)
+			err = piDhcpClient.Delete(*dhcpServer.ID)
 			if err != nil {
-				log.Fatalf("Failed to get delete DHCP id %s: %v", *dhcpServerDetail.Network.ID, err)
+				log.Fatalf("Failed to delete DHCP id %s: %v", *dhcpServerDetail.Network.ID, err)
 			}
 		}
 	}
@@ -1350,7 +1379,7 @@ func main() {
 	var DHCPNetworks map[string]struct{}
 
 	cleanupServiceInstances(rSearch, controllerSvc, ctx)
-	cleanupCloudConnections(rSearch, piCloudConnectionClient, serviceGuid)
+	cleanupCloudConnections(rSearch, piCloudConnectionClient, piJobClient, serviceGuid)
 	cleanupLoadBalancers(rSearch, vpcService)
 	cleanupSecurityGroups(rSearch, vpcService, ctx)
 	DHCPNetworks = cleanupInstances(rSearch, piInstanceClient, serviceGuid)
