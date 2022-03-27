@@ -542,6 +542,9 @@ func cleanupLoadBalancers (rSearch *regexp.Regexp, vpcService *vpcv1.VpcV1) {
 				if response.StatusCode == gohttp.StatusNotFound {
 					break
 				}
+				if response.StatusCode == gohttp.StatusInternalServerError {
+					continue
+				}
 
 				if err != nil {
 					log.Fatalf("Failed to get id: %s and the response is: %v", *loadBalancer.ID, err)
