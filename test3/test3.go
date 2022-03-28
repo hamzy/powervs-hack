@@ -519,7 +519,10 @@ func listDhcps(piDhcpClient *instance.IBMPIDhcpClient, piNetworkClient *instance
 			log.Fatalf("Error: piNetworkClient.Get: %v\n", err)
 		}
 
-		if shouldDebug { log.Printf("network = %v\n", network) }
+		if shouldDebug {
+			log.Printf("network = %+v\n", network)
+			spew.Dump(network)
+		}
 	}
 }
 
@@ -602,8 +605,8 @@ func createDhcp(piJobClient *instance.IBMPIJobClient, piCloudConnectionClient *i
 	spew.Printf("dhcpServer: %v\n", dhcpServer)
 
 	if shouldDebug {
-		log.Printf ("dhcpServer.ID = %s\n", dhcpServer.ID)
-		log.Printf ("dhcpServer.Network.ID = %s\n", dhcpServer.Network.ID)
+		log.Printf ("dhcpServer.ID = %s\n", *dhcpServer.ID)
+		log.Printf ("dhcpServer.Network.ID = %s\n", *dhcpServer.Network.ID)
 	}
 
 	DHCPNetworks[*dhcpServer.Network.ID] = struct{}{}
@@ -700,7 +703,8 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 			log.Fatalf("Failed to get DHCP detail: %v", err)
 		}
 
-		if shouldDebug { log.Printf("DHCPServerDetail: %s\n", *dhcpServerDetail.ID) }
+		// if shouldDebug { log.Printf("DHCPServerDetail: %s\n", *dhcpServerDetail.ID) }
+		if shouldDebug { spew.Dump(dhcpServerDetail) }
 
 		// https://github.com/IBM-Cloud/power-go-client/blob/v1.1.5/power/models/d_h_c_p_server_network.go#L18-L27
 		if shouldDebug {
@@ -713,6 +717,11 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 					log.Printf("Network.Name: %s\n", *dhcpServerDetail.Network.Name)
 				}
 			}
+		}
+
+		if dhcpServerDetail.Network.Name == nil {
+			log.Printf("Skipping since network name is empty")
+			continue
 		}
 
 		if _, ok := DHCPNetworks[*dhcpServerDetail.Network.Name]; ok {
