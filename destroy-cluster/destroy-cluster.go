@@ -217,7 +217,7 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 	if err != nil {
 		return "", fmt.Errorf("Error bxsession.New: %v", err)
 	}
-	if shouldDebug { log.Printf("bxSession = %v\n", bxSession) }
+	if shouldDebug { log.Printf("bxSession = %+v\n", bxSession) }
 
 	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
 		DefaultHeader: gohttp.Header{
@@ -227,7 +227,7 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 	if err != nil {
 		return "", fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
 	}
-	if shouldDebug { log.Printf("tokenRefresher = %v\n", tokenRefresher) }
+	if shouldDebug { log.Printf("tokenRefresher = %+v\n", tokenRefresher) }
 	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
 	if err != nil {
 		return "", fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
@@ -237,13 +237,13 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 	if err != nil {
 		return "", fmt.Errorf("Error controllerv2.New: %v", err)
 	}
-	if shouldDebug { log.Printf("ctrlv2 = %v\n", ctrlv2) }
+	if shouldDebug { log.Printf("ctrlv2 = %+v\n", ctrlv2) }
 
 	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
 	if err != nil {
 		return "", fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
 	}
-	if shouldDebug { log.Printf("resourceClientV2 = %v\n", resourceClientV2) }
+	if shouldDebug { log.Printf("resourceClientV2 = %+v\n", resourceClientV2) }
 
 	svcs, err := resourceClientV2.ListInstances(controllerv2.ServiceInstanceQuery{
 		Type: "service_instance",
@@ -291,7 +291,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 	if err != nil {
 		return nil, fmt.Errorf("Error bxsession.New: %v", err)
 	}
-	if shouldDebug { log.Printf("bxSession = %v\n", bxSession) }
+	if shouldDebug { log.Printf("bxSession = %+v\n", bxSession) }
 
 	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
 		DefaultHeader: gohttp.Header{
@@ -301,7 +301,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 	if err != nil {
 		return nil, fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
 	}
-	if shouldDebug { log.Printf("tokenRefresher = %v\n", tokenRefresher) }
+	if shouldDebug { log.Printf("tokenRefresher = %+v\n", tokenRefresher) }
 	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
 	if err != nil {
 		return nil, fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
@@ -316,19 +316,19 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 	if err != nil {
 		return nil, fmt.Errorf("Error controllerv2.New: %v", err)
 	}
-	if shouldDebug { log.Printf("ctrlv2 = %v\n", ctrlv2) }
+	if shouldDebug { log.Printf("ctrlv2 = %+v\n", ctrlv2) }
 
 	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
 	if err != nil {
 		return nil, fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
 	}
-	if shouldDebug { log.Printf("resourceClientV2 = %v\n", resourceClientV2) }
+	if shouldDebug { log.Printf("resourceClientV2 = %+v\n", resourceClientV2) }
 
 	serviceInstance, err := resourceClientV2.GetInstance(serviceGuid)
 	if err != nil {
 		return nil, fmt.Errorf("Error resourceClientV2.GetInstance: %v", err)
 	}
-	if shouldDebug { log.Printf("serviceInstance = %v\n", serviceInstance) }
+	if shouldDebug { log.Printf("serviceInstance = %+v\n", serviceInstance) }
 
 	region, err:= GetRegion(serviceInstance.RegionID)
 	if err != nil {
@@ -345,7 +345,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 	if err != nil {
 		return nil, fmt.Errorf("Error ibmpisession.New: %v", err)
 	}
-	if shouldDebug { log.Printf("piSession = %v\n", piSession) }
+	if shouldDebug { log.Printf("piSession = %+v\n", piSession) }
 
 	return piSession, nil
 
@@ -1363,27 +1363,27 @@ func main() {
 	var piInstanceClient *instance.IBMPIInstanceClient
 
 	piInstanceClient = instance.NewIBMPIInstanceClient(context.Background(), piSession, serviceGuid)
-	if shouldDebug { log.Printf("piInstanceClient = %v\n", piInstanceClient) }
+	if shouldDebug { log.Printf("piInstanceClient = %+v\n", piInstanceClient) }
 
 	var piImageClient *instance.IBMPIImageClient
 
 	piImageClient = instance.NewIBMPIImageClient(context.Background(), piSession, serviceGuid)
-	if shouldDebug { log.Printf("piImageClient = %v\n", piImageClient) }
+	if shouldDebug { log.Printf("piImageClient = %+v\n", piImageClient) }
 
 	var piJobClient *instance.IBMPIJobClient
 
 	piJobClient = instance.NewIBMPIJobClient(context.Background(), piSession, serviceGuid)
-	if shouldDebug { log.Printf("piJobClient = %v\n", piJobClient) }
+	if shouldDebug { log.Printf("piJobClient = %+v\n", piJobClient) }
 
 	var piCloudConnectionClient *instance.IBMPICloudConnectionClient
 
 	piCloudConnectionClient = instance.NewIBMPICloudConnectionClient(context.Background(), piSession, serviceGuid)
-	if shouldDebug { log.Printf("piCloudConnectionClient = %v\n", piCloudConnectionClient) }
+	if shouldDebug { log.Printf("piCloudConnectionClient = %+v\n", piCloudConnectionClient) }
 
 	var piDhcpClient *instance.IBMPIDhcpClient
 
 	piDhcpClient = instance.NewIBMPIDhcpClient(context.Background(), piSession, serviceGuid)
-	if shouldDebug { log.Printf("piDhcpClient = %v\n", piDhcpClient) }
+	if shouldDebug { log.Printf("piDhcpClient = %+v\n", piDhcpClient) }
 
 	var DHCPNetworks map[string]struct{}
 
