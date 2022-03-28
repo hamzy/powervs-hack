@@ -202,7 +202,7 @@ func GetRegion(zone string) (region string, err error) {
 	return
 }
 
-func getServiceGuid(ptrApiKey *string, ptrRegionID *string, ptrServiceName *string) (string, error) {
+func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) (string, error) {
 
 	var bxSession *bxsession.Session
 	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
@@ -263,7 +263,7 @@ func getServiceGuid(ptrApiKey *string, ptrRegionID *string, ptrServiceName *stri
 			serviceGuid = svc.Guid
 			break
 		}
-		if (ptrRegionID != nil) && (svc.RegionID == *ptrRegionID) {
+		if (ptrZone != nil) && (svc.RegionID == *ptrZone) {
 			serviceGuid = svc.Guid
 			break
 		}
@@ -277,7 +277,7 @@ func getServiceGuid(ptrApiKey *string, ptrRegionID *string, ptrServiceName *stri
 
 }
 
-func createPiSession(ptrApiKey *string, serviceGuid string, ptrRegionID *string, ptrServiceName *string) (*ibmpisession.IBMPISession, error) {
+func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptrServiceName *string) (*ibmpisession.IBMPISession, error) {
 
 	var bxSession *bxsession.Session
 	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
@@ -812,7 +812,7 @@ func cleanupInstances (rSearch *regexp.Regexp, piInstanceClient *instance.IBMPII
 
 	instances, err = piInstanceClient.GetAll()
 	if err != nil {
-		log.Fatal("Error piInstanceClient.GetAll: %v\n", err)
+		log.Fatalf("Error piInstanceClient.GetAll: %v\n", err)
 	}
 
 	var DHCPNetworks map[string]struct{}
@@ -840,7 +840,7 @@ func cleanupInstances (rSearch *regexp.Regexp, piInstanceClient *instance.IBMPII
 
 			err = piInstanceClient.Delete(*instance.PvmInstanceID)
 			if err != nil {
-				log.Fatal("Error piInstanceClient.Delete: %v\n", err)
+				log.Fatalf("Error piInstanceClient.Delete: %v\n", err)
 			}
 
 			log.Printf("Deleted %s\n", *instance.ServerName)
@@ -859,7 +859,7 @@ func cleanupImages (rSearch *regexp.Regexp, piImageClient *instance.IBMPIImageCl
 
 	images, err := piImageClient.GetAll()
 	if err != nil {
-		log.Fatal("Error piImageClient.GetAll: %v\n", err)
+		log.Fatalf("Error piImageClient.GetAll: %v\n", err)
 	}
 
 	for _, image := range images.Images {
@@ -873,7 +873,7 @@ func cleanupImages (rSearch *regexp.Regexp, piImageClient *instance.IBMPIImageCl
 
 			err = piImageClient.Delete(*image.ImageID)
 			if err != nil {
-				log.Fatal("Error piImageClient.Delete: %v\n", err)
+				log.Fatalf("Error piImageClient.Delete: %v\n", err)
 			}
 
 			log.Printf("Deleted %s\n", *image.Name)
@@ -977,7 +977,7 @@ func cleanupSSHKeys (rSearch *regexp.Regexp, piSession *ibmpisession.IBMPISessio
 	params := p_cloud_tenants_ssh_keys.NewPcloudTenantsSshkeysGetallParamsWithTimeout(helpers.PIGetTimeOut).WithTenantID(tenantId)
 	resp, err := piSession.Power.PCloudTenantsSSHKeys.PcloudTenantsSshkeysGetall(params, ibmpisession.NewAuth(piSession, serviceGuid))
 	if err != nil {
-		log.Fatal("Error PcloudTenantsSshkeysGetall: %v\n", err)
+		log.Fatalf("Error PcloudTenantsSshkeysGetall: %v\n", err)
 	}
 
 	var sshKeys *models.SSHKeys = resp.Payload
@@ -994,7 +994,7 @@ func cleanupSSHKeys (rSearch *regexp.Regexp, piSession *ibmpisession.IBMPISessio
 			params := p_cloud_tenants_ssh_keys.NewPcloudTenantsSshkeysDeleteParamsWithTimeout(helpers.PIDeleteTimeOut).WithTenantID(tenantId).WithSshkeyName(*sshKey.Name)
 			_, err = piSession.Power.PCloudTenantsSSHKeys.PcloudTenantsSshkeysDelete(params, ibmpisession.NewAuth(piSession, serviceGuid))
 			if err != nil {
-				log.Fatal("Error NewPcloudTenantsSshkeysDeleteParamsWithTimeout: %v\n", err)
+				log.Fatalf("Error NewPcloudTenantsSshkeysDeleteParamsWithTimeout: %v\n", err)
 			}
 
 			log.Printf("Deleted %s\n", *sshKey.Name)
@@ -1039,7 +1039,7 @@ func cleanupReclamations (rSearch *regexp.Regexp, controllerSvc *resourcecontrol
 
 	reclamations, response, err = controllerSvc.ListReclamationsWithContext(ctx, getReclamationOptions)
 	if err != nil {
-		log.Fatal("Error: ListReclamationsWithContext: %v, response = %v\n", err, response)
+		log.Fatalf("Error: ListReclamationsWithContext: %v, response = %v\n", err, response)
 	}
 
 	// ibmcloud resource reclamations --output json
@@ -1048,7 +1048,7 @@ func cleanupReclamations (rSearch *regexp.Regexp, controllerSvc *resourcecontrol
 
 		cosInstance, response, err = controllerSvc.GetResourceInstanceWithContext(ctx, getInstanceOptions)
 		if err != nil {
-			log.Fatal("Error: GetResourceInstanceWithContext: %v, response = %v\n", err, response)
+			log.Fatalf("Error: GetResourceInstanceWithContext: %v, response = %v\n", err, response)
 		}
 
 		if rSearch.MatchString(*cosInstance.Name) {
@@ -1069,7 +1069,7 @@ func cleanupReclamations (rSearch *regexp.Regexp, controllerSvc *resourcecontrol
 
 			_, response, err = controllerSvc.RunReclamationActionWithContext(ctx, reclamationActionOptions)
 			if err != nil {
-				log.Fatal("Error: RunReclamationActionWithContext: %v, response = %v\n", err, response)
+				log.Fatalf("Error: RunReclamationActionWithContext: %v, response = %v\n", err, response)
 			}
 		}
 	}
@@ -1084,7 +1084,7 @@ func cleanupJobs (rSearch *regexp.Regexp, piJobClient *instance.IBMPIJobClient, 
 
 	jobs, err = piJobClient.GetAll()
 	if err != nil {
-		log.Fatal("Error piJobClient.GetAll: %v\n", err)
+		log.Fatalf("Error piJobClient.GetAll: %v\n", err)
 	}
 
 	for _, job = range jobs.Jobs {
@@ -1127,7 +1127,7 @@ func main() {
 	var ptrMetadaFilename *string
 	var ptrApiKey *string
 	var ptrSearch *string
-	var ptrRegionID *string = nil
+	var ptrZone *string = nil
 	var ptrServiceName *string
 	var ptrCISInstanceCRN *string
 	var ptrDNSZone *string
@@ -1137,6 +1137,7 @@ func main() {
 	var needAPIKey = true
 	var needSearch = true
 	var needRegion = true
+	var needZone = true
 	var needServiceName = true
 	var needCISInstanceCRN = true
 	var needDNSZone = true
@@ -1148,6 +1149,7 @@ func main() {
 	ptrCISInstanceCRN = flag.String("CISInstanceCRN", "", "ibmcloud cis instances --output json | jq -r '.[] | select (.name|test(\"powervs-ipi-cis\")) | .crn'")
 	ptrDNSZone = flag.String("dnsZone", "", "The DNS zone Ex: scnl-ibm.com")
 	ptrRegion = flag.String("region", "", "The region to use")
+	ptrZone = flag.String("zone", "", "The zone to use")
 	ptrShouldDebug = flag.String("shouldDebug", "false", "Should output debug output")
 	ptrShouldDelete = flag.String("shouldDelete", "false", "Should delete matching records")
 
@@ -1159,7 +1161,7 @@ func main() {
 	case "false":
 		shouldDebug = false
 	default:
-		log.Fatal("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+		log.Fatalf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
 	}
 
 	if *ptrMetadaFilename != "" {
@@ -1215,8 +1217,9 @@ func main() {
 		needSearch = false
 
 		ptrServiceName = nil
-		ptrRegionID = &data.PowerVS.Zone
+		ptrZone = &data.PowerVS.Zone
 		needServiceName = false
+		needZone = false
 
 		if data.PowerVS.CISInstanceCRN != "" {
 			ptrCISInstanceCRN= &data.PowerVS.CISInstanceCRN
@@ -1251,13 +1254,16 @@ func main() {
 	if needRegion && *ptrRegion == "" {
 		log.Fatal("Error: No region set, use -region")
 	}
+	if needZone && *ptrZone == "" {
+		log.Fatal("Error: No zone set, use -zone")
+	}
 	switch strings.ToLower(*ptrShouldDelete) {
 	case "true":
 		shouldDelete = true
 	case "false":
 		shouldDelete = false
 	default:
-		log.Fatal("Error: shouldDelete is not true/false (%s)\n", *ptrShouldDelete)
+		log.Fatalf("Error: shouldDelete is not true/false (%s)\n", *ptrShouldDelete)
 	}
 
 	rSearch, _ := regexp.Compile(*ptrSearch)
@@ -1344,14 +1350,14 @@ func main() {
 	var piSession *ibmpisession.IBMPISession
 	var serviceGuid string
 
-	serviceGuid, err = getServiceGuid(ptrApiKey, ptrRegionID, ptrServiceName)
+	serviceGuid, err = getServiceGuid(ptrApiKey, ptrZone, ptrServiceName)
 	if err != nil {
-		log.Fatal("Error: getServiceGuid: %v\n", err)
+		log.Fatalf("Error: getServiceGuid: %v\n", err)
 	}
 
-	piSession, err = createPiSession(ptrApiKey, serviceGuid, ptrRegionID, ptrServiceName)
+	piSession, err = createPiSession(ptrApiKey, serviceGuid, ptrZone, ptrServiceName)
 	if err != nil {
-		log.Fatal("Error: createPiSession: %v\n", err)
+		log.Fatalf("Error: createPiSession: %v\n", err)
 	}
 
 	var piInstanceClient *instance.IBMPIInstanceClient
