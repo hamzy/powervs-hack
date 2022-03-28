@@ -505,6 +505,11 @@ func listDhcps(piDhcpClient *instance.IBMPIDhcpClient, piNetworkClient *instance
 		if shouldDebug {
 			log.Printf("Found: DHCPServer.ID: %s\n", *dhcpServer.ID)
 			log.Printf("Found: DHCPServer.Network.ID: %s\n", *dhcpServer.Network.ID)
+			if dhcpServer.Network == nil {
+				log.Printf("Found: DHCPServer.Network.Name: nil\n")
+			} else {
+				log.Printf("Found: DHCPServer.Network.Name: %s\n", *dhcpServer.Network.Name)
+			}
 			log.Printf("Found: DHCPServer.Network.Name: %s\n", *dhcpServer.Network.Name)
 			log.Printf("Found: DHCPServer.Status: %s\n", *dhcpServer.Status)
 		}
@@ -513,6 +518,8 @@ func listDhcps(piDhcpClient *instance.IBMPIDhcpClient, piNetworkClient *instance
 		if err != nil {
 			log.Fatalf("Error: piNetworkClient.Get: %v\n", err)
 		}
+
+		if shouldDebug { log.Printf("network = %v\n", network) }
 	}
 }
 
@@ -537,9 +544,18 @@ func createDhcp(piJobClient *instance.IBMPIJobClient, piCloudConnectionClient *i
 		log.Fatalf("Error: piCloudConnectionClient.Create: %v\n", err)
 	}
 
-	//cloudConnection.CloudConnectionID
-	spew.Printf("cloudConnection: %v\n", cloudConnection)
-	spew.Printf("createRespAccepted: %v\n", createRespAccepted)
+	if shouldDebug {
+		if cloudConnection == nil {
+			log.Print("cloudConnection is nil\n")
+		} else {
+			log.Printf("cloudConnection.CloudConnectionID = %s\n", *cloudConnection.CloudConnectionID)
+		}
+		if createRespAccepted == nil {
+			log.Print("createRespAccepted is nil\n")
+		} else {
+			log.Printf("createRespAccepted.CloudConnection.CloudConnectionID = %s\n", *createRespAccepted.CloudConnection.CloudConnectionID)
+		}
+	}
 
 	// https://github.com/IBM-Cloud/power-go-client/blob/v1.1.5/power/models/job.go#L18-L35
 	var job *models.Job
@@ -570,6 +586,7 @@ func createDhcp(piJobClient *instance.IBMPIJobClient, piCloudConnectionClient *i
 		log.Printf("createRespAccepted = %v\n", createRespAccepted)
 		log.Fatalf("Need a cloud connection id!")
 	}
+	if shouldDebug { log.Printf("models.DHCPServerCreate{%s}\n", cloudConnectionID) }
 
 	var dhcpServerCreate = &models.DHCPServerCreate{
 		CloudConnectionID: cloudConnectionID,
@@ -686,7 +703,17 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 		if shouldDebug { log.Printf("DHCPServerDetail: %s\n", *dhcpServerDetail.ID) }
 
 		// https://github.com/IBM-Cloud/power-go-client/blob/v1.1.5/power/models/d_h_c_p_server_network.go#L18-L27
-		if shouldDebug { log.Printf("Network.Name: %s\n", *dhcpServerDetail.Network.Name) }
+		if shouldDebug {
+			if dhcpServerDetail.Network == nil {
+				log.Printf("dhcpServerDetail.Network: nil\n")
+			} else {
+				if dhcpServerDetail.Network.Name == nil {
+					log.Printf("dhcpServerDetail.Network.Name: nil\n")
+				} else {
+					log.Printf("Network.Name: %s\n", *dhcpServerDetail.Network.Name)
+				}
+			}
+		}
 
 		if _, ok := DHCPNetworks[*dhcpServerDetail.Network.Name]; ok {
 			if shouldDebug { log.Printf("We should delete this!\n") }
