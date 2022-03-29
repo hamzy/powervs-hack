@@ -459,8 +459,6 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_server.go#L18-L31
 	var dhcpServer *models.DHCPServer
 
-	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_server_detail.go#L20-L36
-	var dhcpServerDetail *models.DHCPServerDetail
 	var err error
 
 	dhcpServers, err = piDhcpClient.GetAll()
@@ -470,24 +468,20 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 
 	// Not helpful yet
 	// 2022/03/24 15:30:51 Found: DHCPServer: 40687c22-782a-475c-af46-be765aecdf4a
-	// 2022/03/24 15:30:54 DHCPServerDetail: 40687c22-782a-475c-af46-be765aecdf4a
 	// 2022/03/24 15:30:54 Network.Name: DHCPSERVER2dc32880758344f08c8ff6933e87d27a_Private
 
 	for _, dhcpServer = range dhcpServers {
-		if shouldDebug { log.Printf("Found: DHCPServer: %s\n", *dhcpServer.ID) }
-
-		dhcpServerDetail, err = piDhcpClient.Get(*dhcpServer.ID)
-		if err != nil {
-			log.Fatalf("Failed to get DHCP detail: %v", err)
+		if dhcpServer.Network == nil {
+			if shouldDebug { log.Printf("DHCP has empty Network: %s\n", *dhcpServer.ID) }
+			continue
+		}
+		if dhcpServer.Network.Name == nil {
+			if shouldDebug { log.Printf("DHCP has empty Network.Name: %s\n", *dhcpServer.ID) }
+			continue
 		}
 
-		if shouldDebug { log.Printf("DHCPServerDetail: %s\n", *dhcpServerDetail.ID) }
-
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_server_network.go#L18-L27
-		if shouldDebug { log.Printf("Network.Name: %s\n", *dhcpServerDetail.Network.Name) }
-
-		if _, ok := DHCPNetworks[*dhcpServerDetail.Network.Name]; ok {
-			if shouldDebug { log.Printf("We should delete this!\n") }
+		if _, ok := DHCPNetworks[*dhcpServer.Network.Name]; ok {
+			log.Printf("Found: DHCP: %s (%s)\n", *dhcpServer.Network.Name, *dhcpServer.ID)
 
 			if !shouldDelete {
 				continue
@@ -495,7 +489,7 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 
 			err = piDhcpClient.Delete(*dhcpServer.ID)
 			if err != nil {
-				log.Fatalf("Failed to delete DHCP id %s: %v", *dhcpServerDetail.Network.ID, err)
+				log.Fatalf("Failed to delete DHCP id %s: %v", *dhcpServer.ID, err)
 			}
 		}
 	}
