@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# (export CLUSTER_DIR="./ocp-test"; export IBMID="hamzy@us.ibm.com"; export CLUSTER_NAME="rdr-hamzy-test"; export IBMCLOUD_REGION="lon"; export IBMCLOUD_ZONE="lon04"; export VPCREGION="eu-gb"; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
+# (export CLUSTER_DIR="./ocp-test"; export IBMID="hamzy@us.ibm.com"; export CLUSTER_NAME="rdr-hamzy-test"; export POWERVS_REGION="lon"; export POWERVS_ZONE="lon04"; export VPCREGION="eu-gb"; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
 #
 
 function log_to_file()
@@ -227,7 +227,7 @@ function reboot_master_nodes()
 }
 
 declare -a ENV_VARS
-ENV_VARS=( "IBMCLOUD_API_KEY" "CLUSTER_DIR" "IBMID" "CLUSTER_NAME" "IBMCLOUD_REGION" "IBMCLOUD_ZONE" "VPCREGION" )
+ENV_VARS=( "IBMCLOUD_API_KEY" "CLUSTER_DIR" "IBMID" "CLUSTER_NAME" "POWERVS_REGION" "POWERVS_ZONE" "VPCREGION" )
 #ENV_VARS+=( "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
 
 for VAR in ${ENV_VARS[@]}
@@ -314,9 +314,9 @@ platform:
 #   APIKey: "${IBMCLOUD_API_KEY}"
     powervsResourceGroup: "powervs-ipi-resource-group"
     pvsNetworkName: "pvs-ipi-net"
-    region: "${IBMCLOUD_REGION}"
+    region: "${POWERVS_REGION}"
     vpcRegion: "${VPCREGION}"
-    zone: "${IBMCLOUD_ZONE}"
+    zone: "${POWERVS_ZONE}"
     serviceInstanceID: "e449d86e-c3a0-4c07-959e-8557fdf55482"
     vpc: "powervs-ipi"
     subnets:
