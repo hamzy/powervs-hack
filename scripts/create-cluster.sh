@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# (export CLUSTER_DIR="./ocp-test"; export IBMID="hamzy@us.ibm.com"; export CLUSTER_NAME="rdr-hamzy-test"; export POWERVS_REGION="lon"; export POWERVS_ZONE="lon04"; export VPCREGION="eu-gb"; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
+# (export CLUSTER_DIR="./ocp-test"; export IBMID="hamzy@us.ibm.com"; export CLUSTER_NAME="rdr-hamzy-test"; export POWERVS_REGION="lon"; export POWERVS_ZONE="lon04"; export SERVICE_INSTANCE="powervs-ipi-lon04"; export VPCREGION="eu-gb"; export VPC="powervs-ipi"; export SUBNET="subnet2"; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
 #
 
 function log_to_file()
@@ -227,7 +227,7 @@ function reboot_master_nodes()
 }
 
 declare -a ENV_VARS
-ENV_VARS=( "IBMCLOUD_API_KEY" "CLUSTER_DIR" "IBMID" "CLUSTER_NAME" "POWERVS_REGION" "POWERVS_ZONE" "VPCREGION" )
+ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE" "SUBNET" "VPC" "VPCREGION" )
 #ENV_VARS+=( "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
 
 for VAR in ${ENV_VARS[@]}
@@ -247,6 +247,9 @@ done
 
 set -euo pipefail
 
+export IBMCLOUD_REGION=${POWERVS_REGION}
+export IBMCLOUD_ZONE=${POWERVS_ZONE}
+
 export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:4.10-powervs"
 
 export PATH=${PATH}:$(pwd)/bin
@@ -254,11 +257,14 @@ export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
 export KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig
 export IC_API_KEY=${IBMCLOUD_API_KEY}
 
+#export TF_LOG_PROVIDER=TRACE
 #export TF_LOG=TRACE
-#export TF_LOG_PATH=/tmp
+#export TF_LOG_PATH=/tmp/tf.log
 #export IBMCLOUD_TRACE=true
 
 set -x
+
+export SERVICE_INSTANCE_ID=$(ibmcloud resource service-instance ${SERVICE_INSTANCE} --output json | jq -r '.[].guid')
 
 declare -a JOBS
 
@@ -311,16 +317,15 @@ networking:
 platform:
   powervs:
     userid: "${IBMID}"
-#   APIKey: "${IBMCLOUD_API_KEY}"
     powervsResourceGroup: "powervs-ipi-resource-group"
     pvsNetworkName: "pvs-ipi-net"
     region: "${POWERVS_REGION}"
     vpcRegion: "${VPCREGION}"
     zone: "${POWERVS_ZONE}"
-    serviceInstanceID: "e449d86e-c3a0-4c07-959e-8557fdf55482"
-    vpc: "powervs-ipi"
+    serviceInstanceID: "${SERVICE_INSTANCE_ID}"
+    vpc: "${VPC}"
     subnets:
-    - subnet2
+    - "${SUBNET}"
 publish: External
 pullSecret: '${PULL_SECRET}'
 sshKey: |
