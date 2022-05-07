@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -xe
+set -euo pipefail
 
 if [ -z "${IBMCLOUD_API_KEY}" ]
 then
@@ -7,7 +7,7 @@ then
 	exit 1
 fi
 
-DHCP_ID=$1
+DHCP_ID=${1-}
 
 if [ -z "${POWERVS_REGION}" ]
 then
@@ -30,13 +30,41 @@ BEARER_TOKEN=$(curl --silent -X POST "https://iam.cloud.ibm.com/identity/token" 
 if [ -z "${DHCP_ID}" ]
 then
 
-	curl -s --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}" | jq -r '.[] | "\(.id) - \(.network.name)"'
+	RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+	echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
+	RC=${PIPESTATUS[1]}
+
+	if [ ${RC} -gt 0 ]
+	then
+		echo "${RESULT}"
+	fi
 
 else
 
-	ACTION=GET
-	test "$2" == "-d" && ACTION=DELETE
+	CURL_ACTION=${2-g}
+	case "${CURL_ACTION}" in
+		"-d"|"-D")
+			ACTION=DELETE
+			RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp/${DHCP_ID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+			;;
+		"-c"|"-C")
+			ACTION=POST
+			CLOUD_CON_ID=${DHCP_ID}
+			RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}" --data '{"cloudConnectionID": "'${CLOUD_CON_ID}'"}')
+			;;
+		"-g"|"-G"|*)
+			ACTION=GET
+			RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp/${DHCP_ID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+			;;
 
-	curl -s --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp/${DHCP_ID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}" | jq -r '.'
+	esac
+
+	echo "${RESULT}" | jq -r '.'
+	RC=${PIPESTATUS[1]}
+
+	if [ ${RC} -gt 0 ]
+	then
+		echo "${RESULT}"
+	fi
 
 fi
