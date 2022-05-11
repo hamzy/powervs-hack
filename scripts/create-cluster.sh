@@ -277,10 +277,10 @@ then
 fi
 
 # Quota check cloud connections
-CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.Payload.cloudConnections')
-if [ "${CONNECTIONS}" != "[]" ]
+CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.Payload.cloudConnections|length')
+if (( ${CONNECTIONS} >= 2 ))
 then
-	echo "${CONNECTIONS}"
+	echo "Error: Cannot have 2 or more cloud connections.  You currently have ${CONNECTIONS}."
 	exit 1
 fi
 
