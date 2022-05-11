@@ -227,7 +227,8 @@ function reboot_master_nodes()
 }
 
 declare -a ENV_VARS
-ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE" "SUBNET" "VPC" "VPCREGION" )
+#ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_NETWORK" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE" "SUBNET" "VPC" "VPCREGION" )
+ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE" "VPCREGION" )
 #ENV_VARS+=( "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
 
 for VAR in ${ENV_VARS[@]}
@@ -250,7 +251,9 @@ set -euo pipefail
 export IBMCLOUD_REGION=${POWERVS_REGION}
 export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:4.10-powervs"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:4.10-powervs"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly:4.11.0-0.nightly-ppc64le-2022-05-06-093203"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly:4.11.0-0.nightly-ppc64le-2022-05-10-222820"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -263,6 +266,23 @@ export IC_API_KEY=${IBMCLOUD_API_KEY}
 #export IBMCLOUD_TRACE=true
 
 set -x
+
+# Quota check DNS
+export DNS_DOMAIN_ID=$(ibmcloud cis domains --output json | jq -r '.[].id')
+RECORDS=$(ibmcloud cis dns-records ${DNS_DOMAIN_ID} --output json | jq -r '.[] | select (.name|test("rdr-hamzy.*")) | "\(.name) - \(.id)"')
+if [ -n "${RECORDS}" ]
+then
+	echo "${RECORDS}"
+	exit 1
+fi
+
+# Quota check cloud connections
+CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.Payload.cloudConnections')
+if [ "${CONNECTIONS}" != "[]" ]
+then
+	echo "${CONNECTIONS}"
+	exit 1
+fi
 
 export SERVICE_INSTANCE_ID=$(ibmcloud resource service-instance ${SERVICE_INSTANCE} --output json | jq -r '.[].guid')
 
@@ -287,6 +307,19 @@ mkdir ${CLUSTER_DIR}
 SSH_KEY=$(cat ~/.ssh/id_rsa.pub)
 PULL_SECRET=$(cat ~/.pullSecret)
 
+#platform:
+#  powervs:
+#    userid: "${IBMID}"
+#    powervsResourceGroup: "powervs-ipi-resource-group"
+#    pvsNetworkName: "${IBMCLOUD_NETWORK}"
+#    region: "${POWERVS_REGION}"
+#    vpcRegion: "${VPCREGION}"
+#    zone: "${POWERVS_ZONE}"
+#    serviceInstanceID: "${SERVICE_INSTANCE_ID}"
+#    vpc: "${VPC}"
+#    subnets:
+#    - "${SUBNET}"
+
 cat << ___EOF___ > ${CLUSTER_DIR}/install-config.yaml
 apiVersion: v1
 baseDomain: scnl-ibm.com
@@ -310,7 +343,7 @@ networking:
   - cidr: 10.128.0.0/14
     hostPrefix: 23
   machineNetwork:
-  - cidr: 10.0.0.0/16
+  - cidr: 192.168.0.0/16
   networkType: OpenShiftSDN
   serviceNetwork:
   - 172.30.0.0/16
@@ -318,14 +351,10 @@ platform:
   powervs:
     userid: "${IBMID}"
     powervsResourceGroup: "powervs-ipi-resource-group"
-    pvsNetworkName: "pvs-ipi-net"
     region: "${POWERVS_REGION}"
     vpcRegion: "${VPCREGION}"
     zone: "${POWERVS_ZONE}"
     serviceInstanceID: "${SERVICE_INSTANCE_ID}"
-    vpc: "${VPC}"
-    subnets:
-    - "${SUBNET}"
 publish: External
 pullSecret: '${PULL_SECRET}'
 sshKey: |
@@ -338,6 +367,24 @@ sed -i '/^baseDomain:.*$/a credentialsMode: Manual' ${CLUSTER_DIR}/install-confi
 openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
 
 openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
+
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-ccm-credentials.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: ibm-cloud-credentials
+  namespace: openshift-cloud-controller-manager
+stringData:
+  ibm-credentials.env: |-
+    IBMCLOUD_AUTHTYPE=iam
+    IBMCLOUD_APIKEY=${IBMCLOUD_API_KEY}
+  ibmcloud_api_key: ${IBMCLOUD_API_KEY}
+type: Opaque
+___EOF___
+
+if false
+then
 
 cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-ingress-operator-cloud-credentials-credentials.yaml
 apiVersion: v1
@@ -369,7 +416,24 @@ stringData:
 type: Opaque
 ___EOF___
 
+else
+
+cp ~/Downloads/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml ${CLUSTER_DIR}/manifests/
+cp ~/Downloads/openshift-ingress-operator-cloud-credentials-credentials.yaml ${CLUSTER_DIR}/manifests/
+
+fi
+
+if false
+then
+cp /home/OpenShift/git/karthik-cluster-cloud-controller-manager-operator/manifests/0000_26_cloud-controller-manager-operator_11_deployment.yaml ${CLUSTER_DIR}/manifests/
+cp /home/OpenShift/git/karthik-cluster-cloud-controller-manager-operator/manifests/0000_26_cloud-controller-manager-operator_01_images.configmap.yaml ${CLUSTER_DIR}/manifests/
+sed -i -e 's,image: .*$,image: quay.io/hamzy/cluster-cloud-controller-manager-operator:remove_port,' ${CLUSTER_DIR}/manifests/0000_26_cloud-controller-manager-operator_11_deployment.yaml
+sed -i -e 's,quay.io/openshift/origin-cluster-cloud-controller-manager-operator,quay.io/hamzy/cluster-cloud-controller-manager-operator:remove_port,' ${CLUSTER_DIR}/manifests/0000_26_cloud-controller-manager-operator_01_images.configmap.yaml
+
+# curl --silent --location --output - https://raw.githubusercontent.com/Karthik-K-N/cluster-cloud-controller-manager-operator/0d5cb9d8d46240724b71df602659b584268c89ab/pkg/cloud/powervs/assets/deployment.yaml | sed -e 's,{{ .cloudproviderName }},PowerVS,' -e 's,{{ .images.CloudControllerManager }},quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:daee38f9ba7e63d7e0a93c79d28a617edfde31523a107c68b3e01a8d63c7bfe1,' > ${CLUSTER_DIR}/manifests/
+
 curl --silent --output - https://raw.githubusercontent.com/openshift/cluster-cloud-controller-manager-operator/release-4.11/manifests/0000_26_cloud-controller-manager-operator_15_credentialsrequest-powervs.yaml
+fi
 
 oc adm release extract --cloud=powervs --credentials-requests quay.io/openshift-release-dev/ocp-release:4.10.0-rc.2-ppc64le --to=${CLUSTER_DIR}/credreqs
 
@@ -377,11 +441,11 @@ openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
-create_ibm_cloud_credentials_secret &
-JOBS+=( "$!" )
+#create_ibm_cloud_credentials_secret &
+#JOBS+=( "$!" )
 
-fix_load_balancer_hostname &
-JOBS+=( "$!" )
+#fix_load_balancer_hostname &
+#JOBS+=( "$!" )
 
 #delete_wildcard_dns &
 #JOBS+=( "$!" )
