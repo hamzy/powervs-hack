@@ -65,6 +65,15 @@ else
 	if [ ${RC} -gt 0 ]
 	then
 		echo "${RESULT}"
+	else
+		case "${CURL_ACTION}" in
+			"-g"|"-G"|*)
+				PVM_INSTANCE_ID=$(echo "${RESULT}" | jq -r '.id')
+				RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/pvm-instances/${PVM_INSTANCE_ID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+				echo "${RESULT}" | jq -r '.'
+				RC=${PIPESTATUS[1]}
+				;;
+		esac
 	fi
 
 fi
