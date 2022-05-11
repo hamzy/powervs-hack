@@ -368,6 +368,25 @@ openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
 
 openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
 
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-machine-api-powervs-credentials-credentials.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+ creationTimestamp: null
+ name: powervs-credentials
+ namespace: openshift-machine-api
+stringData:
+ ibm-credentials.env: |-
+  IBMCLOUD_AUTHTYPE=iam
+  IBMCLOUD_APIKEY=${IBMCLOUD_API_KEY}
+ ibmcloud_api_key: ${IBMCLOUD_API_KEY}
+type: Opaque
+___EOF___
+
+# Use Christy provided files
+if false
+then
+
 cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-ccm-credentials.yaml
 apiVersion: v1
 kind: Secret
@@ -382,9 +401,6 @@ stringData:
   ibmcloud_api_key: ${IBMCLOUD_API_KEY}
 type: Opaque
 ___EOF___
-
-if false
-then
 
 cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-ingress-operator-cloud-credentials-credentials.yaml
 apiVersion: v1
@@ -401,20 +417,6 @@ stringData:
 type: Opaque
 ___EOF___
 
-cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-machine-api-powervs-credentials-credentials.yaml
-apiVersion: v1
-kind: Secret
-metadata:
- creationTimestamp: null
- name: powervs-credentials
- namespace: openshift-machine-api
-stringData:
- ibm-credentials.env: |-
-  IBMCLOUD_AUTHTYPE=iam
-  IBMCLOUD_APIKEY=${IBMCLOUD_API_KEY}
- ibmcloud_api_key: ${IBMCLOUD_API_KEY}
-type: Opaque
-___EOF___
 
 else
 
