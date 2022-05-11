@@ -27,7 +27,7 @@ function fix_load_balancer_hostname()
 {	
 	#log_to_file /tmp/fix-load-balancer-hostname.log
 
-	CLUSTER_ID=$(jq -r '.infraID' /home/OpenShift/git/hamzyorg-installer/ocp-test/metadata.json)
+	CLUSTER_ID=$(jq -r '.infraID' ${CLUSTER_DIR}/metadata.json)
 	HOSTNAME_EXTERNAL="apps.rdr-hamzy-test.scnl-ibm.com"
 
 	FOUND=false
