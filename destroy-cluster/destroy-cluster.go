@@ -1348,6 +1348,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("Error: getServiceGuid: %v\n", err)
 	}
+	if shouldDebug { log.Printf("serviceGuid = %+v\n", serviceGuid) }
 
 	piSession, err = createPiSession(ptrApiKey, serviceGuid, ptrZone, ptrServiceName)
 	if err != nil {
