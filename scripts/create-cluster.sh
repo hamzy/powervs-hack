@@ -228,7 +228,7 @@ function reboot_master_nodes()
 
 declare -a ENV_VARS
 #ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_NETWORK" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE" "SUBNET" "VPC" "VPCREGION" )
-ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE" "VPCREGION" )
+ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE_GUID" "VPCREGION" "BASEDOMAIN" "RESOURCE_GROUP" )
 #ENV_VARS+=( "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
 
 for VAR in ${ENV_VARS[@]}
@@ -253,7 +253,8 @@ export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:4.10-powervs"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly:4.11.0-0.nightly-ppc64le-2022-05-06-093203"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly:4.11.0-0.nightly-ppc64le-2022-05-10-222820"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly:4.11.0-0.nightly-ppc64le-2022-05-10-222820"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly:4.11.0-0.nightly-ppc64le-2022-05-13-170447"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -284,7 +285,7 @@ then
 	exit 1
 fi
 
-export SERVICE_INSTANCE_ID=$(ibmcloud resource service-instance ${SERVICE_INSTANCE} --output json | jq -r '.[].guid')
+#export SERVICE_INSTANCE_ID=$(ibmcloud resource service-instance ${SERVICE_INSTANCE} --output json | jq -r '.[].guid')
 
 declare -a JOBS
 
@@ -307,22 +308,9 @@ mkdir ${CLUSTER_DIR}
 SSH_KEY=$(cat ~/.ssh/id_rsa.pub)
 PULL_SECRET=$(cat ~/.pullSecret)
 
-#platform:
-#  powervs:
-#    userid: "${IBMID}"
-#    powervsResourceGroup: "powervs-ipi-resource-group"
-#    pvsNetworkName: "${IBMCLOUD_NETWORK}"
-#    region: "${POWERVS_REGION}"
-#    vpcRegion: "${VPCREGION}"
-#    zone: "${POWERVS_ZONE}"
-#    serviceInstanceID: "${SERVICE_INSTANCE_ID}"
-#    vpc: "${VPC}"
-#    subnets:
-#    - "${SUBNET}"
-
 cat << ___EOF___ > ${CLUSTER_DIR}/install-config.yaml
 apiVersion: v1
-baseDomain: scnl-ibm.com
+baseDomain: "${BASEDOMAIN}"
 compute:
 - architecture: ppc64le
   hyperthreading: Enabled
@@ -350,11 +338,11 @@ networking:
 platform:
   powervs:
     userid: "${IBMID}"
-    powervsResourceGroup: "powervs-ipi-resource-group"
+    powervsResourceGroup: "${RESOURCE_GROUP}"
     region: "${POWERVS_REGION}"
     vpcRegion: "${VPCREGION}"
     zone: "${POWERVS_ZONE}"
-    serviceInstanceID: "${SERVICE_INSTANCE_ID}"
+    serviceInstanceID: "${SERVICE_INSTANCE_GUID}"
 publish: External
 pullSecret: '${PULL_SECRET}'
 sshKey: |
@@ -420,13 +408,17 @@ ___EOF___
 
 else
 
-cp ~/Downloads/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml ${CLUSTER_DIR}/manifests/
-cp ~/Downloads/openshift-ingress-operator-cloud-credentials-credentials.yaml ${CLUSTER_DIR}/manifests/
+VERSION=ibm
+#VERSION=redhat
+cp ~/Downloads/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml.${VERSION} ${CLUSTER_DIR}/manifests/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml
+cp ~/Downloads/openshift-ingress-operator-cloud-credentials-credentials.yaml.${VERSION} ${CLUSTER_DIR}/manifests/openshift-ingress-operator-cloud-credentials-credentials.yaml
+cp ~/Downloads/openshift-machine-api-powervs-credentials-credentials.yaml.${VERSION} ${CLUSTER_DIR}/manifests/openshift-machine-api-powervs-credentials-credentials.yaml
 
 fi
 
 if false
 then
+
 cp /home/OpenShift/git/karthik-cluster-cloud-controller-manager-operator/manifests/0000_26_cloud-controller-manager-operator_11_deployment.yaml ${CLUSTER_DIR}/manifests/
 cp /home/OpenShift/git/karthik-cluster-cloud-controller-manager-operator/manifests/0000_26_cloud-controller-manager-operator_01_images.configmap.yaml ${CLUSTER_DIR}/manifests/
 sed -i -e 's,image: .*$,image: quay.io/hamzy/cluster-cloud-controller-manager-operator:remove_port,' ${CLUSTER_DIR}/manifests/0000_26_cloud-controller-manager-operator_11_deployment.yaml
@@ -435,9 +427,15 @@ sed -i -e 's,quay.io/openshift/origin-cluster-cloud-controller-manager-operator,
 # curl --silent --location --output - https://raw.githubusercontent.com/Karthik-K-N/cluster-cloud-controller-manager-operator/0d5cb9d8d46240724b71df602659b584268c89ab/pkg/cloud/powervs/assets/deployment.yaml | sed -e 's,{{ .cloudproviderName }},PowerVS,' -e 's,{{ .images.CloudControllerManager }},quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:daee38f9ba7e63d7e0a93c79d28a617edfde31523a107c68b3e01a8d63c7bfe1,' > ${CLUSTER_DIR}/manifests/
 
 curl --silent --output - https://raw.githubusercontent.com/openshift/cluster-cloud-controller-manager-operator/release-4.11/manifests/0000_26_cloud-controller-manager-operator_15_credentialsrequest-powervs.yaml
+
 fi
 
+if false
+then
+
 oc adm release extract --cloud=powervs --credentials-requests quay.io/openshift-release-dev/ocp-release:4.10.0-rc.2-ppc64le --to=${CLUSTER_DIR}/credreqs
+
+fi
 
 openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 PID_INSTALL=$!
