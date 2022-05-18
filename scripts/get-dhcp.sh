@@ -52,7 +52,7 @@ else
 			CLOUD_CON_ID=${DHCP_ID}
 			RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}" --data '{"cloudConnectionID": "'${CLOUD_CON_ID}'"}')
 			;;
-		"-g"|"-G"|*)
+		"-q"|"-Q"|"-g"|"-G"|*)
 			ACTION=GET
 			RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp/${DHCP_ID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
 			;;
@@ -67,7 +67,7 @@ else
 		echo "${RESULT}"
 	else
 		case "${CURL_ACTION}" in
-			"-g"|"-G"|*)
+			"-q"|"-Q")
 				PVM_INSTANCE_ID=$(echo "${RESULT}" | jq -r '.id')
 				RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/pvm-instances/${PVM_INSTANCE_ID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
 				echo "${RESULT}" | jq -r '.'
