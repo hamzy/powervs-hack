@@ -260,7 +260,7 @@ then
 	# View at https://metabase.openshift-on-power.com/public/dashboard/38eff8ae-c23e-4651-8fb5-83094e3bbdb1
 	curl https://jenkins.openshift-on-power.com/job/ocp_deployment_data_collector/job/deploy-register/buildWithParameters \
 		--user powervs:${JENKINS_TOKEN} \
-		--data EMAIL="hamzy@us.ibm.com" \
+		--data EMAIL="${IBMID}" \
 		--data OCP_DEPLOYMENT_MODE="ipi" \
 		--data OCP_VERSION="${OCP_VERSION}" \
 		--data CLUSTER_ID="${CLUSTER_ID}" \
