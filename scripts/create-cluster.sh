@@ -87,6 +87,25 @@ then
 fi
 
 #
+# Quota check DHCP networks
+#
+SERVICE_INSTANCE_CRN=$(ibmcloud resource service-instances --output JSON | jq -r '.[] | select(.guid|test("'${SERVICE_INSTANCE_GUID}'")) | .id')
+CLOUD_INSTANCE_ID=$(echo ${SERVICE_INSTANCE_CRN} | cut -d: -f8)
+[ -z "${CLOUD_INSTANCE_ID}" ] && exit 1
+echo "CLOUD_INSTANCE_ID=${CLOUD_INSTANCE_ID}"
+set +x
+BEARER_TOKEN=$(curl --silent -X POST "https://iam.cloud.ibm.com/identity/token" -H "content-type: application/x-www-form-urlencoded" -H "accept: application/json" -d "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=${IBMCLOUD_API_KEY}" | jq -r .access_token)
+[ -z "${BEARER_TOKEN}" -o "${BEARER_TOKEN}" == "null" ] && exit 1
+RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_INSTANCE_CRN}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+set -x
+echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
+RC=${PIPESTATUS[1]}
+if [ ${RC} -gt 0 ]
+then
+	echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
+fi
+
+#
 # Quota check for image imports
 #
 JOBS=$(ibmcloud pi jobs --operation-action imageImport --json | jq -r '.Payload.jobs[] | select (.status.state|test("running")) | .id')
