@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 #
-# (export CLUSTER_DIR="./ocp-test"; export IBMID="hamzy@us.ibm.com"; export CLUSTER_NAME="rdr-hamzy-test"; export POWERVS_REGION="lon"; export POWERVS_ZONE="lon04"; export SERVICE_INSTANCE="powervs-ipi-lon04"; export VPCREGION="eu-gb"; export VPC="powervs-ipi"; export SUBNET="subnet2"; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
+# (export IBMCLOUD_API_KEY=""; export IBMCLOUD_OCCMIBCCC_API_KEY=""; export IBMCLOUD_OIOCCC_API_KEY=""; export IBMCLOUD_OMAPCC_API_KEY=""; export CLUSTER_DIR=""; export IBMID=""; export CLUSTER_NAME=""; export POWERVS_REGION=""; export POWERVS_ZONE=""; export SERVICE_INSTANCE_GUID=""; export VPCREGION=""; export RESOURCE_GROUP=""; export BASEDOMAIN=""; export JENKINS_TOKEN=""; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
 #
 
 function log_to_file()
