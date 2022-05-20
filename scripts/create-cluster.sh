@@ -28,8 +28,7 @@ function init_ibmcloud()
 }
 
 declare -a ENV_VARS
-ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_OCCMIBCCC_API_KEY" "IBMCLOUD_OIOCCC_API_KEY" "IBMCLOUD_OMAPCC_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE_GUID" "VPCREGION" "BASEDOMAIN" "RESOURCE_GROUP" )
-#ENV_VARS+=( "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
+ENV_VARS=( "BASEDOMAIN" "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_OCCMIBCCC_API_KEY" "IBMCLOUD_OIOCCC_API_KEY" "IBMCLOUD_OMAPCC_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "RESOURCE_GROUP" "SERVICE_INSTANCE_GUID" "VPCREGION" )
 
 for VAR in ${ENV_VARS[@]}
 do
@@ -180,10 +179,10 @@ ___EOF___
 sed -i '/credentialsMode/d' ${CLUSTER_DIR}/install-config.yaml
 sed -i '/^baseDomain:.*$/a credentialsMode: Manual' ${CLUSTER_DIR}/install-config.yaml
 
-date
+date --utc +"%Y-%m-%dT%H:%M:%S%:z"
 openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
 
-date
+date --utc +"%Y-%m-%dT%H:%M:%S%:z"
 openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
 
 cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml
@@ -231,9 +230,45 @@ stringData:
 type: Opaque
 ___EOF___
 
-date
+DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
+echo "${DATE}"
 openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
 wait ${PID_INSTALL}
+
+RC=$?
+if [ ${RC} -gt 0 ]
+then
+	DEPLOYMENT_SUCCESS="failure"
+else
+	DEPLOYMENT_SUCCESS="success"
+fi
+
+FILE=$(mktemp)
+trap "/bin/rm ${FILE}" EXIT
+
+egrep '(Creation complete|level=error)' ${CLUSTER_DIR}/.openshift_install.log > ${FILE}
+CLUSTER_ID=$(jq -r '.clusterID' ${CLUSTER_DIR}/metadata.json)
+
+OCP_VERSION=${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE#*:}
+
+set +x
+if [ -v JENKINS_TOKEN ]
+then
+	# View at https://metabase.openshift-on-power.com/public/dashboard/38eff8ae-c23e-4651-8fb5-83094e3bbdb1
+	curl https://jenkins.openshift-on-power.com/job/ocp_deployment_data_collector/job/deploy-register/buildWithParameters \
+		--user powervs:${JENKINS_TOKEN} \
+		--data EMAIL="hamzy@us.ibm.com" \
+		--data OCP_DEPLOYMENT_MODE="ipi" \
+		--data OCP_VERSION="${OCP_VERSION}" \
+		--data CLUSTER_ID="${CLUSTER_ID}" \
+		--data POWERVS_GUID="${SERVICE_INSTANCE_GUID}" \
+		--data POWERVS_REGION="${POWERVS_REGION}" \
+		--data POWERVS_ZONE="${POWERVS_ZONE}" \
+		--data DEPLOYMENT_SUCCESS="${DEPLOYMENT_SUCCESS}" \
+		--data DEPLOYMENT_LOG="$(cat ${FILE})" \
+		--data DEPLOYMENT_DATE_TIME="${DATE}"
+fi
+set -x
