@@ -227,8 +227,7 @@ function reboot_master_nodes()
 }
 
 declare -a ENV_VARS
-#ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_NETWORK" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE" "SUBNET" "VPC" "VPCREGION" )
-ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE_GUID" "VPCREGION" "BASEDOMAIN" "RESOURCE_GROUP" )
+ENV_VARS=( "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_OCCMIBCCC_API_KEY" "IBMCLOUD_OIOCCC_API_KEY" "IBMCLOUD_OMAPCC_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "SERVICE_INSTANCE_GUID" "VPCREGION" "BASEDOMAIN" "RESOURCE_GROUP" )
 #ENV_VARS+=( "IBMCLOUD_API2_KEY" "IBMCLOUD_API3_KEY" )
 
 for VAR in ${ENV_VARS[@]}
@@ -282,6 +281,14 @@ CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.Payload.cloudConnections|
 if (( ${CONNECTIONS} >= 2 ))
 then
 	echo "Error: Cannot have 2 or more cloud connections.  You currently have ${CONNECTIONS}."
+	exit 1
+fi
+
+# Quota check for image imports
+JOBS=$(ibmcloud pi jobs --operation-action imageImport --json | jq -r '.Payload.jobs[] | select (.status.state|test("running")) | .id')
+if [ -n "${JOBS}" ]
+then
+	echo "${JOBS}"
 	exit 1
 fi
 
@@ -352,30 +359,13 @@ ___EOF___
 sed -i '/credentialsMode/d' ${CLUSTER_DIR}/install-config.yaml
 sed -i '/^baseDomain:.*$/a credentialsMode: Manual' ${CLUSTER_DIR}/install-config.yaml
 
+date
 openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
 
+date
 openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
 
-cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-machine-api-powervs-credentials-credentials.yaml
-apiVersion: v1
-kind: Secret
-metadata:
- creationTimestamp: null
- name: powervs-credentials
- namespace: openshift-machine-api
-stringData:
- ibm-credentials.env: |-
-  IBMCLOUD_AUTHTYPE=iam
-  IBMCLOUD_APIKEY=${IBMCLOUD_API_KEY}
- ibmcloud_api_key: ${IBMCLOUD_API_KEY}
-type: Opaque
-___EOF___
-
-# Use Christy provided files
-if false
-then
-
-cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-ccm-credentials.yaml
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml
 apiVersion: v1
 kind: Secret
 metadata:
@@ -385,8 +375,8 @@ metadata:
 stringData:
   ibm-credentials.env: |-
     IBMCLOUD_AUTHTYPE=iam
-    IBMCLOUD_APIKEY=${IBMCLOUD_API_KEY}
-  ibmcloud_api_key: ${IBMCLOUD_API_KEY}
+    IBMCLOUD_APIKEY=${IBMCLOUD_OCCMIBCCC_API_KEY}
+  ibmcloud_api_key: ${IBMCLOUD_OCCMIBCCC_API_KEY}
 type: Opaque
 ___EOF___
 
@@ -394,49 +384,33 @@ cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-ingress-operator-cloud-cre
 apiVersion: v1
 kind: Secret
 metadata:
- creationTimestamp: null
- name: cloud-credentials
- namespace: openshift-ingress-operator
+  creationTimestamp: null
+  name: cloud-credentials
+  namespace: openshift-ingress-operator
 stringData:
- ibm-credentials.env: |-
-  IBMCLOUD_AUTHTYPE=iam
-  IBMCLOUD_APIKEY=${IBMCLOUD_API_KEY}
- ibmcloud_api_key: ${IBMCLOUD_API_KEY}
+  ibm-credentials.env: |-
+    IBMCLOUD_AUTHTYPE=iam
+    IBMCLOUD_APIKEY=${IBMCLOUD_OIOCCC_API_KEY}
+  ibmcloud_api_key: ${IBMCLOUD_OIOCCC_API_KEY}
 type: Opaque
 ___EOF___
 
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-machine-api-powervs-credentials-credentials.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: powervs-credentials
+  namespace: openshift-machine-api
+stringData:
+  ibm-credentials.env: |-
+    IBMCLOUD_AUTHTYPE=iam
+    IBMCLOUD_APIKEY=${IBMCLOUD_OMAPCC_API_KEY}
+  ibmcloud_api_key: ${IBMCLOUD_OMAPCC_API_KEY}
+type: Opaque
+___EOF___
 
-else
-
-VERSION=ibm
-#VERSION=redhat
-cp ~/Downloads/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml.${VERSION} ${CLUSTER_DIR}/manifests/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml
-cp ~/Downloads/openshift-ingress-operator-cloud-credentials-credentials.yaml.${VERSION} ${CLUSTER_DIR}/manifests/openshift-ingress-operator-cloud-credentials-credentials.yaml
-cp ~/Downloads/openshift-machine-api-powervs-credentials-credentials.yaml.${VERSION} ${CLUSTER_DIR}/manifests/openshift-machine-api-powervs-credentials-credentials.yaml
-
-fi
-
-if false
-then
-
-cp /home/OpenShift/git/karthik-cluster-cloud-controller-manager-operator/manifests/0000_26_cloud-controller-manager-operator_11_deployment.yaml ${CLUSTER_DIR}/manifests/
-cp /home/OpenShift/git/karthik-cluster-cloud-controller-manager-operator/manifests/0000_26_cloud-controller-manager-operator_01_images.configmap.yaml ${CLUSTER_DIR}/manifests/
-sed -i -e 's,image: .*$,image: quay.io/hamzy/cluster-cloud-controller-manager-operator:remove_port,' ${CLUSTER_DIR}/manifests/0000_26_cloud-controller-manager-operator_11_deployment.yaml
-sed -i -e 's,quay.io/openshift/origin-cluster-cloud-controller-manager-operator,quay.io/hamzy/cluster-cloud-controller-manager-operator:remove_port,' ${CLUSTER_DIR}/manifests/0000_26_cloud-controller-manager-operator_01_images.configmap.yaml
-
-# curl --silent --location --output - https://raw.githubusercontent.com/Karthik-K-N/cluster-cloud-controller-manager-operator/0d5cb9d8d46240724b71df602659b584268c89ab/pkg/cloud/powervs/assets/deployment.yaml | sed -e 's,{{ .cloudproviderName }},PowerVS,' -e 's,{{ .images.CloudControllerManager }},quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:daee38f9ba7e63d7e0a93c79d28a617edfde31523a107c68b3e01a8d63c7bfe1,' > ${CLUSTER_DIR}/manifests/
-
-curl --silent --output - https://raw.githubusercontent.com/openshift/cluster-cloud-controller-manager-operator/release-4.11/manifests/0000_26_cloud-controller-manager-operator_15_credentialsrequest-powervs.yaml
-
-fi
-
-if false
-then
-
-oc adm release extract --cloud=powervs --credentials-requests quay.io/openshift-release-dev/ocp-release:4.10.0-rc.2-ppc64le --to=${CLUSTER_DIR}/credreqs
-
-fi
-
+date
 openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
