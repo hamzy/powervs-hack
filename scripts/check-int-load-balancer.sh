@@ -1,5 +1,23 @@
 #!/usr/bin/env bash
 
+declare -a ENV_VARS
+ENV_VARS=( "CLUSTER_DIR" "IBMCLOUD_API_KEY" )
+
+for VAR in ${ENV_VARS[@]}
+do
+	if [[ ! -v ${VAR} ]]
+	then
+		echo "${VAR} must be set!"
+		exit 1
+	fi
+	VALUE=$(eval "echo \"\${${VAR}}\"")
+	if [[ -z "${VALUE}" ]]
+	then
+		echo "${VAR} must be set!"
+		exit 1
+	fi
+done
+
 set -euo pipefail
 
 LB_INT_FILE=$(mktemp)
@@ -7,7 +25,7 @@ LB_MCS_POOL_FILE=$(mktemp)
 
 trap "/bin/rm ${LB_INT_FILE} ${LB_MCS_POOL_FILE}" EXIT
 
-INFRA_ID=$(jq -r '.infraID' ./ocp-test-syd04/metadata.json)
+INFRA_ID=$(jq -r '.infraID' ${CLUSTER_DIR}/metadata.json)
 
 ibmcloud is load-balancers --output json | jq -r '.[] | select (.name|test("'${INFRA_ID}'-loadbalancer-int"))' > ${LB_INT_FILE}
 
