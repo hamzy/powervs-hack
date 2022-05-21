@@ -236,14 +236,25 @@ openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
-wait ${PID_INSTALL}
+wait ${PID_INSTALL} || true
+RC=${PIPESTATUS[0]}
 
+openshift-install wait-for install-complete --dir ${CLUSTER_DIR} --log-level=debug
 RC=$?
+
 if [ ${RC} -gt 0 ]
 then
 	DEPLOYMENT_SUCCESS="failure"
 else
-	DEPLOYMENT_SUCCESS="success"
+	KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig oc --request-timeout=5s get clusterversion
+	RC=$?
+
+	if [ ${RC} -gt 0 ]
+	then
+		DEPLOYMENT_SUCCESS="failure"
+	else
+		DEPLOYMENT_SUCCESS="success"
+	fi
 fi
 
 FILE=$(mktemp)
