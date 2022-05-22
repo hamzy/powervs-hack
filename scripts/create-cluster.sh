@@ -97,11 +97,11 @@ BEARER_TOKEN=$(curl --silent -X POST "https://iam.cloud.ibm.com/identity/token" 
 [ -z "${BEARER_TOKEN}" -o "${BEARER_TOKEN}" == "null" ] && exit 1
 RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_INSTANCE_CRN}" --header "Authorization: Bearer ${BEARER_TOKEN}")
 set -x
-echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
-RC=${PIPESTATUS[1]}
-if [ ${RC} -gt 0 ]
+LINES=$(echo "${RESULT}" | jq -r '.[] | .id' | wc -l)
+if (( ${LINES} > 0))
 then
 	echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
+	exit 1
 fi
 
 #
