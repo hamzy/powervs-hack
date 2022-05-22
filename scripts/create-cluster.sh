@@ -246,8 +246,8 @@ if [ ${RC} -gt 0 ]
 then
 	DEPLOYMENT_SUCCESS="failure"
 else
-	KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig oc --request-timeout=5s get clusterversion
-	RC=$?
+	KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig oc --request-timeout=5s get clusterversion || true
+	RC=${PIPESTATUS[0]}
 
 	if [ ${RC} -gt 0 ]
 	then
