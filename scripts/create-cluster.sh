@@ -239,8 +239,8 @@ JOBS+=( "${PID_INSTALL}" )
 wait ${PID_INSTALL} || true
 RC=${PIPESTATUS[0]}
 
-openshift-install wait-for install-complete --dir ${CLUSTER_DIR} --log-level=debug
-RC=$?
+openshift-install wait-for install-complete --dir ${CLUSTER_DIR} --log-level=debug || true
+RC=${PIPESTATUS[0]}
 
 if [ ${RC} -gt 0 ]
 then
