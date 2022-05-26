@@ -30,10 +30,10 @@ INFRA_ID=$(jq -r '.infraID' ${CLUSTER_DIR}/metadata.json)
 ibmcloud is load-balancers --output json | jq -r '.[] | select (.name|test("'${INFRA_ID}'-loadbalancer-int"))' > ${LB_INT_FILE}
 
 LB_INT_ID=$(jq -r .id ${LB_INT_FILE})
-echo "LB_INT_ID=${LB_INT_ID}";
+echo "[internal load balancer id] LB_INT_ID=${LB_INT_ID}";
 
 LB_MCS_ID=$(jq -r '.pools[] | select (.name|test("machine-config-server")) | .id' ${LB_INT_FILE})
-echo "LB_MCS_ID=${LB_MCS_ID}"
+echo "[machine-config-server pool id] LB_MCS_ID=${LB_MCS_ID}"
 
 ibmcloud is load-balancer-pool ${LB_INT_ID} ${LB_MCS_ID} --output json > ${LB_MCS_POOL_FILE}
 
