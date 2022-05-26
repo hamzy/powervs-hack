@@ -79,9 +79,9 @@ fi
 # Quota check cloud connections
 #
 CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.Payload.cloudConnections|length')
-if (( ${CONNECTIONS} >= 1 ))
+if (( ${CONNECTIONS} >= 2 ))
 then
-	echo "Error: Cannot have 1 or more cloud connections.  You currently have ${CONNECTIONS}."
+	echo "Error: Cannot have 2 or more cloud connections.  You currently have ${CONNECTIONS}."
 	exit 1
 fi
 
@@ -284,3 +284,21 @@ then
 		--data DEPLOYMENT_DATE_TIME="${DATE}"
 fi
 set -x
+
+if [ -v CLEANUP ]
+then
+	SAVE_DIR=$(mktemp --directory)
+
+	rsync -av ${CLUSTER_DIR}/ ${SAVE_DIR}/${CLUSTER_DIR}/
+
+	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
+	./bin/openshift-install --dir=${CLUSTER_DIR} destroy cluster --log-level=debug
+	sleep 1m
+	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
+	./bin/openshift-install --dir=${CLUSTER_DIR} destroy cluster --log-level=debug
+	sleep 1m
+	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
+	./bin/openshift-install --dir=${CLUSTER_DIR} destroy cluster --log-level=debug
+
+	/bin/rm -rf ${SAVE_DIR}
+fi
