@@ -18,7 +18,7 @@ then
 	SERVICE_INSTANCE="powervs-ipi-lon04"
 fi
 
-SERVICE_ID=$(ibmcloud pi service-list --json | jq -r '.[] | select (.Name|test("'${SERVICE_INSTANCE}'")) | .CRN')
+SERVICE_ID=$(ibmcloud pi service-list --json | jq -r '.[] | select (.Name|test("^'${SERVICE_INSTANCE}'$")) | .CRN')
 [ -z "${SERVICE_INSTANCE}" ] && exit 1
 echo "SERVICE_ID=${SERVICE_ID}"
 
