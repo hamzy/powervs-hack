@@ -18,6 +18,12 @@ then
 	SERVICE_INSTANCE="powervs-ipi-lon04"
 fi
 
+if ! getent ahostsv4 ${POWERVS_REGION}.power-iaas.cloud.ibm.com > /dev/null
+then
+	echo "Error: POWERVS_REGION (${POWERVS_REGION}) is invalid!"
+	exit 1
+fi
+
 SERVICE_ID=$(ibmcloud pi service-list --json | jq -r '.[] | select (.Name|test("^'${SERVICE_INSTANCE}'$")) | .CRN')
 [ -z "${SERVICE_INSTANCE}" ] && exit 1
 echo "SERVICE_ID=${SERVICE_ID}"

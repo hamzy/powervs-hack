@@ -62,6 +62,12 @@ export IC_API_KEY=${IBMCLOUD_API_KEY}
 #export TF_LOG_PATH=/tmp/tf.log
 #export IBMCLOUD_TRACE=true
 
+if ! getent ahostsv4 ${POWERVS_REGION}.power-iaas.cloud.ibm.com > /dev/null
+then
+	echo "Error: POWERVS_REGION (${POWERVS_REGION}) is invalid!"
+	exit 1
+fi
+
 set -x
 
 #
