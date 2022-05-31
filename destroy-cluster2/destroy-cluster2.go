@@ -1585,6 +1585,7 @@ func New(logger logrus.FieldLogger,
 		Zone:               zone,
 		pendingItemTracker: newPendingItemTracker(),
 		resourceGroupID:    resourceGroupID,
+		DHCPNetworks:       make(map[string]struct{}),
 	}, nil
 }
 
