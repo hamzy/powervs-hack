@@ -156,6 +156,7 @@ const cosTypeName = "cos instance"
 const cosResourceID = "dff97f5c-bc5e-4455-b470-411c3edbe49c"
 
 // listCOSInstances lists COS service instances.
+// ibmcloud resource service-instances --output JSON --service-name cloud-object-storage | jq -r '.[] | select(.name|test("rdr-hamzy.*")) | "\(.name) - \(.id)"'
 func (o *ClusterUninstaller) listCOSInstances() (cloudResources, error) {
 	o.Logger.Debugf("Listing COS instances")
 
@@ -405,6 +406,145 @@ func (r cloudResources) list() []cloudResource {
 	return values
 }
 
+const (
+	dhcpTypeName = "dhcp"
+)
+
+// listDHCPNetworks lists previously found DHCP networks in found instances in the vpc.
+func (o *ClusterUninstaller) listDHCPNetworks() (cloudResources, error) {
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_servers.go#L19
+	var dhcpServers models.DHCPServers
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/d_h_c_p_server.go#L18-L31
+	var dhcpServer *models.DHCPServer
+	var err error
+
+	o.Logger.Debugf("Listing DHCP networks")
+
+	dhcpServers, err = o.dhcpClient.GetAll()
+	if err != nil {
+		o.Logger.Fatalf("Failed to list DHCP servers: %v", err)
+	}
+
+	var foundOne = false
+
+	result := []cloudResource{}
+	for _, dhcpServer = range dhcpServers {
+		// Not helpful yet
+		// 2022/03/24 15:30:51 Found: DHCPServer: 40687c22-782a-475c-af46-be765aecdf4a
+		// 2022/03/24 15:30:54 Network.Name: DHCPSERVER2dc32880758344f08c8ff6933e87d27a_Private
+
+		if dhcpServer.Network == nil {
+			o.Logger.Debugf("listDHCPNetworks: DHCP has empty Network: %s\n", *dhcpServer.ID)
+			continue
+		}
+		if dhcpServer.Network.Name == nil {
+			o.Logger.Debugf("listDHCPNetworks: DHCP has empty Network.Name: %s\n", *dhcpServer.ID)
+			continue
+		}
+
+		if _, ok := o.DHCPNetworks[*dhcpServer.Network.Name]; ok {
+			o.Logger.Debugf("listDHCPNetworks: FOUND: %s (%s)\n", *dhcpServer.Network.Name, *dhcpServer.ID)
+			foundOne = true
+			result = append(result, cloudResource{
+				key:      *dhcpServer.ID,
+				name:     *dhcpServer.Network.Name,
+				status:   "",
+				typeName: dhcpTypeName,
+				id:       *dhcpServer.ID,
+			})
+		}
+	}
+	if !foundOne {
+		o.Logger.Debugf("listDHCPNetworks: NO matching DHCP network found in:")
+		for _, dhcpServer = range dhcpServers {
+			if dhcpServer.Network == nil {
+				continue
+			}
+			if dhcpServer.Network.Name == nil {
+				continue
+			}
+			o.Logger.Debugf("listDHCPNetworks: only found DHCP: %s", *dhcpServer.Network.Name)
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+func (o *ClusterUninstaller) destroyDHCPNetwork(item cloudResource) error {
+	var err error
+
+	_, err = o.dhcpClient.Get(item.id)
+	if err != nil {
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted DHCP network %q", item.name)
+		return nil
+	}
+
+	if !shouldDelete {
+		o.Logger.Debugf("Skipping deleting DHCP network %q since shouldDelete is false", item.name)
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		return nil
+	}
+
+	o.Logger.Debugf("Deleting DHCP network %q", item.name)
+
+	err = o.dhcpClient.Delete(item.id)
+	if err != nil {
+		o.Logger.Infof("Error: o.dhcpClient.Delete: %q", err)
+		return err
+	}
+
+	o.deletePendingItems(item.typeName, []cloudResource{item})
+	o.Logger.Infof("Deleted DHCP network %q", item.name)
+
+	return nil
+}
+
+// destroyDHCPNetworks searches for DHCP networks that are in a previous list
+// the cluster's infra ID.
+func (o *ClusterUninstaller) destroyDHCPNetworks() error {
+	found, err := o.listDHCPNetworks()
+	if err != nil {
+		return err
+	}
+
+	items := o.insertPendingItems(dhcpTypeName, found.list())
+
+	ctx, _ := o.contextWithTimeout()
+
+	for !o.timeout(ctx) {
+		for _, item := range items {
+			select {
+			case <-o.Context.Done():
+				o.Logger.Debugf("destroyDHCPNetworks: case <-o.Context.Done()")
+				return o.Context.Err() // we're cancelled, abort
+			default:
+			}
+
+			if _, ok := found[item.key]; !ok {
+				// This item has finished deletion.
+				o.deletePendingItems(item.typeName, []cloudResource{item})
+				o.Logger.Infof("Deleted DHCPNetworks %q", item.name)
+				continue
+			}
+			err := o.destroyDHCPNetwork(item)
+			if err != nil {
+				o.errorTracker.suppressWarning(item.key, err, o.Logger)
+			}
+		}
+
+		items = o.getPendingItems(dhcpTypeName)
+		if len(items) == 0 {
+			break
+		}
+	}
+
+	if items = o.getPendingItems(dhcpTypeName); len(items) > 0 {
+		return errors.Errorf("destroyDHCPNetworks: %d undeleted items pending", len(items))
+	}
+	return nil
+}
+
 const dnsRecordTypeName = "dns record"
 
 // listDNSRecords lists DNS records for the cluster.
@@ -420,10 +560,12 @@ func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 	default:
 	}
 
-	var foundOne = false
-	var perPage int64 = 20
-	var page int64 = 1
-	var moreData bool = true
+	var (
+		foundOne       = false
+		perPage  int64 = 20
+		page     int64 = 1
+		moreData bool  = true
+	)
 
 	dnsRecordsOptions := o.dnsRecordsSvc.NewListAllDnsRecordsOptions()
 	dnsRecordsOptions.PerPage = &perPage
@@ -481,9 +623,11 @@ func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 }
 
 func (o *ClusterUninstaller) destroyDNSRecord(item cloudResource) error {
-	var getOptions *dnsrecordsv1.GetDnsRecordOptions
-	var response *core.DetailedResponse
-	var err error
+	var (
+		getOptions *dnsrecordsv1.GetDnsRecordOptions
+		response   *core.DetailedResponse
+		err        error
+	)
 
 	ctx, _ := o.contextWithTimeout()
 
@@ -734,6 +878,9 @@ const (
 
 // listInstances lists instances in the vpc.
 func (o *ClusterUninstaller) listInstances() (cloudResources, error) {
+	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/p_vm_instance_network.go#L16-L44
+	var network *models.PVMInstanceNetwork
+
 	o.Logger.Debugf("Listing virtual service instances")
 
 	instances, err := o.instanceClient.GetAll()
@@ -754,9 +901,15 @@ func (o *ClusterUninstaller) listInstances() (cloudResources, error) {
 				key:      *instance.PvmInstanceID,
 				name:     *instance.ServerName,
 				status:   *instance.Status,
-				typeName: "instance",
+				typeName: instanceTypeName,
 				id:       *instance.PvmInstanceID,
 			})
+
+			for _, network = range instance.Networks {
+				if strings.HasPrefix(network.NetworkName, "DHCPSERVER") {
+					o.DHCPNetworks[network.NetworkName] = struct{}{}
+				}
+			}
 		}
 	}
 	if !foundOne {
@@ -774,7 +927,7 @@ func (o *ClusterUninstaller) destroyInstance(item cloudResource) error {
 
 	_, err = o.instanceClient.Get(item.id)
 	if err != nil {
-		o.deletePendingItems(instanceActionTypeName, []cloudResource{item})
+		o.deletePendingItems(item.typeName, []cloudResource{item})
 		o.Logger.Infof("Deleted instance %q", item.name)
 		return nil
 	}
@@ -899,8 +1052,18 @@ func (o *ClusterUninstaller) deleteJob(item cloudResource) error {
 		return nil
 	}
 
+	if strings.EqualFold(*job.Status.State, "completed") {
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted job %q", item.name)
+		return nil
+	}
+
+	if strings.EqualFold(*job.Status.State, "failed") {
+		return errors.Wrapf(err, "job %v has failed", item.id)
+	}
+
 	if !strings.EqualFold(*job.Status.State, "active") {
-		o.Logger.Debugf("Waiting for job %q to delete", item.name)
+		o.Logger.Debugf("Waiting for job %q to delete (status is %q)", item.name, *job.Status.State)
 		return nil
 	}
 
@@ -1141,7 +1304,7 @@ func (o *ClusterUninstaller) listSubnets() (cloudResources, error) {
 	subnets, detailedResponse, err := o.vpcSvc.ListSubnets(options)
 
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list subnets and the response is: %s", err, detailedResponse)
+		return nil, errors.Wrapf(err, "failed to list subnets and the response is: %s", detailedResponse)
 	}
 
 	var foundOne = false
@@ -1379,6 +1542,8 @@ type ClusterUninstaller struct {
 
 	errorTracker
 	pendingItemTracker
+
+	DHCPNetworks map[string]struct{}
 }
 
 // New returns an IBMCloud destroyer from ClusterMetadata.
@@ -1487,6 +1652,8 @@ func (o *ClusterUninstaller) destroyCluster() error {
 		{name: "Load Balancers", execute: o.destroyLoadBalancers},
 	}, {
 		{name: "Subnets", execute: o.destroySubnets},
+	}, {
+		{name: "DHCPs", execute: o.destroyDHCPNetworks},
 	}, {
 		{name: "Images", execute: o.destroyImages},
 		{name: "VPCs", execute: o.destroyVPCs},
@@ -1911,7 +2078,7 @@ func (o *ClusterUninstaller) loadSDKServices() error {
 		return fmt.Errorf("loadSDKServices: loadSDKServices: authenticator.Validate: %v", err)
 	}
 
-	// VpcV1
+	// https://raw.githubusercontent.com/IBM/vpc-go-sdk/master/vpcv1/vpc_v1.go
 	o.vpcSvc, err = vpcv1.NewVpcV1(&vpcv1.VpcV1Options{
 		Authenticator: authenticator,
 		URL:           "https://" + o.VPCRegion + ".iaas.cloud.ibm.com/v1",
@@ -2374,19 +2541,23 @@ func (o *ClusterUninstaller) listVPCs() (cloudResources, error) {
 
 func (o *ClusterUninstaller) deleteVPC(item cloudResource) error {
 	var getOptions *vpcv1.GetVPCOptions
-	var response *core.DetailedResponse
+	var getResponse *core.DetailedResponse
+	var deleteResponse *core.DetailedResponse
 	var err error
 
 	getOptions = o.vpcSvc.NewGetVPCOptions(item.id)
-	_, response, err = o.vpcSvc.GetVPC(getOptions)
+	_, getResponse, err = o.vpcSvc.GetVPC(getOptions)
 
-	if err != nil && response != nil && response.StatusCode == gohttp.StatusNotFound {
+	// Sadly, there is no way to get the status of this VPC to check on the results of the
+	// delete call.
+
+	if err != nil && getResponse != nil && getResponse.StatusCode == gohttp.StatusNotFound {
 		// The resource is gone
 		o.deletePendingItems(item.typeName, []cloudResource{item})
 		o.Logger.Infof("Deleted vpc %q", item.name)
 		return nil
 	}
-	if err != nil && response != nil && response.StatusCode == gohttp.StatusInternalServerError {
+	if err != nil && getResponse != nil && getResponse.StatusCode == gohttp.StatusInternalServerError {
 		o.Logger.Infof("deleteVPC: internal server error")
 		return nil
 	}
@@ -2409,7 +2580,8 @@ func (o *ClusterUninstaller) deleteVPC(item cloudResource) error {
 	}
 
 	deleteOptions := o.vpcSvc.NewDeleteVPCOptions(item.id)
-	_, err = o.vpcSvc.DeleteVPCWithContext(ctx, deleteOptions)
+	deleteResponse, err = o.vpcSvc.DeleteVPCWithContext(ctx, deleteOptions)
+	o.Logger.Debugf("deleteVPC: DeleteVPCWithContext returns %+v", deleteResponse)
 
 	if err != nil {
 		return errors.Wrapf(err, "failed to delete vpc %s", item.name)
@@ -3051,5 +3223,4 @@ func main() {
 		log.Fatalf("Error clusterUninstaller.Run: %v", err)
 	}
 
-//	var DHCPNetworks map[string]struct{}
 }
