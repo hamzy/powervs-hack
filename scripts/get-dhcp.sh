@@ -18,7 +18,16 @@ then
 	SERVICE_INSTANCE="powervs-ipi-lon04"
 fi
 
-if ! getent ahostsv4 ${POWERVS_REGION}.power-iaas.cloud.ibm.com > /dev/null
+DNSRESOLV=""
+hash getent && DNSRESOLV="getent ahostsv4"
+hash dig && DNSRESOLV="dig +short"
+if [ -z "${DNSRESOLV}" ]
+then
+	echo "Either getent or dig must be present!"
+	exit 1
+fi
+
+if ! ${DNSRESOLV} ${POWERVS_REGION}.power-iaas.cloud.ibm.com > /dev/null
 then
 	echo "Error: POWERVS_REGION (${POWERVS_REGION}) is invalid!"
 	exit 1
