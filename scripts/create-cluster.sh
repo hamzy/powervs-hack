@@ -62,7 +62,16 @@ export IC_API_KEY=${IBMCLOUD_API_KEY}
 #export TF_LOG_PATH=/tmp/tf.log
 #export IBMCLOUD_TRACE=true
 
-if ! getent ahostsv4 ${POWERVS_REGION}.power-iaas.cloud.ibm.com > /dev/null
+DNSRESOLV=""
+hash getent && DNSRESOLV="getent ahostsv4"
+hash dig && DNSRESOLV="dig +short"
+if [ -z "${DNSRESOLV}" ]
+then
+	echo "Either getent or dig must be present!"
+	exit 1
+fi
+
+if [ -z "$(${DNSRESOLV} ${POWERVS_REGION}.power-iaas.cloud.ibm.com)" ]
 then
 	echo "Error: POWERVS_REGION (${POWERVS_REGION}) is invalid!"
 	exit 1

@@ -27,7 +27,7 @@ then
 	exit 1
 fi
 
-if ! ${DNSRESOLV} ${POWERVS_REGION}.power-iaas.cloud.ibm.com > /dev/null
+if [ -z "$(${DNSRESOLV} ${POWERVS_REGION}.power-iaas.cloud.ibm.com)" ]
 then
 	echo "Error: POWERVS_REGION (${POWERVS_REGION}) is invalid!"
 	exit 1
