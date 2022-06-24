@@ -50,7 +50,8 @@ set -euo pipefail
 export IBMCLOUD_REGION=${POWERVS_REGION}
 export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly:4.11.0-0.nightly-ppc64le-2022-05-13-170447"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-0.nightly-ppc64le-2022-06-16-003709"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-fc.2-ppc64le"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -183,7 +184,7 @@ platform:
     userid: "${IBMID}"
     powervsResourceGroup: "${RESOURCE_GROUP}"
     region: "${POWERVS_REGION}"
-    vpcRegion: "${VPCREGION}"
+#   vpcRegion: "${VPCREGION}"
     zone: "${POWERVS_ZONE}"
     serviceInstanceID: "${SERVICE_INSTANCE_GUID}"
 publish: External
