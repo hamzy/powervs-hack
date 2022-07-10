@@ -70,7 +70,7 @@ export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
 export KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig
 export IC_API_KEY=${IBMCLOUD_API_KEY}
 
-if !hash jq
+if ! hash jq 1>/dev/null 2>&1
 then
 	echo "Error: Missing jq program!"
 	exit 1
@@ -83,8 +83,8 @@ fi
 #export IBMCLOUD_TRACE=true
 
 DNSRESOLV=""
-hash getent && DNSRESOLV="getent ahostsv4"
-hash dig && DNSRESOLV="dig +short"
+hash getent 1>/dev/null 2>&1 && DNSRESOLV="getent ahostsv4"
+hash dig 1>/dev/null 2>&1 && DNSRESOLV="dig +short"
 if [ -z "${DNSRESOLV}" ]
 then
 	echo "Either getent or dig must be present!"
