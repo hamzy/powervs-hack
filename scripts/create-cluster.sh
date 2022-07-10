@@ -102,13 +102,17 @@ set -x
 #
 # Quota check DNS
 #
-ibmcloud cis instance-set $(ibmcloud cis instances --output json | jq -r '.[].name')
-export DNS_DOMAIN_ID=$(ibmcloud cis domains --output json | jq -r '.[].id')
-RECORDS=$(ibmcloud cis dns-records ${DNS_DOMAIN_ID} --output json | jq -r '.[] | select (.name|test("'${CLUSTER_NAME}'.*")) | "\(.name) - \(.id)"')
-if [ -n "${RECORDS}" ]
+if ibmcloud cis 1>/dev/null 2>&1
 then
-	echo "${RECORDS}"
-	exit 1
+	# Currently, only support on x86_64 arch :(
+	ibmcloud cis instance-set $(ibmcloud cis instances --output json | jq -r '.[].name')
+	export DNS_DOMAIN_ID=$(ibmcloud cis domains --output json | jq -r '.[].id')
+	RECORDS=$(ibmcloud cis dns-records ${DNS_DOMAIN_ID} --output json | jq -r '.[] | select (.name|test("'${CLUSTER_NAME}'.*")) | "\(.name) - \(.id)"')
+	if [ -n "${RECORDS}" ]
+	then
+		echo "${RECORDS}"
+		exit 1
+	fi
 fi
 
 #
