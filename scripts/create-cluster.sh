@@ -1,7 +1,18 @@
 #!/usr/bin/env bash
 
 #
+# Usage example:
+#
 # (export IBMCLOUD_API_KEY=""; export IBMCLOUD_OCCMIBCCC_API_KEY=""; export IBMCLOUD_OIOCCC_API_KEY=""; export IBMCLOUD_OMAPCC_API_KEY=""; export CLUSTER_DIR=""; export IBMID=""; export CLUSTER_NAME=""; export POWERVS_REGION=""; export POWERVS_ZONE=""; export SERVICE_INSTANCE_GUID=""; export VPCREGION=""; export RESOURCE_GROUP=""; export BASEDOMAIN=""; export JENKINS_TOKEN=""; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
+#
+
+#
+# Steps taken:
+#
+# openshift-install create install-config
+# openshift-install create ignition-configs
+# openshift-install create manifests
+# openshift-install create cluster
 #
 
 function log_to_file()
@@ -47,8 +58,9 @@ done
 
 set -euo pipefail
 
-export IBMCLOUD_REGION=${POWERVS_REGION}
-export IBMCLOUD_ZONE=${POWERVS_ZONE}
+# PROBLEM:
+# export IBMCLOUD_REGION=${VPCREGION} # ${POWERVS_REGION}
+# export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-0.nightly-ppc64le-2022-06-16-003709"
 export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-fc.2-ppc64le"
@@ -58,6 +70,13 @@ export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
 export KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig
 export IC_API_KEY=${IBMCLOUD_API_KEY}
 
+if !hash jq
+then
+	echo "Error: Missing jq program!"
+	exit 1
+fi
+
+# Uncomment for even moar debugging!
 #export TF_LOG_PROVIDER=TRACE
 #export TF_LOG=TRACE
 #export TF_LOG_PATH=/tmp/tf.log
@@ -135,23 +154,48 @@ declare -a JOBS
 
 trap 'echo "Killing JOBS"; for PID in ${JOBS[@]}; do kill -9 ${PID} >/dev/null 2>&1 || true; done' TERM
 
-if [ -f ~/.powervs/config.json ]
+#
+# Recreate saved installer PowerVS session data
+#
+export PI_SESSION_DIR=~/.powervs
+if [ -d ${PI_SESSION_DIR} ]
 then
-	/bin/rm ~/.powervs/config.json
+	/bin/rm -rf ${PI_SESSION_DIR}
 fi
-if [ -d ~/.powervs/ ]
-then
-	/bin/rm -rf ~/.powervs/
-fi
+mkdir ${PI_SESSION_DIR}
+(
+	set -euo pipefail
+	FILE=$(mktemp)
+	trap "/bin/rm ${FILE}" EXIT
+	# Create the json file with jq
+	echo '{}' | jq -r \
+		--arg ID "${IBMID}" \
+		--arg APIKEY "${IBMCLOUD_API_KEY}" \
+		--arg REGION "${POWERVS_REGION}" \
+		--arg ZONE "${POWERVS_ZONE}" \
+		' .id = $ID
+		| .apikey = $APIKEY
+		| .region = $REGION
+		| .zone = $ZONE
+		' > ${FILE}
+	/bin/cp ${FILE} ${PI_SESSION_DIR}/config.json
+)
+#/bin/rm -rf ${PI_SESSION_DIR}
 
-init_ibmcloud
-
+#
+# Recreate openshift-installer's cluster directory
+#
 rm -rf ${CLUSTER_DIR}
 mkdir ${CLUSTER_DIR}
+
+init_ibmcloud
 
 SSH_KEY=$(cat ~/.ssh/id_rsa.pub)
 PULL_SECRET=$(cat ~/.pullSecret)
 
+#
+# Create the openshift-installer's install configuration file
+#
 cat << ___EOF___ > ${CLUSTER_DIR}/install-config.yaml
 apiVersion: v1
 baseDomain: "${BASEDOMAIN}"
@@ -181,18 +225,21 @@ networking:
   - 172.30.0.0/16
 platform:
   powervs:
-    userid: "${IBMID}"
-    powervsResourceGroup: "${RESOURCE_GROUP}"
-    region: "${POWERVS_REGION}"
-#   vpcRegion: "${VPCREGION}"
-    zone: "${POWERVS_ZONE}"
-    serviceInstanceID: "${SERVICE_INSTANCE_GUID}"
+    userID: ${IBMID}
+    powervsResourceGroup: ${RESOURCE_GROUP}
+    region: ${POWERVS_REGION}
+#   vpcRegion: ${VPCREGION}
+    zone: ${POWERVS_ZONE}
+    serviceInstanceID: ${SERVICE_INSTANCE_GUID}
 publish: External
 pullSecret: '${PULL_SECRET}'
 sshKey: |
   ${SSH_KEY}
 ___EOF___
 
+#
+# We use manual credentials mode
+#
 sed -i '/credentialsMode/d' ${CLUSTER_DIR}/install-config.yaml
 sed -i '/^baseDomain:.*$/a credentialsMode: Manual' ${CLUSTER_DIR}/install-config.yaml
 
@@ -202,6 +249,9 @@ openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
 date --utc +"%Y-%m-%dT%H:%M:%S%:z"
 openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
 
+#
+# Create three cluster operator's configuration files
+#
 cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-cloud-controller-manager-ibm-cloud-credentials-credentials.yaml
 apiVersion: v1
 kind: Secret
@@ -257,6 +307,10 @@ set +e
 wait ${PID_INSTALL}
 RC=$?
 
+#
+# Maybe the first time took too long and it is possible to wait for a second
+# attempt to complete?
+#
 openshift-install wait-for install-complete --dir ${CLUSTER_DIR} --log-level=debug || true
 RC=$?
 
@@ -275,10 +329,10 @@ else
 	fi
 fi
 
-FILE=$(mktemp)
-trap "/bin/rm ${FILE}" EXIT
+JENKINS_FILE=$(mktemp)
+trap "/bin/rm ${JENKINS_FILE}" EXIT
 
-egrep '(Creation complete|level=error)' ${CLUSTER_DIR}/.openshift_install.log > ${FILE}
+egrep '(Creation complete|level=error|: [0-9ms]*")' ${CLUSTER_DIR}/.openshift_install.log > ${JENKINS_FILE}
 CLUSTER_ID=$(jq -r '.clusterID' ${CLUSTER_DIR}/metadata.json)
 
 OCP_VERSION=${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE#*:}
@@ -297,7 +351,7 @@ then
 		--data POWERVS_REGION="${POWERVS_REGION}" \
 		--data POWERVS_ZONE="${POWERVS_ZONE}" \
 		--data DEPLOYMENT_SUCCESS="${DEPLOYMENT_SUCCESS}" \
-		--data DEPLOYMENT_LOG="$(cat ${FILE})" \
+		--data DEPLOYMENT_LOG="$(cat ${JENKINS_FILE})" \
 		--data DEPLOYMENT_DATE_TIME="${DATE}"
 fi
 set -x
