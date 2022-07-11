@@ -337,6 +337,9 @@ if false
 then
 if [ -z "$(jq -r '.powervs["vpcRegion"]' ${CLUSTER_DIR}/metadata.json)" ]
 then
+	#
+	# Fix bug where vpcRegion is not set but needed for destroy logic
+	#
 	(
 		set -xe
 		FILE=$(mktemp)
@@ -384,13 +387,13 @@ then
 	rsync -av ${CLUSTER_DIR}/ ${SAVE_DIR}/${CLUSTER_DIR}/
 
 	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
-	./bin/openshift-install --dir=${CLUSTER_DIR} destroy cluster --log-level=debug
+	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
 	sleep 1m
 	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
-	./bin/openshift-install --dir=${CLUSTER_DIR} destroy cluster --log-level=debug
+	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
 	sleep 1m
 	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
-	./bin/openshift-install --dir=${CLUSTER_DIR} destroy cluster --log-level=debug
+	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
 
 	/bin/rm -rf ${SAVE_DIR}
 fi
