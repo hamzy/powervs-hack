@@ -333,6 +333,23 @@ else
 	fi
 fi
 
+if false
+then
+if [ -z "$(jq -r '.powervs["vpcRegion"]' ${CLUSTER_DIR}/metadata.json)" ]
+then
+	(
+		set -xe
+		FILE=$(mktemp)
+		trap "/bin/rm ${FILE}" EXIT
+		jq -r --arg VPCREGION "${VPCREGION}" \
+			' .powervs["vpcRegion"] = $VPCREGION' \
+			< ${CLUSTER_DIR}/metadata.json \
+			> ${FILE}
+		/bin/cp ${FILE} ${CLUSTER_DIR}/metadata.json
+	)
+fi
+fi
+
 JENKINS_FILE=$(mktemp)
 trap "/bin/rm ${JENKINS_FILE}" EXIT
 
