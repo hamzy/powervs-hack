@@ -389,13 +389,13 @@ then
 	rsync -av ${CLUSTER_DIR}/ ${SAVE_DIR}/${BASE_CLUSTER_DIR}/
 
 	rsync -av ${SAVE_DIR}/${BASE_CLUSTER_DIR}/ ${CLUSTER_DIR}/
-	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
+	./bin/openshift-install --dir=${SAVE_DIR}/${BASE_CLUSTER_DIR}/ destroy cluster --log-level=debug
 	sleep 1m
 	rsync -av ${SAVE_DIR}/${BASE_CLUSTER_DIR}/ ${CLUSTER_DIR}/
-	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
+	./bin/openshift-install --dir=${SAVE_DIR}/${BASE_CLUSTER_DIR}/ destroy cluster --log-level=debug
 	sleep 1m
 	rsync -av ${SAVE_DIR}/${BASE_CLUSTER_DIR}/ ${CLUSTER_DIR}/
-	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
+	./bin/openshift-install --dir=${SAVE_DIR}/${BASE_CLUSTER_DIR}/ destroy cluster --log-level=debug
 
 	/bin/rm -rf ${SAVE_DIR}
 fi
