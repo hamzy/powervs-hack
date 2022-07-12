@@ -63,7 +63,8 @@ set -euo pipefail
 # export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-0.nightly-ppc64le-2022-06-16-003709"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-fc.2-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-fc.2-ppc64le"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-rc.2-ppc64le"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -382,17 +383,18 @@ set -x
 
 if [ -v CLEANUP ]
 then
+	BASE_CLUSTER_DIR=$(basename ${CLUSTER_DIR})
 	SAVE_DIR=$(mktemp --directory)
 
-	rsync -av ${CLUSTER_DIR}/ ${SAVE_DIR}/${CLUSTER_DIR}/
+	rsync -av ${CLUSTER_DIR}/ ${SAVE_DIR}/${BASE_CLUSTER_DIR}/
 
-	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
+	rsync -av ${SAVE_DIR}/${BASE_CLUSTER_DIR}/ ${CLUSTER_DIR}/
 	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
 	sleep 1m
-	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
+	rsync -av ${SAVE_DIR}/${BASE_CLUSTER_DIR}/ ${CLUSTER_DIR}/
 	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
 	sleep 1m
-	rsync -av ${SAVE_DIR}/${CLUSTER_DIR}/ ${CLUSTER_DIR}/
+	rsync -av ${SAVE_DIR}/${BASE_CLUSTER_DIR}/ ${CLUSTER_DIR}/
 	./bin/openshift-install --dir=${SAVE_DIR} destroy cluster --log-level=debug
 
 	/bin/rm -rf ${SAVE_DIR}
