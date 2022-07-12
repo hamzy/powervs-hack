@@ -323,8 +323,23 @@ if [ ${RC} -gt 0 ]
 then
 	DEPLOYMENT_SUCCESS="failure"
 else
-	KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig oc --request-timeout=5s get clusterversion
+	OC_OUTPUT=$(
+		FILE=$(mktemp)
+		trap "/bin/rm ${FILE}" EXIT
+		cd ${CLUSTER_DIR}/auth/
+		export KUBECONFIG=kubeconfig
+		oc --request-timeout=5s get clusterversion > ${FILE} 2>/dev/null
+		RC=$?
+		if [ ${RC} -gt 0 ]
+		then
+			exit 1
+		fi
+		jq -r '.items[].status.conditions[] | select (.status|test("False"))' ${FILE}
+		exit 0
+	)
 	RC=$?
+
+	echo "OC_OUTPUT=${OC_OUTPUT}"
 
 	if [ ${RC} -gt 0 ]
 	then
