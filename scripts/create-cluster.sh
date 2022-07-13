@@ -334,8 +334,17 @@ else
 		then
 			exit 1
 		fi
+		echo "===== oc get clusterversion ====="
+		cat ${FILE}
+		echo "===== oc get clusterversion ====="
 		jq -r '.items[].status.conditions[] | select (.status|test("False"))' ${FILE}
-		exit 0
+		RC=$?
+		if [ ${RC} -gt 0 ]
+		then
+			exit 1
+		else
+			exit 0
+		fi
 	)
 	RC=$?
 
