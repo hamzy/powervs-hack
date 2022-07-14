@@ -328,7 +328,8 @@ else
 		trap "/bin/rm ${FILE}" EXIT
 		cd ${CLUSTER_DIR}/auth/
 		export KUBECONFIG=kubeconfig
-		oc --request-timeout=5s get clusterversion > ${FILE} 2>/dev/null
+		oc --request-timeout=5s get clusterversion -o json > ${FILE} 2>/dev/null
+		oc --request-timeout=5s get clusterversion 2>/dev/null
 		RC=$?
 		if [ ${RC} -gt 0 ]
 		then
