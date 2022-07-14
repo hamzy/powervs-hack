@@ -323,6 +323,7 @@ if [ ${RC} -gt 0 ]
 then
 	DEPLOYMENT_SUCCESS="failure"
 else
+	set +x
 	OC_OUTPUT=$(
 		DEBUG=true
 
@@ -362,6 +363,7 @@ else
 		echo ${AVAILABLE}
 	)
 	RC=$?
+	set -x
 
 	echo "OC_OUTPUT=${OC_OUTPUT}"
 
