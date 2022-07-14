@@ -324,28 +324,38 @@ then
 	DEPLOYMENT_SUCCESS="failure"
 else
 	OC_OUTPUT=$(
-		FILE=$(mktemp)
-		trap "/bin/rm ${FILE}" EXIT
-		cd ${CLUSTER_DIR}/auth/
-		export KUBECONFIG=kubeconfig
-		oc --request-timeout=5s get clusterversion -o json > ${FILE} 2>/dev/null
-		oc --request-timeout=5s get clusterversion 2>/dev/null
+		DEBUG=true
+
+		oc --request-timeout=5s get clusterversion -o json > ${CV_FILE} 2>/dev/null
 		RC=$?
+		if ${DEBUG}
+		then
+			oc --request-timeout=5s get clusterversion 2>/dev/null > /tmp/debug.output
+		fi
 		if [ ${RC} -gt 0 ]
 		then
 			exit 1
 		fi
-		echo "===== oc get clusterversion ====="
-		cat ${FILE}
-		echo "===== oc get clusterversion ====="
-		jq -r '.items[].status.conditions[] | select (.status|test("False"))' ${FILE}
+		if ${DEBUG}
+		then
+			echo "===== BEGIN: oc get clusterversion: CV_FILE =====" >> /tmp/debug.output
+			cat ${CV_FILE} >> /tmp/debug.output
+			echo "===== END: oc get clusterversion: CV_FILE =====" >> /tmp/debug.output
+		fi
+		jq -r '.items[].status.conditions[] | select (.status|test("False"))' ${CV_FILE} > ${F_FILE}
 		RC=$?
+		if ${DEBUG}
+		then
+			echo "===== BEGIN: oc get clusterversion: F_FILE =====" >> /tmp/debug.output
+			cat ${F_FILE} >> /tmp/debug.output
+			echo "===== END: oc get clusterversion: F_FILE =====" >> /tmp/debug.output
+		fi
 		if [ ${RC} -gt 0 ]
 		then
 			exit 1
-		else
-			exit 0
 		fi
+		AVAILABLE=$(jq -r 'select (.type|test("Available"))' ${F_FILE})
+		echo ${AVAILABLE}
 	)
 	RC=$?
 
@@ -355,7 +365,12 @@ else
 	then
 		DEPLOYMENT_SUCCESS="failure"
 	else
-		DEPLOYMENT_SUCCESS="success"
+		if [ "${OC_OUTPUT}" == "" ]
+		then
+			DEPLOYMENT_SUCCESS="success"
+		else
+			DEPLOYMENT_SUCCESS="failure"
+		fi
 	fi
 fi
 
