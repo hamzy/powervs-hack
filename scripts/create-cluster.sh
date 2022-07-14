@@ -326,6 +326,10 @@ else
 	OC_OUTPUT=$(
 		DEBUG=true
 
+		CV_FILE=$(mktemp)
+		F_FILE=$(mktemp)
+		trap "/bin/rm ${CV_FILE} ${F_FILE}" EXIT
+
 		oc --request-timeout=5s get clusterversion -o json > ${CV_FILE} 2>/dev/null
 		RC=$?
 		if ${DEBUG}
