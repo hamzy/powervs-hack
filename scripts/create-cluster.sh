@@ -335,7 +335,7 @@ else
 		RC=$?
 		if ${DEBUG}
 		then
-			oc --request-timeout=5s get clusterversion 2>/dev/null > /tmp/debug.output
+			oc --request-timeout=5s get clusterversion 2>/dev/null > /tmp/get-clusterversion.output
 		fi
 		if [ ${RC} -gt 0 ]
 		then
@@ -343,17 +343,17 @@ else
 		fi
 		if ${DEBUG}
 		then
-			echo "===== BEGIN: oc get clusterversion: CV_FILE =====" >> /tmp/debug.output
-			cat ${CV_FILE} >> /tmp/debug.output
-			echo "===== END: oc get clusterversion: CV_FILE =====" >> /tmp/debug.output
+			echo "===== BEGIN: oc get clusterversion: CV_FILE =====" >> /tmp/get-clusterversion.output
+			cat ${CV_FILE} >> /tmp/get-clusterversion.output
+			echo "===== END: oc get clusterversion: CV_FILE =====" >> /tmp/get-clusterversion.output
 		fi
 		jq -r '.items[].status.conditions[] | select (.status|test("False"))' ${CV_FILE} > ${F_FILE}
 		RC=$?
 		if ${DEBUG}
 		then
-			echo "===== BEGIN: oc get clusterversion: F_FILE =====" >> /tmp/debug.output
-			cat ${F_FILE} >> /tmp/debug.output
-			echo "===== END: oc get clusterversion: F_FILE =====" >> /tmp/debug.output
+			echo "===== BEGIN: oc get clusterversion: F_FILE =====" >> /tmp/get-clusterversion.output
+			cat ${F_FILE} >> /tmp/get-clusterversion.output
+			echo "===== END: oc get clusterversion: F_FILE =====" >> /tmp/get-clusterversion.output
 		fi
 		if [ ${RC} -gt 0 ]
 		then
@@ -377,6 +377,11 @@ else
 		else
 			DEPLOYMENT_SUCCESS="failure"
 		fi
+	fi
+
+	if [ -f /tmp/get-clusterversion.output ]
+	then
+		/bin/cp /tmp/get-clusterversion.output ${CLUSTER_DIR}/
 	fi
 fi
 
