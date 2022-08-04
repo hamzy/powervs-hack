@@ -20,16 +20,25 @@ done
 
 set -xeuo pipefail
 
-if ! ibmcloud pi network hamzy-public-network
-then
-	ibmcloud pi network-create-public hamzy-public-network --dns-servers "1.1.1.1 9.9.9.9 8.8.8.8"
-fi
+ARG_NAME=${1-}
+INSTANCE_NAME=""
 
-if true
+case "${ARG_NAME}" in
+	"")
+		true
+	;;
+	"hamzy-CI")
+		export NETWORK_NAME=""
+		export INSTANCE_NAME="hamzy-CI"
+	;;
+	*)
+		echo "Error: Unexpected argument ${ARG_NAME}"
+		exit 1
+	;;
+esac
+
+if [ -z "${ARG_NAME}" ]
 then
-	export NETWORK_NAME=""
-	export INSTANCE_NAME="hamzy-CI"
-else
 	export INFRA_ID=$(jq -r '.infraID' ${CLUSTER_DIR}/metadata.json)
 
 	while true
@@ -42,6 +51,11 @@ else
 	done
 
 	export INSTANCE_NAME="${INFRA_ID}-jumpbox"
+fi
+
+if ! ibmcloud pi network hamzy-public-network
+then
+	ibmcloud pi network-create-public hamzy-public-network --dns-servers "1.1.1.1 9.9.9.9 8.8.8.8"
 fi
 
 if ! ibmcloud pi instance ${INSTANCE_NAME}
