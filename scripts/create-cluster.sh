@@ -63,8 +63,7 @@ set -euo pipefail
 # export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-0.nightly-ppc64le-2022-06-16-003709"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-fc.2-ppc64le"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-rc.2-ppc64le"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-rc.7-ppc64le"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -129,7 +128,7 @@ fi
 #
 # Quota check DHCP networks
 #
-SERVICE_INSTANCE_CRN=$(ibmcloud resource service-instances --output JSON | jq -r '.[] | select(.guid|test("'${SERVICE_INSTANCE_GUID}'")) | .id')
+SERVICE_INSTANCE_CRN=$(ibmcloud resource service-instances --output JSON | jq -r '.[] | select(.guid|test("'${SERVICE_INSTANCE_GUID}'")) | .crn')
 CLOUD_INSTANCE_ID=$(echo ${SERVICE_INSTANCE_CRN} | cut -d: -f8)
 [ -z "${CLOUD_INSTANCE_ID}" ] && exit 1
 echo "CLOUD_INSTANCE_ID=${CLOUD_INSTANCE_ID}"
@@ -195,7 +194,8 @@ mkdir ${CLUSTER_DIR}
 
 init_ibmcloud
 
-SSH_KEY=$(cat ~/.ssh/id_rsa.pub)
+#SSH_KEY=$(cat ~/.ssh/id_rsa.pub)
+SSH_KEY=$(cat ~/.ssh/id_installer_rsa.pub)
 PULL_SECRET=$(cat ~/.pullSecret)
 
 #
@@ -237,6 +237,7 @@ platform:
     zone: ${POWERVS_ZONE}
     serviceInstanceID: ${SERVICE_INSTANCE_GUID}
 publish: External
+#publish: Internal
 pullSecret: '${PULL_SECRET}'
 sshKey: |
   ${SSH_KEY}
@@ -409,6 +410,7 @@ JENKINS_FILE=$(mktemp)
 trap "/bin/rm ${JENKINS_FILE}" EXIT
 
 egrep '(Creation complete|level=error|: [0-9ms]*")' ${CLUSTER_DIR}/.openshift_install.log > ${JENKINS_FILE}
+sed -i -r -e 's,level=error(.* provider[^:]*: ),level=debug\1,' ${JENKINS_FILE}
 CLUSTER_ID=$(jq -r '.clusterID' ${CLUSTER_DIR}/metadata.json)
 
 OCP_VERSION=${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE#*:}
