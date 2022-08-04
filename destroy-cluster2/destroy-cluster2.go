@@ -876,16 +876,143 @@ func (o *ClusterUninstaller) destroyImages() error {
 }
 
 const (
-	instanceTypeName       = "instance"
-	instanceActionTypeName = "instance action"
+	cloudInstanceTypeName = "cloudInstance"
 )
 
-// listInstances lists instances in the vpc.
-func (o *ClusterUninstaller) listInstances() (cloudResources, error) {
+// listCloudInstances lists instances in the cloud server.
+func (o *ClusterUninstaller) listCloudInstances() (cloudResources, error) {
+	o.Logger.Debugf("Listing virtual Cloud service instances")
+
+	ctx, _ := o.contextWithTimeout()
+
+	options := o.vpcSvc.NewListInstancesOptions()
+
+	// https://raw.githubusercontent.com/IBM/vpc-go-sdk/master/vpcv1/vpc_v1.go
+	resources, _, err := o.vpcSvc.ListInstancesWithContext(ctx, options)
+	if err != nil {
+		o.Logger.Warnf("Error o.vpcSvc.ListInstancesWithContext: %v", err)
+		return nil, err
+	}
+
+	var foundOne = false
+
+	result := []cloudResource{}
+	for _, instance := range resources.Instances {
+		if strings.Contains(*instance.Name, o.InfraID) {
+			foundOne = true
+			o.Logger.Debugf("listCloudInstances: FOUND: %s, %s, %s", *instance.ID, *instance.Name, *instance.Status)
+			result = append(result, cloudResource{
+				key:      *instance.ID,
+				name:     *instance.Name,
+				status:   *instance.Status,
+				typeName: cloudInstanceTypeName,
+				id:       *instance.ID,
+			})
+		}
+	}
+	if !foundOne {
+		o.Logger.Debugf("listCloudInstances: NO matching virtual instance against: %s", o.InfraID)
+		for _, instance := range resources.Instances {
+			o.Logger.Debugf("listInstances: only found virtual instance: %s", *instance.Name)
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+// destroyCloudInstance deletes a given instance.
+func (o *ClusterUninstaller) destroyCloudInstance(item cloudResource) error {
+	var (
+		ctx                   context.Context
+		err                   error
+		getInstanceOptions    *vpcv1.GetInstanceOptions
+		deleteInstanceOptions *vpcv1.DeleteInstanceOptions
+		response              *core.DetailedResponse
+	)
+
+	ctx, _ = o.contextWithTimeout()
+
+	getInstanceOptions = o.vpcSvc.NewGetInstanceOptions(item.id)
+
+	_, _, err = o.vpcSvc.GetInstanceWithContext(ctx, getInstanceOptions)
+	if err != nil {
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted Cloud instance %q", item.name)
+		return nil
+	}
+
+	o.Logger.Debugf("Deleting Cloud instance %q", item.name)
+
+	deleteInstanceOptions = o.vpcSvc.NewDeleteInstanceOptions(item.id)
+
+	response, err = o.vpcSvc.DeleteInstanceWithContext(ctx, deleteInstanceOptions)
+	if err != nil {
+		o.Logger.Infof("Error: o.vpcSvc.DeleteInstanceWithContext: %q %q", err, response)
+		return err
+	}
+
+	o.deletePendingItems(item.typeName, []cloudResource{item})
+	o.Logger.Infof("Deleted Cloud instance %q", item.name)
+
+	return nil
+}
+
+// destroyCloudInstances searches for Cloud instances that have a name that starts with
+// the cluster's infra ID.
+func (o *ClusterUninstaller) destroyCloudInstances() error {
+	found, err := o.listCloudInstances()
+	if err != nil {
+		return err
+	}
+
+	items := o.insertPendingItems(cloudInstanceTypeName, found.list())
+
+	ctx, _ := o.contextWithTimeout()
+
+	for !o.timeout(ctx) {
+		for _, item := range items {
+			select {
+			case <-o.Context.Done():
+				o.Logger.Debugf("destroyCloudInstances: case <-o.Context.Done()")
+				return o.Context.Err() // we're cancelled, abort
+			default:
+			}
+
+			if _, ok := found[item.key]; !ok {
+				// This item has finished deletion.
+				o.deletePendingItems(item.typeName, []cloudResource{item})
+				o.Logger.Infof("Deleted Cloud instance %q", item.name)
+				continue
+			}
+			err := o.destroyCloudInstance(item)
+			if err != nil {
+				o.errorTracker.suppressWarning(item.key, err, o.Logger)
+			}
+		}
+
+		items = o.getPendingItems(cloudInstanceTypeName)
+		if len(items) == 0 {
+			break
+		}
+	}
+
+	if items = o.getPendingItems(cloudInstanceTypeName); len(items) > 0 {
+		return errors.Errorf("destroyCloudInstances: %d undeleted items pending", len(items))
+	}
+
+	return nil
+}
+
+const (
+	powerInstanceTypeName = "powerInstance"
+)
+
+// listPowerInstances lists instances in the power server.
+func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
 	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/p_vm_instance_network.go#L16-L44
 	var network *models.PVMInstanceNetwork
 
-	o.Logger.Debugf("Listing virtual service instances")
+	o.Logger.Debugf("Listing virtual Power service instances")
 
 	instances, err := o.instanceClient.GetAll()
 	if err != nil {
@@ -900,12 +1027,12 @@ func (o *ClusterUninstaller) listInstances() (cloudResources, error) {
 		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/p_vm_instance.go
 		if strings.Contains(*instance.ServerName, o.InfraID) {
 			foundOne = true
-			o.Logger.Debugf("listInstances: FOUND: %s, %s, %s", *instance.PvmInstanceID, *instance.ServerName, *instance.Status)
+			o.Logger.Debugf("listPowerInstances: FOUND: %s, %s, %s", *instance.PvmInstanceID, *instance.ServerName, *instance.Status)
 			result = append(result, cloudResource{
 				key:      *instance.PvmInstanceID,
 				name:     *instance.ServerName,
 				status:   *instance.Status,
-				typeName: instanceTypeName,
+				typeName: powerInstanceTypeName,
 				id:       *instance.PvmInstanceID,
 			})
 
@@ -917,7 +1044,7 @@ func (o *ClusterUninstaller) listInstances() (cloudResources, error) {
 		}
 	}
 	if !foundOne {
-		o.Logger.Debugf("listInstances: NO matching virtual instance against: %s", o.InfraID)
+		o.Logger.Debugf("listPowerInstances: NO matching virtual instance against: %s", o.InfraID)
 		for _, instance := range instances.PvmInstances {
 			o.Logger.Debugf("listInstances: only found virtual instance: %s", *instance.ServerName)
 		}
@@ -926,23 +1053,23 @@ func (o *ClusterUninstaller) listInstances() (cloudResources, error) {
 	return cloudResources{}.insert(result...), nil
 }
 
-func (o *ClusterUninstaller) destroyInstance(item cloudResource) error {
+func (o *ClusterUninstaller) destroyPowerInstance(item cloudResource) error {
 	var err error
 
 	_, err = o.instanceClient.Get(item.id)
 	if err != nil {
 		o.deletePendingItems(item.typeName, []cloudResource{item})
-		o.Logger.Infof("Deleted instance %q", item.name)
+		o.Logger.Infof("Deleted Power instance %q", item.name)
 		return nil
 	}
 
 	if !shouldDelete {
-		o.Logger.Debugf("Skipping deleting instance %q since shouldDelete is false", item.name)
+		o.Logger.Debugf("Skipping deleting Power instance %q since shouldDelete is false", item.name)
 		o.deletePendingItems(item.typeName, []cloudResource{item})
 		return nil
 	}
 
-	o.Logger.Debugf("Deleting instance %q", item.name)
+	o.Logger.Debugf("Deleting Power instance %q", item.name)
 
 	err = o.instanceClient.Delete(item.id)
 	if err != nil {
@@ -951,20 +1078,20 @@ func (o *ClusterUninstaller) destroyInstance(item cloudResource) error {
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
-	o.Logger.Infof("Deleted instance %q", item.name)
+	o.Logger.Infof("Deleted Power instance %q", item.name)
 
 	return nil
 }
 
-// destroyInstances searches for instances that have a name that starts with
+// destroyPowerInstances searches for Power instances that have a name that starts with
 // the cluster's infra ID.
-func (o *ClusterUninstaller) destroyInstances() error {
-	found, err := o.listInstances()
+func (o *ClusterUninstaller) destroyPowerInstances() error {
+	found, err := o.listPowerInstances()
 	if err != nil {
 		return err
 	}
 
-	items := o.insertPendingItems(instanceTypeName, found.list())
+	items := o.insertPendingItems(powerInstanceTypeName, found.list())
 
 	ctx, _ := o.contextWithTimeout()
 
@@ -972,7 +1099,7 @@ func (o *ClusterUninstaller) destroyInstances() error {
 		for _, item := range items {
 			select {
 			case <-o.Context.Done():
-				o.Logger.Debugf("destroyInstances: case <-o.Context.Done()")
+				o.Logger.Debugf("destroyPowerInstances: case <-o.Context.Done()")
 				return o.Context.Err() // we're cancelled, abort
 			default:
 			}
@@ -980,23 +1107,23 @@ func (o *ClusterUninstaller) destroyInstances() error {
 			if _, ok := found[item.key]; !ok {
 				// This item has finished deletion.
 				o.deletePendingItems(item.typeName, []cloudResource{item})
-				o.Logger.Infof("Deleted instance %q", item.name)
+				o.Logger.Infof("Deleted Power instance %q", item.name)
 				continue
 			}
-			err := o.destroyInstance(item)
+			err := o.destroyPowerInstance(item)
 			if err != nil {
 				o.errorTracker.suppressWarning(item.key, err, o.Logger)
 			}
 		}
 
-		items = o.getPendingItems(instanceTypeName)
+		items = o.getPendingItems(powerInstanceTypeName)
 		if len(items) == 0 {
 			break
 		}
 	}
 
-	if items = o.getPendingItems(instanceTypeName); len(items) > 0 {
-		return errors.Errorf("destroyInstances: %d undeleted items pending", len(items))
+	if items = o.getPendingItems(powerInstanceTypeName); len(items) > 0 {
+		return errors.Errorf("destroyPowerInstances: %d undeleted items pending", len(items))
 	}
 	return nil
 }
@@ -1652,7 +1779,9 @@ func (o *ClusterUninstaller) destroyCluster() error {
 		name    string
 		execute func() error
 	}{{
-		{name: "Instances", execute: o.destroyInstances},
+		{name: "Cloud Instances", execute: o.destroyCloudInstances},
+	}, {
+		{name: "Power Instances", execute: o.destroyPowerInstances},
 	}, {
 		{name: "Load Balancers", execute: o.destroyLoadBalancers},
 	}, {
@@ -1668,7 +1797,8 @@ func (o *ClusterUninstaller) destroyCluster() error {
 	}, {
 		{name: "Cloud Object Storage Instances", execute: o.destroyCOSInstances},
 		{name: "DNS Records", execute: o.destroyDNSRecords},
-		{name: "SSH Keys", execute: o.destroySSHKeys},
+		{name: "Cloud SSH Keys", execute: o.destroyCloudSSHKeys},
+		{name: "Power SSH Keys", execute: o.destroyPowerSSHKeys},
 	}}
 
 	for _, stage := range stagedFuncs {
@@ -2640,80 +2770,146 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 	return nil
 }
 
-const sshKeyTypeName = "sshKey"
+const (
+	cloudSSHKeyTypeName = "cloudSshKey"
+)
 
-// listSSHKeys lists images in the vpc.
-func (o *ClusterUninstaller) listSSHKeys() (cloudResources, error) {
-	o.Logger.Debugf("Listing SSHKeys")
+// listCloudSSHKeys lists images in the vpc.
+func (o *ClusterUninstaller) listCloudSSHKeys() (cloudResources, error) {
+	o.Logger.Debugf("Listing Cloud SSHKeys")
 
 	select {
 	case <-o.Context.Done():
-		o.Logger.Debugf("listSSHKeys: case <-o.Context.Done()")
+		o.Logger.Debugf("listCloudSSHKeys: case <-o.Context.Done()")
 		return nil, o.Context.Err() // we're cancelled, abort
 	default:
 	}
 
-	var sshKeys *models.SSHKeys
-	var err error
+	// https://raw.githubusercontent.com/IBM/vpc-go-sdk/master/vpcv1/vpc_v1.go
+	var (
+		ctx              context.Context
+		foundOne         bool                   = false
+		perPage          int64                  = 20
+		moreData         bool                   = true
+		listKeysOptions  *vpcv1.ListKeysOptions
+		sshKeyCollection *vpcv1.KeyCollection
+		detailedResponse *core.DetailedResponse
+		err              error
+		sshKey           vpcv1.Key
+	)
 
-	sshKeys, err = o.keyClient.GetAll()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list sshkeys: %v", err)
-	}
+	ctx, _ = o.contextWithTimeout()
 
-	var sshKey *models.SSHKey
-	var foundOne = false
+	listKeysOptions = o.vpcSvc.NewListKeysOptions()
+	listKeysOptions.SetLimit(perPage)
 
 	result := []cloudResource{}
-	for _, sshKey = range sshKeys.SSHKeys {
-		if strings.Contains(*sshKey.Name, o.InfraID) {
-			foundOne = true
-			o.Logger.Debugf("listSSHKeys: FOUND: %v", *sshKey.Name)
-			result = append(result, cloudResource{
-				key:      *sshKey.Name,
-				name:     *sshKey.Name,
-				status:   "",
-				typeName: sshKeyTypeName,
-				id:       *sshKey.Name,
-			})
+
+	for moreData {
+		sshKeyCollection, detailedResponse, err = o.vpcSvc.ListKeysWithContext(ctx,listKeysOptions)
+		if err != nil {
+			return nil, errors.Wrapf(err, "failed to list Cloud ssh keys: %v and the response is: %s", err, detailedResponse)
 		}
+
+		for _, sshKey = range sshKeyCollection.Keys {
+			if strings.Contains(*sshKey.Name, o.InfraID) {
+				foundOne = true
+				o.Logger.Debugf("listCloudSSHKeys: FOUND: %v", *sshKey.Name)
+				result = append(result, cloudResource{
+					key:      *sshKey.Name,
+					name:     *sshKey.Name,
+					status:   "",
+					typeName: cloudSSHKeyTypeName,
+					id:       *sshKey.ID,
+				})
+			}
+		}
+
+		if sshKeyCollection.First != nil {
+			o.Logger.Debugf("listCloudSSHKeys: First = %v", *sshKeyCollection.First.Href)
+		}
+		if sshKeyCollection.Limit != nil {
+			o.Logger.Debugf("listCloudSSHKeys: Limit = %v", *sshKeyCollection.Limit)
+		}
+		if sshKeyCollection.Next != nil {
+			o.Logger.Debugf("listCloudSSHKeys: Next = %v", *sshKeyCollection.Next.Href)
+			listKeysOptions.SetStart(*sshKeyCollection.Next.Href)
+		}
+
+		moreData = sshKeyCollection.Next != nil
+		o.Logger.Debugf("listCloudSSHKeys: moreData = %v", moreData)
 	}
 	if !foundOne {
-		o.Logger.Debugf("listSSHKeys: NO matching sshKey against: %s", o.InfraID)
-		for _, sshKey := range sshKeys.SSHKeys {
-			o.Logger.Debugf("listSSHKeys: sshKey: %s", *sshKey.Name)
+		o.Logger.Debugf("listCloudSSHKeys: NO matching sshKey against: %s", o.InfraID)
+
+		listKeysOptions = o.vpcSvc.NewListKeysOptions()
+		listKeysOptions.SetLimit(perPage)
+		moreData = true
+
+		for moreData {
+			sshKeyCollection, detailedResponse, err = o.vpcSvc.ListKeysWithContext(ctx,listKeysOptions)
+			if err != nil {
+				return nil, errors.Wrapf(err, "failed to list Cloud ssh keys: %v and the response is: %s", err, detailedResponse)
+			}
+			for _, sshKey = range sshKeyCollection.Keys {
+				o.Logger.Debugf("listCloudSSHKeys: FOUND: %v", *sshKey.Name)
+			}
+			if sshKeyCollection.First != nil {
+				o.Logger.Debugf("listCloudSSHKeys: First = %v", *sshKeyCollection.First.Href)
+			}
+			if sshKeyCollection.Limit != nil {
+				o.Logger.Debugf("listCloudSSHKeys: Limit = %v", *sshKeyCollection.Limit)
+			}
+			if sshKeyCollection.Next != nil {
+				o.Logger.Debugf("listCloudSSHKeys: Next = %v", *sshKeyCollection.Next.Href)
+				listKeysOptions.SetStart(*sshKeyCollection.Next.Href)
+			}
+			moreData = sshKeyCollection.Next != nil
+			o.Logger.Debugf("listCloudSSHKeys: moreData = %v", moreData)
 		}
 	}
 
 	return cloudResources{}.insert(result...), nil
 }
 
-func (o *ClusterUninstaller) deleteSSHKey(item cloudResource) error {
-	var err error
+// deleteCloudSSHKey deletes a given ssh key.
+func (o *ClusterUninstaller) deleteCloudSSHKey(item cloudResource) error {
+	var (
+		ctx              context.Context
+		getKeyOptions    *vpcv1.GetKeyOptions
+		deleteKeyOptions *vpcv1.DeleteKeyOptions
+		err              error
+	)
 
-	_, err = o.keyClient.Get(item.id)
+	ctx, _ = o.contextWithTimeout()
+
+	getKeyOptions = o.vpcSvc.NewGetKeyOptions(item.id)
+
+	_, _, err = o.vpcSvc.GetKey(getKeyOptions)
 	if err != nil {
 		o.deletePendingItems(item.typeName, []cloudResource{item})
-		o.Logger.Infof("Deleted sshKey %q", item.name)
+		o.Logger.Infof("Deleted Cloud sshKey %q", item.name)
 		return nil
 	}
 
 	if !shouldDelete {
-		o.Logger.Debugf("Skipping deleting ssh key %q since shouldDelete is false", item.name)
+		o.Logger.Debugf("Skipping deleting Cloud sshKey %q since shouldDelete is false", item.name)
 		o.deletePendingItems(item.typeName, []cloudResource{item})
 		return nil
 	}
 
-	o.Logger.Debugf("Deleting sshKey %q", item.name)
+	o.Logger.Debugf("Deleting Cloud sshKey %q", item.name)
 
 	select {
 	case <-o.Context.Done():
-		o.Logger.Debugf("destroySSHKey: case <-o.Context.Done()")
+		o.Logger.Debugf("deleteCloudSSHKey: case <-o.Context.Done()")
 		return o.Context.Err() // we're cancelled, abort
 	default:
 	}
 
-	err = o.keyClient.Delete(item.id)
+	deleteKeyOptions = o.vpcSvc.NewDeleteKeyOptions(item.id)
+
+	_, err = o.vpcSvc.DeleteKeyWithContext(ctx, deleteKeyOptions)
 	if err != nil {
 		return errors.Wrapf(err, "failed to delete sshKey %s", item.name)
 	}
@@ -2721,15 +2917,15 @@ func (o *ClusterUninstaller) deleteSSHKey(item cloudResource) error {
 	return nil
 }
 
-// destroySSHKeys removes all image resources that have a name prefixed
+// destroyCloudSSHKeys removes all image resources that have a name prefixed
 // with the cluster's infra ID.
-func (o *ClusterUninstaller) destroySSHKeys() error {
-	found, err := o.listSSHKeys()
+func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
+	found, err := o.listCloudSSHKeys()
 	if err != nil {
 		return err
 	}
 
-	items := o.insertPendingItems(sshKeyTypeName, found.list())
+	items := o.insertPendingItems(cloudSSHKeyTypeName, found.list())
 
 	ctx, _ := o.contextWithTimeout()
 
@@ -2737,7 +2933,7 @@ func (o *ClusterUninstaller) destroySSHKeys() error {
 		for _, item := range items {
 			select {
 			case <-o.Context.Done():
-				o.Logger.Debugf("destroySSHKeys: case <-o.Context.Done()")
+				o.Logger.Debugf("destroyCloudSSHKeys: case <-o.Context.Done()")
 				return o.Context.Err() // we're cancelled, abort
 			default:
 			}
@@ -2748,20 +2944,146 @@ func (o *ClusterUninstaller) destroySSHKeys() error {
 				o.Logger.Infof("Deleted sshKey %q", item.name)
 				continue
 			}
-			err := o.deleteSSHKey(item)
+			err := o.deleteCloudSSHKey(item)
 			if err != nil {
 				o.errorTracker.suppressWarning(item.key, err, o.Logger)
 			}
 		}
 
-		items = o.getPendingItems(sshKeyTypeName)
+		items = o.getPendingItems(cloudSSHKeyTypeName)
 		if len(items) == 0 {
 			break
 		}
 	}
 
-	if items = o.getPendingItems(sshKeyTypeName); len(items) > 0 {
-		return errors.Errorf("destroySSHKeys: %d undeleted items pending", len(items))
+	if items = o.getPendingItems(cloudSSHKeyTypeName); len(items) > 0 {
+		return errors.Errorf("destroyCloudSSHKeys: %d undeleted items pending", len(items))
+	}
+	return nil
+}
+
+const powerSSHKeyTypeName = "powerSshKey"
+
+// listPowerSSHKeys lists ssh keys in the Power server.
+func (o *ClusterUninstaller) listPowerSSHKeys() (cloudResources, error) {
+	o.Logger.Debugf("Listing Power SSHKeys")
+
+	select {
+	case <-o.Context.Done():
+		o.Logger.Debugf("listPowerSSHKeys: case <-o.Context.Done()")
+		return nil, o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	var sshKeys *models.SSHKeys
+	var err error
+
+	sshKeys, err = o.keyClient.GetAll()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to list Power sshkeys: %v", err)
+	}
+
+	var sshKey *models.SSHKey
+	var foundOne = false
+
+	result := []cloudResource{}
+	for _, sshKey = range sshKeys.SSHKeys {
+		if strings.Contains(*sshKey.Name, o.InfraID) {
+			foundOne = true
+			o.Logger.Debugf("listPowerSSHKeys: FOUND: %v", *sshKey.Name)
+			result = append(result, cloudResource{
+				key:      *sshKey.Name,
+				name:     *sshKey.Name,
+				status:   "",
+				typeName: powerSSHKeyTypeName,
+				id:       *sshKey.Name,
+			})
+		}
+	}
+	if !foundOne {
+		o.Logger.Debugf("listPowerSSHKeys: NO matching sshKey against: %s", o.InfraID)
+		for _, sshKey := range sshKeys.SSHKeys {
+			o.Logger.Debugf("listPowerSSHKeys: sshKey: %s", *sshKey.Name)
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+func (o *ClusterUninstaller) deletePowerSSHKey(item cloudResource) error {
+	var err error
+
+	_, err = o.keyClient.Get(item.id)
+	if err != nil {
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted Power sshKey %q", item.name)
+		return nil
+	}
+
+	if !shouldDelete {
+		o.Logger.Debugf("Skipping deleting Power ssh key %q since shouldDelete is false", item.name)
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		return nil
+	}
+
+	o.Logger.Debugf("Deleting Power sshKey %q", item.name)
+
+	select {
+	case <-o.Context.Done():
+		o.Logger.Debugf("deletePowerSSHKey: case <-o.Context.Done()")
+		return o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	err = o.keyClient.Delete(item.id)
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete Power sshKey %s", item.name)
+	}
+
+	return nil
+}
+
+// destroyPowerSSHKeys removes all ssh keys that have a name prefixed
+// with the cluster's infra ID.
+func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
+	found, err := o.listPowerSSHKeys()
+	if err != nil {
+		return err
+	}
+
+	items := o.insertPendingItems(powerSSHKeyTypeName, found.list())
+
+	ctx, _ := o.contextWithTimeout()
+
+	for !o.timeout(ctx) {
+		for _, item := range items {
+			select {
+			case <-o.Context.Done():
+				o.Logger.Debugf("destroyPowerSSHKeys: case <-o.Context.Done()")
+				return o.Context.Err() // we're cancelled, abort
+			default:
+			}
+
+			if _, ok := found[item.key]; !ok {
+				// This item has finished deletion.
+				o.deletePendingItems(item.typeName, []cloudResource{item})
+				o.Logger.Infof("Deleted sshKey %q", item.name)
+				continue
+			}
+			err := o.deletePowerSSHKey(item)
+			if err != nil {
+				o.errorTracker.suppressWarning(item.key, err, o.Logger)
+			}
+		}
+
+		items = o.getPendingItems(powerSSHKeyTypeName)
+		if len(items) == 0 {
+			break
+		}
+	}
+
+	if items = o.getPendingItems(powerSSHKeyTypeName); len(items) > 0 {
+		return errors.Errorf("destroyPowerSSHKeys: %d undeleted items pending", len(items))
 	}
 	return nil
 }
