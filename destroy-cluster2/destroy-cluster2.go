@@ -43,6 +43,7 @@ import (
 
 var shouldDebug = false
 var shouldDelete = false
+var shouldDeleteDHCP = false
 
 // listCloudConnections lists cloud connections in the cloud.
 func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
@@ -446,7 +447,11 @@ func (o *ClusterUninstaller) listDHCPNetworks() (cloudResources, error) {
 			continue
 		}
 
-		if _, ok := o.DHCPNetworks[*dhcpServer.Network.Name]; ok {
+		_, ok := o.DHCPNetworks[*dhcpServer.Network.Name]
+		if shouldDeleteDHCP {
+			ok = true
+		}
+		if ok {
 			o.Logger.Debugf("listDHCPNetworks: FOUND: %s (%s)\n", *dhcpServer.Network.Name, *dhcpServer.ID)
 			foundOne = true
 			result = append(result, cloudResource{
@@ -3401,6 +3406,7 @@ func main() {
 	var ptrMetadaFilename *string
 	var ptrShouldDebug *string
 	var ptrShouldDelete *string
+	var ptrShouldDeleteDHCP *string
 
 	var ptrApiKey *string
 	var ptrBaseDomain *string
@@ -3425,6 +3431,7 @@ func main() {
 	ptrMetadaFilename = flag.String("metadata", "", "The filename containing cluster metadata")
 	ptrShouldDebug = flag.String("shouldDebug", "false", "Should output debug output")
 	ptrShouldDelete = flag.String("shouldDelete", "false", "Should delete matching records")
+	ptrShouldDeleteDHCP = flag.String("shouldDeleteDHCP", "false", "Should delete all DHCP records")
 
 	ptrApiKey = flag.String("apiKey", "", "Your IBM Cloud API key")
 	ptrBaseDomain = flag.String("baseDomain", "", "The DNS zone Ex: scnl-ibm.com")
@@ -3447,6 +3454,15 @@ func main() {
 		log.Fatalf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
 	}
 
+	switch strings.ToLower(*ptrShouldDeleteDHCP) {
+	case "true":
+		shouldDeleteDHCP = true
+	case "false":
+		shouldDeleteDHCP = false
+	default:
+		log.Fatalf("Error: shouldDeleteDHCP is not true/false (%s)\n", *ptrShouldDeleteDHCP)
+	}
+
 	if *ptrMetadaFilename != "" {
 		data, err = readMetadata(*ptrMetadaFilename)
 		if err != nil {
@@ -3464,14 +3480,14 @@ func main() {
 
 		// Handle:
 		// {
-  		//   "clusterName": "rdr-hamzy-test",
-  		//   "clusterID": "ffbb8a77-1ae7-445b-83ad-44cae63a8679",
-  		//   "infraID": "rdr-hamzy-test-rwmtj",
-  		//   "powervs": {
-    		//     "cisInstanceCRN": "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::",
-    		//     "region": "lon",
-    		//     "zone": "lon04"
-  		//   }
+		//   "clusterName": "rdr-hamzy-test",
+		//   "clusterID": "ffbb8a77-1ae7-445b-83ad-44cae63a8679",
+		//   "infraID": "rdr-hamzy-test-rwmtj",
+		//   "powervs": {
+		//     "cisInstanceCRN": "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::",
+		//     "region": "lon",
+		//     "zone": "lon04"
+		//   }
 		// }
 
 		ptrInfraID = &data.InfraID
