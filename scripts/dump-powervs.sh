@@ -71,9 +71,14 @@ then
 fi
 
 BEARER_TOKEN=$(curl --silent -X POST "https://iam.cloud.ibm.com/identity/token" -H "content-type: application/x-www-form-urlencoded" -H "accept: application/json" -d "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=${IBMCLOUD_API_KEY}" | jq -r .access_token)
-if [ -z "${BEARER_TOKEN}" -o "${BEARER_TOKEN}" == "null" ]
+if [ -z "${BEARER_TOKEN}" ]
 then
-	echo "Error: Bearer token is empty/null?"
+	echo "Error: Bearer token is empty?"
+	exit 1
+fi
+if [ "${BEARER_TOKEN}" == "null" ]
+then
+	echo "Error: Bearer token is null?"
 	exit 1
 fi
 

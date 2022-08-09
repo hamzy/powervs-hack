@@ -44,7 +44,8 @@ echo "CLOUD_INSTANCE_ID=${CLOUD_INSTANCE_ID}"
 echo "DATE=$(TZ=UTC date -R)"
 
 BEARER_TOKEN=$(curl --silent -X POST "https://iam.cloud.ibm.com/identity/token" -H "content-type: application/x-www-form-urlencoded" -H "accept: application/json" -d "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=${IBMCLOUD_API_KEY}" | jq -r .access_token)
-[ -z "${BEARER_TOKEN}" -o "${BEARER_TOKEN}" == "null" ] && exit 1
+[ -z "${BEARER_TOKEN}" ] && exit 1
+[ "${BEARER_TOKEN}" == "null" ] && exit 1
 
 if [ -z "${DHCP_ID}" ]
 then
