@@ -41,11 +41,11 @@ then
 	exit 1
 fi
 
-export SERVICE_INSTANCE=$(ibmcloud resource service-instances --output JSON | jq -r '.[] | select(.guid|test("'${SERVICE_ID}'")) | .name')
-if [ -z "${SERVICE_INSTANCE}" ]
+export SERVICE_CRN=$(ibmcloud resource service-instances --output json | jq -r '.[] | select (.guid|test("^'${SERVICE_ID}'$")) | .crn')
+if [ -z "${SERVICE_CRN}" ]
 then
-	echo "Error: SERVICE_INSTANCE is null?"
-	exit 1
+	echo "Error: SERVICE_CRN is null?"
+       	exit 1
 fi
 
 DNSRESOLV=""
@@ -63,14 +63,7 @@ then
 	exit 1
 fi
 
-export SERVICE_ID=$(ibmcloud pi service-list --json | jq -r '.[] | select (.Name|test("^'${SERVICE_INSTANCE}'$")) | .CRN')
-if [ -z "${SERVICE_INSTANCE}" ]
-then
-	echo "Error: SERVICE_ID is null?"
-       	exit 1
-fi
-
-export CLOUD_INSTANCE_ID=$(echo ${SERVICE_ID} | cut -d: -f8)
+export CLOUD_INSTANCE_ID=$(echo ${SERVICE_CRN} | cut -d: -f8)
 if [ -z "${CLOUD_INSTANCE_ID}" ]
 then
 	echo "Error: CLOUD_INSTANCE_ID is null?"
@@ -119,14 +112,14 @@ fi
 
 echo "8<--------8<--------8<--------8<-------- DHCP networks 8<--------8<--------8<--------8<--------"
 
-DHCP_NETWORKS_RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+DHCP_NETWORKS_RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_CRN}" --header "Authorization: Bearer ${BEARER_TOKEN}")
 echo "${DHCP_NETWORKS_RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
 
 echo "8<--------8<--------8<--------8<-------- DHCP network information 8<--------8<--------8<--------8<--------"
 
 while read DHCP_UUID
 do
-	RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp/${DHCP_UUID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+	RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp/${DHCP_UUID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_CRN}" --header "Authorization: Bearer ${BEARER_TOKEN}")
 	echo "${RESULT}" | jq -r '.'
 
 done < <( echo "${DHCP_NETWORKS_RESULT}" | jq -r '.[] | .id' )
