@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -u
+#set -euo pipefail
 
 if [ -z "${IBMCLOUD_API_KEY}" ]
 then
@@ -51,12 +52,20 @@ if [ -z "${DHCP_ID}" ]
 then
 
 	RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+
+	if echo "${RESULT}" | jq -r '.error' > /dev/null 2>&1
+	then
+		echo "${RESULT}" | jq -r '.description'
+		exit 1
+	fi	
+
 	echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
 	RC=${PIPESTATUS[1]}
 
 	if [ ${RC} -gt 0 ]
 	then
 		echo "${RESULT}"
+		exit 1
 	fi
 
 else
@@ -76,8 +85,13 @@ else
 			ACTION=GET
 			RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp/${DHCP_ID}" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
 			;;
-
 	esac
+
+	if echo "${RESULT}" | jq -r '.error' > /dev/null 2>&1
+	then
+		echo "${RESULT}" | jq -r '.description'
+		exit 1
+	fi	
 
 	echo "${RESULT}" | jq -r '.'
 	RC=${PIPESTATUS[1]}
@@ -85,6 +99,7 @@ else
 	if [ ${RC} -gt 0 ]
 	then
 		echo "${RESULT}"
+		exit 1
 	else
 		case "${CURL_ACTION}" in
 			"-q"|"-Q")
