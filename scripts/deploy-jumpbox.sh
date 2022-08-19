@@ -58,6 +58,21 @@ then
 	ibmcloud pi network-create-public hamzy-public-network --dns-servers "1.1.1.1 9.9.9.9 8.8.8.8"
 fi
 
+CENTOS_ID=$(ibmcloud pi images --json | jq -r '.[] | select (.name|test("CentOS-Stream-8")) | .imageID')
+if [ -z "${CENTOS_ID}" ]
+then
+	ibmcloud pi image-create CentOS-Stream-8
+
+	CENTOS_ID=$(ibmcloud pi images --json | jq -r '.[] | select (.name|test("CentOS-Stream-8")) | .imageID')
+
+	STATE="queued"
+	while [ "${STATE}" == "queued" ]
+	do
+		sleep 15s
+		STATE=$(ibmcloud pi image ${CENTOS_ID} --json | jq -r '.state')
+	done
+fi
+
 if ! ibmcloud pi instance ${INSTANCE_NAME}
 then
 	CMD="ibmcloud pi instance-create ${INSTANCE_NAME} --image CentOS-Stream-8 --memory 8 --key-name hamzy-key --network hamzy-public-network"
