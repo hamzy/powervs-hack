@@ -104,6 +104,30 @@ else
 	ibmcloud dl gateway ${DL_UUID} || true
 fi
 
+(
+	LB_INT_FILE=$(mktemp)
+	LB_MCS_POOL_FILE=$(mktemp)
+	trap "/bin/rm ${LB_INT_FILE} ${LB_MCS_POOL_FILE}" EXIT
+
+	ibmcloud is load-balancers --output json | jq -r '.[] | select (.name|test("'${INFRA_ID}'-loadbalancer-int"))' > ${LB_INT_FILE}
+	LB_INT_ID=$(jq -r .id ${LB_INT_FILE})
+
+	echo "8<--------8<--------8<--------8<-------- Internal Load Balancer 8<--------8<--------8<--------8<--------"
+	ibmcloud is load-balancer ${LB_INT_ID}
+
+	LB_MCS_ID=$(jq -r '.pools[] | select (.name|test("machine-config-server")) | .id' ${LB_INT_FILE})
+
+	echo "8<--------8<--------8<--------8<-------- LB Machine Config Server 8<--------8<--------8<--------8<--------"
+	ibmcloud is load-balancer-pool ${LB_INT_ID} ${LB_MCS_ID}
+
+	echo "8<--------8<--------8<--------8<-------- LB MCS Pool 8<--------8<--------8<--------8<--------"
+	ibmcloud is load-balancer-pool ${LB_INT_ID} ${LB_MCS_ID} --output json > ${LB_MCS_POOL_FILE}
+	while read UUID
+	do
+		ibmcloud is load-balancer-pool-member ${LB_INT_ID} ${LB_MCS_ID} ${UUID}
+	done < <(jq -r '.members[].id' ${LB_MCS_POOL_FILE})
+)
+
 echo "8<--------8<--------8<--------8<-------- VPC 8<--------8<--------8<--------8<--------"
 
 VPC_UUID=$(ibmcloud is vpcs --output json | jq -r '.[] | select (.name|test("'${INFRA_ID}'")) | .id')
