@@ -53,11 +53,14 @@ then
 
 	RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}")
 
-	if echo "${RESULT}" | jq -r '.error' > /dev/null 2>&1
+	if [ $(echo "${RESULT}" | jq -r 'type') == "object" ]
 	then
-		echo "${RESULT}" | jq -r '.description'
-		exit 1
-	fi	
+		if [ $(echo "${RESULT}" | jq -r 'has("error")') == "true" ]
+		then
+			echo "${RESULT}" | jq -r '.description'
+			exit 1
+		fi
+	fi
 
 	echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
 	RC=${PIPESTATUS[1]}
@@ -87,11 +90,14 @@ else
 			;;
 	esac
 
-	if echo "${RESULT}" | jq -r '.error' > /dev/null 2>&1
+	if [ $(echo "${RESULT}" | jq -r 'type') == "object" ]
 	then
-		echo "${RESULT}" | jq -r '.description'
-		exit 1
-	fi	
+		if [ $(echo "${RESULT}" | jq -r 'has("error")') == "true" ]
+		then
+			echo "${RESULT}" | jq -r '.description'
+			exit 1
+		fi
+	fi
 
 	echo "${RESULT}" | jq -r '.'
 	RC=${PIPESTATUS[1]}
