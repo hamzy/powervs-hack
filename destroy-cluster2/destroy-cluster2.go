@@ -78,6 +78,7 @@ func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
 	for _, cloudConnection = range cloudConnections.CloudConnections {
 		if strings.Contains(*cloudConnection.Name, o.InfraID) {
 			o.Logger.Debugf("listCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
+			foundOne = true
 
 			if !shouldDelete {
 				o.Logger.Debugf("Skipping deleting cloud connection %q since shouldDelete is false", *cloudConnection.Name)
@@ -1754,6 +1755,218 @@ func (o *ClusterUninstaller) destroySubnets() error {
 	return nil
 }
 
+const serviceInstanceTypeName = "serviceInstance"
+
+// listServiceInstances lists serviceInstances in the cloud.
+func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
+	o.Logger.Debugf("Listing ServiceInstances")
+
+	select {
+	case <-o.Context.Done():
+		o.Logger.Debugf("listServiceInstances: case <-o.Context.Done()")
+		return nil, o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	// https://raw.githubusercontent.com/IBM/platform-services-go-sdk/main/resourcecontrollerv2/resource_controller_v2.go
+	var (
+		ctx       context.Context
+		options   *resourcecontrollerv2.ListResourceInstancesOptions
+		resources *resourcecontrollerv2.ResourceInstancesList
+		err       error
+		perPage   int64   = 20
+		moreData  bool    = true
+		nextURL   *string
+		foundOne  bool    = false
+	)
+
+	ctx, _ = o.contextWithTimeout()
+
+	result := []cloudResource{}
+
+	options = o.controllerSvc.NewListResourceInstancesOptions()
+	options.SetType("service_instance")
+	options.SetLimit(perPage)
+
+	for moreData {
+
+		o.Logger.Debugf("options = %+v\n", options)
+		o.Logger.Debugf("options.Limit = %v\n", *options.Limit)
+		if options.Start != nil {
+			o.Logger.Debugf("optionsStart = %v\n", *options.Start)
+		}
+		resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
+		if err != nil {
+			log.Fatalf("Failed to list COS instances: %v", err)
+		}
+
+		o.Logger.Debugf("resources.RowsCount = %v\n", *resources.RowsCount)
+
+		for _, resource := range resources.Resources {
+			if strings.Contains(*resource.Name, o.InfraID) {
+				foundOne = true
+				o.Logger.Debugf("listServiceInstances: FOUND: %s, %s", *resource.ID, *resource.Name)
+				result = append(result, cloudResource{
+					key:      *resource.ID,
+					name:     *resource.Name,
+					status:   "",
+					typeName: serviceInstanceTypeName,
+					id:       *resource.ID,
+				})
+			}
+		}
+
+		// Based on: https://cloud.ibm.com/apidocs/resource-controller/resource-controller?code=go#list-resource-instances
+		nextURL, err = core.GetQueryParam(resources.NextURL, "start")
+		if err != nil {
+			log.Fatalf("Failed to GetQueryParam on start: %v", err)
+		}
+		o.Logger.Debugf("nextURL = %v\n", *nextURL)
+		options.SetStart(*nextURL)
+
+		moreData = *resources.RowsCount == perPage
+
+	}
+
+	if !foundOne {
+		o.Logger.Debugf("listServiceInstances: NO matching serviceInstance against: %s", o.InfraID)
+
+		options = o.controllerSvc.NewListResourceInstancesOptions()
+		options.SetType("service_instance")
+		options.SetLimit(perPage)
+
+		for moreData {
+
+			o.Logger.Debugf("options = %+v\n", options)
+			o.Logger.Debugf("options.Limit = %v\n", *options.Limit)
+			if options.Start != nil {
+				o.Logger.Debugf("optionsStart = %v\n", *options.Start)
+			}
+			resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
+			if err != nil {
+				log.Fatalf("Failed to list COS instances: %v", err)
+			}
+
+			o.Logger.Debugf("resources.RowsCount = %v\n", *resources.RowsCount)
+
+			for _, resource := range resources.Resources {
+				o.Logger.Debugf("listServiceInstances: FOUND: %s, %s", *resource.ID, *resource.Name)
+			}
+
+			// Based on: https://cloud.ibm.com/apidocs/resource-controller/resource-controller?code=go#list-resource-instances
+			nextURL, err = core.GetQueryParam(resources.NextURL, "start")
+			if err != nil {
+				log.Fatalf("Failed to GetQueryParam on start: %v", err)
+			}
+			o.Logger.Debugf("nextURL = %v\n", *nextURL)
+			options.SetStart(*nextURL)
+
+			moreData = *resources.RowsCount == perPage
+
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+func (o *ClusterUninstaller) deleteServiceInstance(item cloudResource) error {
+	// https://raw.githubusercontent.com/IBM/platform-services-go-sdk/main/resourcecontrollerv2/resource_controller_v2.go
+	var (
+		ctx           context.Context
+		getOptions    *resourcecontrollerv2.GetResourceInstanceOptions
+		deleteOptions *resourcecontrollerv2.DeleteResourceInstanceOptions
+		response      *core.DetailedResponse
+		err           error
+	)
+
+	ctx, _ = o.contextWithTimeout()
+
+	getOptions = o.controllerSvc.NewGetResourceInstanceOptions(item.id)
+
+	_, response, err = o.controllerSvc.GetResourceInstanceWithContext(ctx, getOptions)
+
+	if err != nil && response != nil && response.StatusCode == gohttp.StatusNotFound {
+		// The resource is gone
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted Service Instance %q", item.name)
+		return nil
+	}
+	if err != nil && response != nil && response.StatusCode == gohttp.StatusInternalServerError {
+		o.Logger.Infof("deleteServiceInstance: internal server error")
+		return nil
+	}
+
+	if !shouldDelete {
+		o.Logger.Debugf("Skipping deleting serviceInstance %q since shouldDelete is false", item.name)
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		return nil
+	}
+
+	o.Logger.Debugf("Deleting Service Instance %q", item.name)
+
+	select {
+	case <-o.Context.Done():
+		o.Logger.Debugf("deleteServiceInstance: case <-o.Context.Done()")
+		return o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	deleteOptions = o.controllerSvc.NewDeleteResourceInstanceOptions(item.id)
+
+	_, err = o.controllerSvc.DeleteResourceInstanceWithContext(ctx, deleteOptions)
+
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete serviceInstance %s", item.name)
+	}
+
+	return nil
+}
+
+// destroyServiceInstances removes all serviceInstance resources that have a name prefixed
+// with the cluster's infra ID.
+func (o *ClusterUninstaller) destroyServiceInstances() error {
+	found, err := o.listServiceInstances()
+	if err != nil {
+		return err
+	}
+
+	items := o.insertPendingItems(serviceInstanceTypeName, found.list())
+
+	ctx, _ := o.contextWithTimeout()
+
+	for !o.timeout(ctx) {
+		for _, item := range items {
+			select {
+			case <-o.Context.Done():
+				o.Logger.Debugf("destroyServiceInstances: case <-o.Context.Done()")
+				return o.Context.Err() // we're cancelled, abort
+			default:
+			}
+
+			if _, ok := found[item.key]; !ok {
+				// This item has finished deletion.
+				o.deletePendingItems(item.typeName, []cloudResource{item})
+				o.Logger.Infof("Deleted serviceInstance %q", item.name)
+				continue
+			}
+			err = o.deleteServiceInstance(item)
+			if err != nil {
+				o.errorTracker.suppressWarning(item.key, err, o.Logger)
+			}
+		}
+
+		items = o.getPendingItems(serviceInstanceTypeName)
+		if len(items) == 0 {
+			break
+		}
+	}
+
+	if items = o.getPendingItems(serviceInstanceTypeName); len(items) > 0 {
+		return errors.Errorf("destroyServiceInstances: %d undeleted items pending", len(items))
+	}
+	return nil
+}
+
 var (
 	defaultTimeout = 15 * time.Minute
 	stageTimeout   = 5 * time.Minute
@@ -2000,6 +2213,8 @@ func (o *ClusterUninstaller) destroyCluster() error {
 		{name: "DNS Records", execute: o.destroyDNSRecords},
 		{name: "Cloud SSH Keys", execute: o.destroyCloudSSHKeys},
 		{name: "Power SSH Keys", execute: o.destroyPowerSSHKeys},
+	}, {
+		{name: "Service Instances", execute: o.destroyServiceInstances},
 	}}
 
 	for _, stage := range stagedFuncs {
