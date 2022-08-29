@@ -57,7 +57,7 @@ func listServiceInstances2 (rSearch *regexp.Regexp, controllerSvc *resourcecontr
 
 	options = controllerSvc.NewListResourceInstancesOptions()
 //	options.SetType("resource_instance")
-//	options.SetType("service_instance")
+	options.SetType("service_instance")
 //	options.SetResourceID(cosResourceID)
 //	options.SetResourceGroupID(resourceGroupID)
 	options.SetLimit(perPage)
@@ -122,7 +122,6 @@ func listServiceInstances2 (rSearch *regexp.Regexp, controllerSvc *resourcecontr
 		moreData = *resources.RowsCount == perPage
 
 	}
-
 }
 
 func main() {
@@ -145,6 +144,7 @@ func main() {
 		Authenticator: &core.IamAuthenticator{
 			ApiKey: apiKey,
 		},
+//		ServiceName: "resource_controller",
 //		ServiceName: "cloud-object-storage",
 //		URL: "https://resource-controller.cloud.ibm.com",
 	})
