@@ -34,8 +34,13 @@ then
 	exit 1
 fi
 
-SERVICE_ID=$(ibmcloud pi service-list --json | jq -r '.[] | select (.Name|test("^'${SERVICE_INSTANCE}'$")) | .CRN')
 [ -z "${SERVICE_INSTANCE}" ] && exit 1
+SERVICE_ID=$(ibmcloud pi service-list --json | jq -r '.[] | select (.Name|test("^'${SERVICE_INSTANCE}'$")) | .CRN')
+if [ -z "${SERVICE_ID}" ]
+then
+	echo "Error: ${SERVICE_INSTANCE} does not exist!"
+	exit 1
+fi
 echo "SERVICE_ID=${SERVICE_ID}"
 
 CLOUD_INSTANCE_ID=$(echo ${SERVICE_ID} | cut -d: -f8)
