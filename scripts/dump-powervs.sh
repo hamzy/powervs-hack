@@ -104,6 +104,8 @@ else
 	ibmcloud dl gateway ${DL_UUID} || true
 fi
 
+# "8<--------8<--------8<--------8<-------- 8<--------8<--------8<--------8<--------"
+
 (
 	LB_INT_FILE=$(mktemp)
 	LB_MCS_POOL_FILE=$(mktemp)
