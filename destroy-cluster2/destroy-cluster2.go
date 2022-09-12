@@ -1785,7 +1785,9 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 	result := []cloudResource{}
 
 	options = o.controllerSvc.NewListResourceInstancesOptions()
-	options.SetType("service_instance")
+	options.SetResourceGroupID(o.resourceGroupID)
+	// resource ID for Power Systems Virtual Server in the Global catalog
+	options.SetResourceID("abd259f0-9990-11e8-acc8-b9f54a8f1661")
 	options.SetLimit(perPage)
 
 	for moreData {
@@ -1821,8 +1823,13 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 		if err != nil {
 			log.Fatalf("Failed to GetQueryParam on start: %v", err)
 		}
-		o.Logger.Debugf("nextURL = %v\n", *nextURL)
-		options.SetStart(*nextURL)
+		if nextURL == nil {
+			o.Logger.Debugf("nextURL = nil\n")
+			options.SetStart("")
+		} else {
+			o.Logger.Debugf("nextURL = %v\n", *nextURL)
+			options.SetStart(*nextURL)
+		}
 
 		moreData = *resources.RowsCount == perPage
 
@@ -1834,6 +1841,8 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 		options = o.controllerSvc.NewListResourceInstancesOptions()
 		options.SetType("service_instance")
 		options.SetLimit(perPage)
+
+		moreData = true
 
 		for moreData {
 
@@ -1858,8 +1867,13 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 			if err != nil {
 				log.Fatalf("Failed to GetQueryParam on start: %v", err)
 			}
-			o.Logger.Debugf("nextURL = %v\n", *nextURL)
-			options.SetStart(*nextURL)
+			if nextURL == nil {
+				o.Logger.Debugf("nextURL = nil\n")
+				options.SetStart("")
+			} else {
+				o.Logger.Debugf("nextURL = %v\n", *nextURL)
+				options.SetStart(*nextURL)
+			}
 
 			moreData = *resources.RowsCount == perPage
 
