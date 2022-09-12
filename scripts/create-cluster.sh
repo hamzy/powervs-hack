@@ -3,7 +3,7 @@
 #
 # Usage example:
 #
-# (export IBMCLOUD_API_KEY=""; export IBMCLOUD_OCCMIBCCC_API_KEY=""; export IBMCLOUD_OIOCCC_API_KEY=""; export IBMCLOUD_OMAPCC_API_KEY=""; export CLUSTER_DIR=""; export IBMID=""; export CLUSTER_NAME=""; export POWERVS_REGION=""; export POWERVS_ZONE=""; export SERVICE_INSTANCE_GUID=""; export VPCREGION=""; export RESOURCE_GROUP=""; export BASEDOMAIN=""; export JENKINS_TOKEN=""; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
+# (export IBMCLOUD_API_KEY=""; export IBMCLOUD_OCCMICCC_API_KEY=""; export IBMCLOUD_OIOCCC_API_KEY=""; export IBMCLOUD_OCCDIPCCC_API_KEY=""; export IBMCLOUD_OMAPCC_API_KEY=""; export CLUSTER_DIR=""; export IBMID=""; export CLUSTER_NAME=""; export POWERVS_REGION=""; export POWERVS_ZONE=""; export SERVICE_INSTANCE_GUID=""; export VPCREGION=""; export RESOURCE_GROUP=""; export BASEDOMAIN=""; export JENKINS_TOKEN=""; /home/OpenShift/git/powervs-hack/scripts/create-cluster.sh 2>&1 | tee output.errors)
 #
 
 #
@@ -39,7 +39,7 @@ function init_ibmcloud()
 }
 
 declare -a ENV_VARS
-ENV_VARS=( "BASEDOMAIN" "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_OCCMIBCCC_API_KEY" "IBMCLOUD_OIOCCC_API_KEY" "IBMCLOUD_OMAPCC_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "RESOURCE_GROUP" "SERVICE_INSTANCE_GUID" "VPCREGION" )
+ENV_VARS=( "BASEDOMAIN" "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_OCCMICCC_API_KEY" "IBMCLOUD_OIOCCC_API_KEY" "IBMCLOUD_OCCDIPCCC_API_KEY" "IBMCLOUD_OMAPCC_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "RESOURCE_GROUP" "SERVICE_INSTANCE_GUID" "VPCREGION" )
 
 for VAR in ${ENV_VARS[@]}
 do
@@ -62,9 +62,9 @@ set -euo pipefail
 # export IBMCLOUD_REGION=${VPCREGION} # ${POWERVS_REGION}
 # export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-0.nightly-ppc64le-2022-06-16-003709"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.0-rc.7-ppc64le"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.1-ppc64le"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.4-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.2-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.12.0-0.nightly-ppc64le-2022-09-07-153137"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -126,6 +126,8 @@ then
 	exit 1
 fi
 
+if false
+then
 #
 # Quota check DHCP networks
 #
@@ -144,6 +146,7 @@ if (( ${LINES} > 0))
 then
 	echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
 	exit 1
+fi
 fi
 
 #
@@ -270,8 +273,8 @@ metadata:
 stringData:
   ibm-credentials.env: |-
     IBMCLOUD_AUTHTYPE=iam
-    IBMCLOUD_APIKEY=${IBMCLOUD_OCCMIBCCC_API_KEY}
-  ibmcloud_api_key: ${IBMCLOUD_OCCMIBCCC_API_KEY}
+    IBMCLOUD_APIKEY=${IBMCLOUD_OCCMICCC_API_KEY}
+  ibmcloud_api_key: ${IBMCLOUD_OCCMICCC_API_KEY}
 type: Opaque
 ___EOF___
 
@@ -303,6 +306,78 @@ stringData:
     IBMCLOUD_APIKEY=${IBMCLOUD_OMAPCC_API_KEY}
   ibmcloud_api_key: ${IBMCLOUD_OMAPCC_API_KEY}
 type: Opaque
+___EOF___
+
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-cluster-csi-drivers-ibm-powervs-cloud-credentials-credentials.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: ibm-powervs-cloud-credentials
+  namespace: openshift-cluster-csi-drivers
+stringData:
+  ibm-credentials.env: |-
+    IBMCLOUD_AUTHTYPE=iam
+    IBMCLOUD_APIKEY=${IBMCLOUD_OCCDIPCCC_API_KEY}
+  ibmcloud_api_key: ${IBMCLOUD_OCCDIPCCC_API_KEY}
+type: Opaque
+___EOF___
+
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/0000_50_cluster-ingress-operator_00-ingress-credentials-request.yaml
+---
+apiVersion: cloudcredential.openshift.io/v1
+kind: CredentialsRequest
+metadata:
+  name: openshift-ingress-powervs
+  namespace: openshift-cloud-credential-operator
+spec:
+  providerSpec:
+    apiVersion: cloudcredential.openshift.io/v1
+    kind: IBMCloudPowerVSProviderSpec
+    policies:
+    - attributes:
+      - name: serviceName
+        value: internet-svcs
+      roles:
+      - crn:v1:bluemix:public:iam::::serviceRole:Manager
+      - crn:v1:bluemix:public:iam::::serviceRole:Reader
+      - crn:v1:bluemix:public:iam::::serviceRole:Writer
+  secretRef:
+    name: cloud-credentials
+    namespace: openshift-ingress-operator
+___EOF___
+
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/0000_50_cluster-storage-operator_03_credentials_request_powervs.yaml
+---
+apiVersion: cloudcredential.openshift.io/v1
+kind: CredentialsRequest
+metadata:
+  annotations:
+    include.release.openshift.io/self-managed-high-availability: "true"
+  name: ibm-powervs-block-csi-driver-operator
+  namespace: openshift-cloud-credential-operator
+spec:
+  providerSpec:
+    apiVersion: cloudcredential.openshift.io/v1
+    kind: IBMCloudPowerVSProviderSpec
+    policies:
+    - attributes:
+      - name: serviceName
+        value: power-iaas
+      roles:
+      - crn:v1:bluemix:public:iam::::role:Operator
+      - crn:v1:bluemix:public:iam::::role:Editor
+      - crn:v1:bluemix:public:iam::::role:Viewer
+      - crn:v1:bluemix:public:iam::::serviceRole:Reader
+      - crn:v1:bluemix:public:iam::::serviceRole:Manager
+    - attributes:
+      - name: resourceType
+        value: resource-group
+      roles:
+      - crn:v1:bluemix:public:iam::::role:Viewer
+  secretRef:
+    name: ibm-powervs-cloud-credentials
+    namespace: openshift-cluster-csi-drivers
 ___EOF___
 
 DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
