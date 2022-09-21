@@ -62,9 +62,9 @@ set -euo pipefail
 # export IBMCLOUD_REGION=${VPCREGION} # ${POWERVS_REGION}
 # export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.4-ppc64le"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.2-ppc64le"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.12.0-0.nightly-ppc64le-2022-09-07-153137"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.5-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.3-ppc64le"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.12.0-0.nightly-ppc64le-2022-09-20-050920"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -119,7 +119,7 @@ fi
 #
 # Quota check cloud connections
 #
-CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.Payload.cloudConnections|length')
+CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.cloudConnections|length')
 if (( ${CONNECTIONS} >= 2 ))
 then
 	echo "Error: Cannot have 2 or more cloud connections.  You currently have ${CONNECTIONS}."
@@ -152,7 +152,7 @@ fi
 #
 # Quota check for image imports
 #
-JOBS=$(ibmcloud pi jobs --operation-action imageImport --json | jq -r '.Payload.jobs[] | select (.status.state|test("running")) | .id')
+JOBS=$(ibmcloud pi jobs --operation-action imageImport --json | jq -r '.jobs[] | select (.status.state|test("running")) | .id')
 if [ -n "${JOBS}" ]
 then
 	echo "${JOBS}"
@@ -229,7 +229,7 @@ networking:
   - cidr: 10.128.0.0/14
     hostPrefix: 23
   machineNetwork:
-  - cidr: 192.168.0.0/16
+  - cidr: 192.168.0.0/24
   networkType: OpenShiftSDN
   serviceNetwork:
   - 172.30.0.0/16

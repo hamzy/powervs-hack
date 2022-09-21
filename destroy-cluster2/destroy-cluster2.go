@@ -47,16 +47,34 @@ var shouldDeleteDHCP = false
 
 // listCloudConnections lists cloud connections in the cloud.
 func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
-	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connections.go#L20-L25
-	var cloudConnections *models.CloudConnections
+	var (
+		ctx context.Context
 
-	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection.go#L20-L71
-	var cloudConnection *models.CloudConnection
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connections.go#L20-L25
+		cloudConnections *models.CloudConnections
 
-	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job_reference.go#L18-L27
-	var jobReference *models.JobReference
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection.go#L20-L71
+		cloudConnection *models.CloudConnection
 
-	var err error
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job_reference.go#L18-L27
+		jobReference *models.JobReference
+
+		err error
+
+		cloudConnectionID string
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_endpoint_v_p_c.go#L19-L26
+		EndpointVpc *models.CloudConnectionEndpointVPC
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_v_p_c.go#L18-L26
+		Vpc *models.CloudConnectionVPC
+
+		foundOne       bool = false
+		foundVpc       bool = false
+		vpcStillExists bool = true
+	)
+
+	ctx, _ = o.contextWithTimeout()
 
 	o.Logger.Debugf("Listing Cloud Connections")
 
@@ -72,34 +90,78 @@ func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
 		log.Fatalf("Failed to list cloud connections: %v", err)
 	}
 
-	var foundOne = false
-
 	result := []cloudResource{}
 	for _, cloudConnection = range cloudConnections.CloudConnections {
-		if strings.Contains(*cloudConnection.Name, o.InfraID) {
-			o.Logger.Debugf("listCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
-			foundOne = true
-
-			if !shouldDelete {
-				o.Logger.Debugf("Skipping deleting cloud connection %q since shouldDelete is false", *cloudConnection.Name)
-				continue
-			}
-
-			jobReference, err = o.cloudConnectionClient.Delete(*cloudConnection.CloudConnectionID)
-			if err != nil {
-				errors.Errorf("Failed to delete cloud connection (%s): %v", *cloudConnection.CloudConnectionID, err)
-			}
-
-			if shouldDebug { log.Printf("jobReference: id = %s\n", *jobReference.ID) }
-
-			result = append(result, cloudResource{
-				key:      *jobReference.ID,
-				name:     *jobReference.ID,
-				status:   "",
-				typeName: jobTypeName,
-				id:       *jobReference.ID,
-			})
+		if !strings.Contains(*cloudConnection.Name, o.InfraID) {
+			// Skip this one!
+			continue
 		}
+
+		foundOne = true
+
+		o.Logger.Debugf("listCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
+
+		if !shouldDelete {
+			o.Logger.Debugf("Skipping deleting cloud connection %q since shouldDelete is false", *cloudConnection.Name)
+			continue
+		}
+
+		cloudConnectionID = *cloudConnection.CloudConnectionID
+
+		vpcStillExists = true
+
+		for !o.timeout(ctx) {
+			if !vpcStillExists {
+				break
+			}
+
+			select {
+			case <-o.Context.Done():
+				o.Logger.Debugf("destroyCloudConnections: case <-o.Context.Done()")
+				return nil, o.Context.Err() // we're cancelled, abort
+			default:
+			}
+
+			cloudConnection, err = o.cloudConnectionClient.Get(cloudConnectionID)
+			if err != nil {
+				log.Fatalf("Failed to get cloud connection %s: %v", cloudConnectionID, err)
+			}
+
+			EndpointVpc = cloudConnection.Vpc
+			if shouldDebug { log.Printf("listCloudConnections: EndpointVpc = %+v\n", EndpointVpc) }
+
+			foundVpc = false
+			for _, Vpc = range EndpointVpc.Vpcs {
+				if Vpc != nil {
+					foundVpc = true
+				}
+				if shouldDebug { log.Printf("listCloudConnections: Vpc = %+v\n", Vpc) }
+			}
+			if shouldDebug { log.Printf("listCloudConnections: foundVpc = %v\n", foundVpc) }
+			if foundVpc {
+				log.Printf("listCloudConnections: This CC still has VPCs attached, waiting...\n")
+
+				time.Sleep(15 * time.Second)
+			} else {
+				vpcStillExists = false
+			}
+		}
+
+		// Finally delete the CloudConnection!
+		jobReference, err = o.cloudConnectionClient.Delete(*cloudConnection.CloudConnectionID)
+		if err != nil {
+			errors.Errorf("Failed to delete cloud connection (%s): %v", *cloudConnection.CloudConnectionID, err)
+		}
+
+		if shouldDebug { log.Printf("listCloudConnections: jobReference.ID = %s\n", *jobReference.ID) }
+
+		result = append(result, cloudResource{
+			key:      *jobReference.ID,
+			name:     *jobReference.ID,
+			status:   "",
+			typeName: jobTypeName,
+			id:       *jobReference.ID,
+		})
 	}
 	if !foundOne {
 		o.Logger.Debugf("listCloudConnections: NO matching cloud connections against: %s", o.InfraID)
@@ -1799,7 +1861,7 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 		}
 		resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
 		if err != nil {
-			log.Fatalf("Failed to list COS instances: %v", err)
+			log.Fatalf("Failed to list resource instances: %v", err)
 		}
 
 		o.Logger.Debugf("resources.RowsCount = %v\n", *resources.RowsCount)
@@ -3564,6 +3626,11 @@ var Regions = map[string]Region{
 			"syd04",
 			"syd05",
 		},
+	},
+	"mon": {
+		Description: "Montreal, Canada",
+		VPCRegion:   "ca-tor",
+		Zones:       []string{"mon01"},
 	},
 	"sao": {
 		Description: "São Paulo, Brazil",
