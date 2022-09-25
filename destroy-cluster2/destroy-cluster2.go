@@ -45,6 +45,232 @@ var shouldDebug = false
 var shouldDelete = false
 var shouldDeleteDHCP = false
 
+// listVPCInCloudConnections removes VPCs attached to CloudConnections and returs a list of jobs.
+func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error) {
+	var (
+		ctx context.Context
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connections.go#L20-L25
+		cloudConnections *models.CloudConnections
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection.go#L20-L71
+		cloudConnection          *models.CloudConnection
+		cloudConnectionUpdateNew *models.CloudConnection
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job_reference.go#L18-L27
+		jobReference *models.JobReference
+
+		err error
+
+		cloudConnectionID string
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_endpoint_v_p_c.go#L19-L26
+		endpointVpc       *models.CloudConnectionEndpointVPC
+		endpointUpdateVpc models.CloudConnectionEndpointVPC
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_v_p_c.go#L18-L26
+		Vpc *models.CloudConnectionVPC
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_update.go#L20
+		cloudConnectionUpdate models.CloudConnectionUpdate
+
+		foundOne bool = false
+		foundVpc bool = false
+	)
+
+	ctx, _ = o.contextWithTimeout()
+
+	if shouldDebug {
+		log.Printf("Listing VPCs in Cloud Connections")
+	}
+
+	select {
+	case <-ctx.Done():
+		if shouldDebug {
+			log.Printf("listVPCInCloudConnections: case <-ctx.Done()")
+		}
+		return nil, o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	cloudConnections, err = o.cloudConnectionClient.GetAll()
+	if err != nil {
+		log.Fatalf("Failed to list cloud connections: %v", err)
+	}
+
+	result := []cloudResource{}
+	for _, cloudConnection = range cloudConnections.CloudConnections {
+		select {
+		case <-ctx.Done():
+			if shouldDebug {
+				log.Printf("listVPCInCloudConnections: case <-ctx.Done()")
+			}
+			return nil, o.Context.Err() // we're cancelled, abort
+		default:
+		}
+
+		if !strings.Contains(*cloudConnection.Name, o.InfraID) {
+			// Skip this one!
+			continue
+		}
+
+		foundOne = true
+
+		if shouldDebug {
+			log.Printf("listVPCInCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
+		}
+
+		cloudConnectionID = *cloudConnection.CloudConnectionID
+
+		cloudConnection, err = o.cloudConnectionClient.Get(cloudConnectionID)
+		if err != nil {
+			log.Fatalf("Failed to get cloud connection %s: %v", cloudConnectionID, err)
+		}
+
+		endpointVpc = cloudConnection.Vpc
+
+		if shouldDebug {
+			log.Printf("listVPCInCloudConnections: endpointVpc = %+v\n", endpointVpc)
+		}
+
+		foundVpc = false
+		for _, Vpc = range endpointVpc.Vpcs {
+			if shouldDebug {
+				log.Printf("listVPCInCloudConnections: Vpc = %+v\n", Vpc)
+				log.Printf("listVPCInCloudConnections: Vpc.Name = %v, o.InfraID = %v\n", Vpc.Name, o.InfraID)
+			}
+			if strings.Contains(Vpc.Name, o.InfraID) {
+				foundVpc = true
+			}
+		}
+		if shouldDebug {
+			log.Printf("listVPCInCloudConnections: foundVpc = %v\n", foundVpc)
+		}
+		if !foundVpc {
+			continue
+		}
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_v_p_c.go#L18
+		var vpcsUpdate []*models.CloudConnectionVPC
+
+		for _, Vpc = range endpointVpc.Vpcs {
+			if !strings.Contains(Vpc.Name, o.InfraID) {
+				vpcsUpdate = append (vpcsUpdate, Vpc)
+			}
+		}
+
+		if len(vpcsUpdate) > 0 {
+			endpointUpdateVpc.Enabled = true
+		} else {
+			endpointUpdateVpc.Enabled = false
+		}
+
+		endpointUpdateVpc.Vpcs = vpcsUpdate
+
+		cloudConnectionUpdate.Vpc = &endpointUpdateVpc
+
+		if shouldDebug {
+			var vpcsStrings []string
+
+			for _, Vpc = range vpcsUpdate {
+				vpcsStrings = append (vpcsStrings, Vpc.Name)
+			}
+			log.Printf("listVPCInCloudConnections: vpcsUpdate = %v\n", vpcsStrings)
+			log.Printf("listVPCInCloudConnections: endpointUpdateVpc = %+v\n", endpointUpdateVpc)
+		}
+
+		if !shouldDelete {
+			if shouldDebug {
+				log.Printf("Skipping updating the cloud connection %q since shouldDelete is false", *cloudConnection.Name)
+			}
+			continue
+		}
+
+		cloudConnectionUpdateNew, jobReference, err = o.cloudConnectionClient.Update(*cloudConnection.CloudConnectionID, &cloudConnectionUpdate)
+		if err != nil {
+			log.Fatalf("Failed to update cloud connection %v", err)
+		}
+
+		if shouldDebug {
+			log.Printf("listVPCInCloudConnections: cloudConnectionUpdateNew = %+v\n", cloudConnectionUpdateNew)
+			log.Printf("listVPCInCloudConnections: jobReference = %+v\n", jobReference)
+		}
+
+		result = append(result, cloudResource{
+			key:      *jobReference.ID,
+			name:     *jobReference.ID,
+			status:   "",
+			typeName: jobTypeName,
+			id:       *jobReference.ID,
+		})
+	}
+
+	if shouldDebug {
+		if !foundOne {
+			log.Printf("listVPCInCloudConnections: NO matching cloud connections")
+			for _, cloudConnection = range cloudConnections.CloudConnections {
+				log.Printf("listVPCInCloudConnections: only found cloud connection: %s", *cloudConnection.Name)
+			}
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+// destroyVPCInCloudConnections removes all VPCs in cloud connections that have a name prefixed
+// with the cluster's infra ID.
+func (o *ClusterUninstaller) destroyVPCInCloudConnections() error {
+	var (
+		found cloudResources
+		err error
+		ctx context.Context
+		items []cloudResource
+	)
+
+	found, err = o.listVPCInCloudConnections()
+	if err != nil {
+		return err
+	}
+
+	items = o.insertPendingItems(jobTypeName, found.list())
+
+	ctx, _ = o.contextWithTimeout()
+
+	for !o.timeout(ctx) {
+		for _, item := range items {
+			select {
+			case <-o.Context.Done():
+				o.Logger.Debugf("destroyVPCInCloudConnections: case <-o.Context.Done()")
+				return o.Context.Err() // we're cancelled, abort
+			default:
+			}
+
+			if _, ok := found[item.key]; !ok {
+				// This item has finished deletion.
+				o.deletePendingItems(item.typeName, []cloudResource{item})
+				o.Logger.Infof("Deleted job %q", item.name)
+				continue
+			}
+			err := o.deleteJob(item)
+			if err != nil {
+				o.errorTracker.suppressWarning(item.key, err, o.Logger)
+			}
+		}
+
+		items = o.getPendingItems(jobTypeName)
+		if len(items) == 0 {
+			break
+		}
+
+		time.Sleep(15 * time.Second)
+	}
+
+	if items = o.getPendingItems(jobTypeName); len(items) > 0 {
+		return errors.Errorf("destroyVPCInCloudConnections: %d undeleted items pending", len(items))
+	}
+	return nil
+}
+
 // listCloudConnections lists cloud connections in the cloud.
 func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
 	var (
@@ -117,7 +343,7 @@ func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
 
 			select {
 			case <-o.Context.Done():
-				o.Logger.Debugf("destroyCloudConnections: case <-o.Context.Done()")
+				o.Logger.Debugf("listCloudConnections: case <-o.Context.Done()")
 				return nil, o.Context.Err() // we're cancelled, abort
 			default:
 			}
@@ -210,6 +436,8 @@ func (o *ClusterUninstaller) destroyCloudConnections() error {
 		if len(items) == 0 {
 			break
 		}
+
+		time.Sleep(15 * time.Second)
 	}
 
 	if items = o.getPendingItems(jobTypeName); len(items) > 0 {
@@ -497,25 +725,17 @@ func (o *ClusterUninstaller) listDHCPNetworks() (cloudResources, error) {
 
 	result := []cloudResource{}
 	for _, dhcpServer = range dhcpServers {
-		// Not helpful yet
-		// 2022/03/24 15:30:51 Found: DHCPServer: 40687c22-782a-475c-af46-be765aecdf4a
-		// 2022/03/24 15:30:54 Network.Name: DHCPSERVER2dc32880758344f08c8ff6933e87d27a_Private
-
 		if dhcpServer.Network == nil {
-			o.Logger.Debugf("listDHCPNetworks: DHCP has empty Network: %s\n", *dhcpServer.ID)
+			o.Logger.Debugf("listDHCPNetworks: DHCP has empty Network: %s", *dhcpServer.ID)
 			continue
 		}
 		if dhcpServer.Network.Name == nil {
-			o.Logger.Debugf("listDHCPNetworks: DHCP has empty Network.Name: %s\n", *dhcpServer.ID)
+			o.Logger.Debugf("listDHCPNetworks: DHCP has empty Network.Name: %s", *dhcpServer.ID)
 			continue
 		}
 
-		_, ok := o.DHCPNetworks[*dhcpServer.Network.Name]
-		if shouldDeleteDHCP {
-			ok = true
-		}
-		if ok {
-			o.Logger.Debugf("listDHCPNetworks: FOUND: %s (%s)\n", *dhcpServer.Network.Name, *dhcpServer.ID)
+		if strings.Contains(*dhcpServer.Network.Name, o.InfraID) || shouldDeleteDHCP {
+			o.Logger.Debugf("listDHCPNetworks: FOUND: %s (%s)", *dhcpServer.Network.Name, *dhcpServer.ID)
 			foundOne = true
 			result = append(result, cloudResource{
 				key:      *dhcpServer.ID,
@@ -596,7 +816,7 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 			if _, ok := found[item.key]; !ok {
 				// This item has finished deletion.
 				o.deletePendingItems(item.typeName, []cloudResource{item})
-				o.Logger.Infof("Deleted DHCPNetworks %q", item.name)
+				o.Logger.Infof("Deleted DHCP network %q", item.name)
 				continue
 			}
 			err := o.destroyDHCPNetwork(item)
@@ -1077,9 +1297,6 @@ const (
 
 // listPowerInstances lists instances in the power server.
 func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
-	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/p_vm_instance_network.go#L16-L44
-	var network *models.PVMInstanceNetwork
-
 	o.Logger.Debugf("Listing virtual Power service instances")
 
 	instances, err := o.instanceClient.GetAll()
@@ -1103,12 +1320,6 @@ func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
 				typeName: powerInstanceTypeName,
 				id:       *instance.PvmInstanceID,
 			})
-
-			for _, network = range instance.Networks {
-				if strings.HasPrefix(network.NetworkName, "DHCPSERVER") {
-					o.DHCPNetworks[network.NetworkName] = struct{}{}
-				}
-			}
 		}
 	}
 	if !foundOne {
@@ -1520,6 +1731,8 @@ func (o *ClusterUninstaller) destroyJobs() error {
 		if len(items) == 0 {
 			break
 		}
+
+		time.Sleep(15 * time.Second)
 	}
 
 	if items = o.getPendingItems(jobTypeName); len(items) > 0 {
@@ -1585,6 +1798,9 @@ func (o *ClusterUninstaller) deleteLoadBalancer(item cloudResource) error {
 	getOptions = o.vpcSvc.NewGetLoadBalancerOptions(item.id)
 	lb, response, err = o.vpcSvc.GetLoadBalancer(getOptions)
 
+	if err == nil && response.StatusCode == gohttp.StatusNoContent {
+		return nil
+	}
 	if err != nil && response != nil && response.StatusCode == gohttp.StatusNotFound {
 		// The resource is gone.
 		o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -1672,6 +1888,8 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 		if len(items) == 0 {
 			break
 		}
+
+		time.Sleep(15 * time.Second)
 	}
 
 	if items = o.getPendingItems(loadBalancerTypeName); len(items) > 0 {
@@ -2161,8 +2379,6 @@ type ClusterUninstaller struct {
 
 	errorTracker
 	pendingItemTracker
-
-	DHCPNetworks map[string]struct{}
 }
 
 // New returns an IBMCloud destroyer from ClusterMetadata.
@@ -2200,7 +2416,6 @@ func New(logger logrus.FieldLogger,
 		Zone:               zone,
 		pendingItemTracker: newPendingItemTracker(),
 		resourceGroupID:    resourceGroupID,
-		DHCPNetworks:       make(map[string]struct{}),
 	}, nil
 }
 
@@ -2280,10 +2495,13 @@ func (o *ClusterUninstaller) destroyCluster() error {
 		{name: "DHCPs", execute: o.destroyDHCPNetworks},
 	}, {
 		{name: "Images", execute: o.destroyImages},
-		{name: "VPCs", execute: o.destroyVPCs},
 		{name: "Security Groups", execute: o.destroySecurityGroups},
 	}, {
+		{name: "VPC Cloud Connections", execute: o.destroyVPCInCloudConnections},
+	}, {
 		{name: "Cloud Connections", execute: o.destroyCloudConnections},
+	}, {
+		{name: "VPCs", execute: o.destroyVPCs},
 	}, {
 		{name: "Cloud Object Storage Instances", execute: o.destroyCOSInstances},
 		{name: "DNS Records", execute: o.destroyDNSRecords},
@@ -3175,9 +3393,17 @@ func (o *ClusterUninstaller) deleteVPC(item cloudResource) error {
 	getOptions = o.vpcSvc.NewGetVPCOptions(item.id)
 	_, getResponse, err = o.vpcSvc.GetVPC(getOptions)
 
+	if shouldDebug {
+		log.Printf("deleteVPC: getResponse = %v\n", getResponse)
+		log.Printf("deleteVPC: err = %v\n", err)
+	}
+
 	// Sadly, there is no way to get the status of this VPC to check on the results of the
 	// delete call.
 
+	if err == nil && getResponse.StatusCode == gohttp.StatusNoContent {
+		return nil
+	}
 	if err != nil && getResponse != nil && getResponse.StatusCode == gohttp.StatusNotFound {
 		// The resource is gone
 		o.deletePendingItems(item.typeName, []cloudResource{item})
