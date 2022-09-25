@@ -24,19 +24,18 @@ import (
 	"regexp"
 )
 
-const resourceGroupID = "c1cb9b2679344ee9951ab8b4bc22eca0"     // "powervs-ipi-resource-group"
-const cosResourceID   = "dff97f5c-bc5e-4455-b470-411c3edbe49c" //
+const resourceGroupID     = "c1cb9b2679344ee9951ab8b4bc22eca0"     // "powervs-ipi-resource-group"
+const powerIAASResourceID = "abd259f0-9990-11e8-acc8-b9f54a8f1661" // resource Id for Power Systems Virtual Server in the Global catalog
 
 func listServiceInstances1 (rSearch *regexp.Regexp, controllerSvc *resourcecontrollerv2.ResourceControllerV2, context context.Context) {
 
 	options := controllerSvc.NewListResourceInstancesOptions()
 //	options.SetResourceGroupID(resourceGroupID)
-	options.SetResourceID(cosResourceID)
 	options.SetType("service_instance")
 
 	resources, _, err := controllerSvc.ListResourceInstancesWithContext(context, options)
 	if err != nil {
-		log.Fatalf("Failed to list COS instances: %v", err)
+		log.Fatalf("Failed to list service instances: %v", err)
 	}
 
 	for _, resource := range resources.Resources {
@@ -57,9 +56,9 @@ func listServiceInstances2 (rSearch *regexp.Regexp, controllerSvc *resourcecontr
 
 	options = controllerSvc.NewListResourceInstancesOptions()
 //	options.SetType("resource_instance")
-	options.SetType("service_instance")
-//	options.SetResourceID(cosResourceID)
-//	options.SetResourceGroupID(resourceGroupID)
+	options.SetResourceGroupID(resourceGroupID)
+	// resource ID for Power Systems Virtual Server in the Global catalog
+	options.SetResourceID("abd259f0-9990-11e8-acc8-b9f54a8f1661")
 	options.SetLimit(perPage)
 
 	for moreData {
@@ -77,9 +76,11 @@ func listServiceInstances2 (rSearch *regexp.Regexp, controllerSvc *resourcecontr
 		log.Printf("resources.RowsCount = %v\n", *resources.RowsCount)
 
 		for _, resource := range resources.Resources {
-			var getResourceOptions *resourcecontrollerv2.GetResourceInstanceOptions
-			var resourceInstance *resourcecontrollerv2.ResourceInstance
-			var response *core.DetailedResponse
+			var (
+				getResourceOptions *resourcecontrollerv2.GetResourceInstanceOptions
+				resourceInstance   *resourcecontrollerv2.ResourceInstance
+				response           *core.DetailedResponse
+			)
 
 			log.Printf("resource: %s\n", *resource.Name)
 
@@ -109,6 +110,11 @@ func listServiceInstances2 (rSearch *regexp.Regexp, controllerSvc *resourcecontr
 			} else {
 				log.Printf("sub type: %v\n", *resourceInstance.SubType)
 			}
+			if resourceInstance.ResourcePlanID == nil {
+				log.Printf("plan: nil\n")
+			} else {
+				log.Printf("plan: %v\n", *resourceInstance.ResourcePlanID)
+			}
 		}
 
 		// Based on: https://cloud.ibm.com/apidocs/resource-controller/resource-controller?code=go#list-resource-instances
@@ -116,8 +122,13 @@ func listServiceInstances2 (rSearch *regexp.Regexp, controllerSvc *resourcecontr
 		if err != nil {
 			log.Fatalf("Failed to GetQueryParam on start: %v", err)
 		}
-		log.Printf("nextURL = %v\n", *nextURL)
-		options.SetStart(*nextURL)
+		if nextURL == nil {
+			log.Printf("nextURL = nil\n")
+			options.SetStart("")
+		} else {
+			log.Printf("nextURL = %v\n", *nextURL)
+			options.SetStart(*nextURL)
+		}
 
 		moreData = *resources.RowsCount == perPage
 
@@ -144,6 +155,7 @@ func main() {
 		Authenticator: &core.IamAuthenticator{
 			ApiKey: apiKey,
 		},
+//		ServiceName: "power-iaas",
 //		ServiceName: "resource_controller",
 //		ServiceName: "cloud-object-storage",
 //		URL: "https://resource-controller.cloud.ibm.com",
