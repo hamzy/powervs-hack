@@ -50,6 +50,7 @@ import (
 	gohttp "net/http"
 	"regexp"
 	"strings"
+	"time"
 )
 
 var shouldDebug = false
@@ -133,35 +134,75 @@ func GetRegion(zone string) (region string, err error) {
 	return
 }
 
-func listCloudConnections (rSearch *regexp.Regexp, cloudConnectionClient *instance.IBMPICloudConnectionClient, serviceGuid string) {
+func timeout(ctx context.Context) bool {
+	var deadline time.Time
+	var ok bool
+
+	deadline, ok = ctx.Deadline()
+	if !ok {
+		if shouldDebug {
+			log.Printf("timeout: deadline, ok = %v, %v", deadline, ok)
+		}
+		return true
+	}
+
+	var after bool = time.Now().After(deadline)
+
+	if after {
+		// 01/02 03:04:05PM ‘06 -0700
+		if shouldDebug {
+			log.Printf("timeout: after deadline! (%v)", deadline.Format("2006-01-02 03:04:05PM"))
+		}
+	}
+
+	return after
+}
+
+func listCloudConnections (rSearch *regexp.Regexp, cloudConnectionClient *instance.IBMPICloudConnectionClient, jobClient *instance.IBMPIJobClient, serviceGuid string) {
 	var (
+		ctx context.Context
+
 		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connections.go#L20-L25
 		cloudConnections *models.CloudConnections
 
 		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection.go#L20-L71
-		cloudConnection *models.CloudConnection
+		cloudConnection          *models.CloudConnection
+		cloudConnectionUpdateNew *models.CloudConnection
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job_reference.go#L18-L27
+		jobReference *models.JobReference
 
 		err error
 
-		Context context.Context = context.Background()
+		cloudConnectionID string
 
-		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/cloud_connection_endpoint_v_p_c.go#L20
-		EndpointVpc *models.CloudConnectionEndpointVPC
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_endpoint_v_p_c.go#L19-L26
+		endpointVpc       *models.CloudConnectionEndpointVPC
+		endpointUpdateVpc models.CloudConnectionEndpointVPC
 
-		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/cloud_connection_v_p_c.go#L20
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_v_p_c.go#L18-L26
 		Vpc *models.CloudConnectionVPC
 
-		foundVpc bool = false
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_update.go#L20
+		cloudConnectionUpdate models.CloudConnectionUpdate
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job.go#L18
+		job *models.Job
+
+		foundOne       bool = false
+		foundVpc       bool = false
 	)
+
+	ctx, _ = context.WithTimeout(context.Background(), 5 * time.Minute)
 
 	if shouldDebug {
 		log.Printf("Listing Cloud Connections")
 	}
 
 	select {
-	case <-Context.Done():
+	case <-ctx.Done():
 		if shouldDebug {
-			log.Printf("listCloudConnections: case <-Context.Done()")
+			log.Printf("listCloudConnections: case <-ctx.Done()")
 		}
 		return // we're cancelled, abort
 	default:
@@ -173,44 +214,128 @@ func listCloudConnections (rSearch *regexp.Regexp, cloudConnectionClient *instan
 	}
 
 	for _, cloudConnection = range cloudConnections.CloudConnections {
+		select {
+		case <-ctx.Done():
+			if shouldDebug {
+				log.Printf("listCloudConnections: case <-ctx.Done()")
+			}
+			return // we're cancelled, abort
+		default:
+		}
+
+		if !rSearch.MatchString(*cloudConnection.Name) {
+			// Skip this one!
+			continue
+		}
+
+		foundOne = true
+
 		if shouldDebug {
 			log.Printf("listCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
 		}
 
-		if rSearch.MatchString(*cloudConnection.Name) {
+		cloudConnectionID = *cloudConnection.CloudConnectionID
+
+		cloudConnection, err = cloudConnectionClient.Get(cloudConnectionID)
+		if err != nil {
+			log.Fatalf("Failed to get cloud connection %s: %v", cloudConnectionID, err)
+		}
+
+		endpointVpc = cloudConnection.Vpc
+
+		if shouldDebug {
+			log.Printf("listCloudConnections: endpointVpc = %+v\n", endpointVpc)
+		}
+
+		foundVpc = false
+		for _, Vpc = range endpointVpc.Vpcs {
 			if shouldDebug {
-				log.Printf("listCloudConnections: EndpointVpc = %+v\n", cloudConnection.Vpc)
+				log.Printf("listCloudConnections: Vpc = %+v\n", Vpc)
+			}
+			if rSearch.MatchString(Vpc.Name) {
+				foundVpc = true
+			}
+		}
+		if shouldDebug {
+			log.Printf("listCloudConnections: foundVpc = %v\n", foundVpc)
+		}
+		if !foundVpc {
+			continue
+		}
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_v_p_c.go#L18
+		var vpcsUpdate []*models.CloudConnectionVPC
+
+		endpointUpdateVpc.Enabled = cloudConnection.Vpc.Enabled
+
+		for _, Vpc = range endpointVpc.Vpcs {
+			if !rSearch.MatchString(Vpc.Name) {
+				vpcsUpdate = append (vpcsUpdate, Vpc)
+			}
+		}
+
+		endpointUpdateVpc.Vpcs = vpcsUpdate
+
+		cloudConnectionUpdate.Vpc = &endpointUpdateVpc
+
+		if shouldDebug {
+			var vpcsStrings []string
+
+			for _, Vpc = range vpcsUpdate {
+				vpcsStrings = append (vpcsStrings, Vpc.Name)
+			}
+			log.Printf("listCloudConnections: vpcsUpdate = %v\n", vpcsStrings)
+			log.Printf("listCloudConnections: endpointUpdateVpc = %+v\n", endpointUpdateVpc)
+		}
+
+		if !shouldDelete {
+			if shouldDebug {
+				log.Printf("Skipping updating the cloud connection %q since shouldDelete is false", *cloudConnection.Name)
+			}
+			continue
+		}
+
+		cloudConnectionUpdateNew, jobReference, err = cloudConnectionClient.Update(*cloudConnection.CloudConnectionID, &cloudConnectionUpdate)
+		if err != nil {
+			log.Fatalf("Failed to update cloud connection %v", err)
+		}
+
+		if shouldDebug {
+			log.Printf("listCloudConnections: cloudConnectionUpdateNew = %+v\n", cloudConnectionUpdateNew)
+			log.Printf("listCloudConnections: jobReference = %+v\n", jobReference)
+		}
+
+		for !timeout(ctx) {
+			select {
+			case <-ctx.Done():
+				if shouldDebug {
+					log.Printf("listCloudConnections: case <-ctx.Done()")
+				}
+				return // we're cancelled, abort
+			default:
 			}
 
-			// Unfortunately, the enumerated Cloud Connections are missing their VPC information
-			// so requery the CC
-			cloudConnection, err = cloudConnectionClient.Get(*cloudConnection.CloudConnectionID)
+			job, err = jobClient.Get(*jobReference.ID)
 			if err != nil {
-				log.Fatalf("Failed to get cloud connection %s: %v", cloudConnection.CloudConnectionID, err)
+				log.Fatalf("Failed to get job %v: %v", *jobReference.ID, err)
 			}
 
-			EndpointVpc = cloudConnection.Vpc
 			if shouldDebug {
-				log.Printf("listCloudConnections: EndpointVpc = %+v\n", EndpointVpc)
+				log.Printf("listCloudConnections: job.ID = %v\n", *job.ID)
+				log.Printf("listCloudConnections: job.Status.State = %v\n", *job.Status.State)
 			}
 
-			for _, Vpc = range EndpointVpc.Vpcs {
-				if Vpc != nil {
-					foundVpc = true
-				}
-				if shouldDebug {
-					log.Printf("listCloudConnections: Vpc = %+v\n", Vpc)
-				}
+			if *job.Status.State == "completed" {
+				break
 			}
-			if shouldDebug {
-				log.Printf("listCloudConnections: foundVpc = %v\n", foundVpc)
-			}
+		}
+	}
 
-			if !shouldDelete {
-				if shouldDebug {
-					log.Printf("Skipping deleting cloud connection %q since shouldDelete is false", *cloudConnection.Name)
-				}
-				continue
+	if shouldDebug {
+		if !foundOne {
+			log.Printf("listCloudConnections: NO matching cloud connections")
+			for _, cloudConnection = range cloudConnections.CloudConnections {
+				log.Printf("listCloudConnections: only found cloud connection: %s", *cloudConnection.Name)
 			}
 		}
 	}
@@ -407,5 +532,10 @@ func main() {
 	cloudConnectionClient = instance.NewIBMPICloudConnectionClient(context.Background(), piSession, serviceGuid)
 	if shouldDebug { log.Printf("cloudConnectionClient = %v\n", cloudConnectionClient) }
 
-	listCloudConnections(rSearch, cloudConnectionClient, serviceGuid)
+        var jobClient *instance.IBMPIJobClient
+
+	jobClient = instance.NewIBMPIJobClient(context.Background(), piSession, serviceGuid)
+	if shouldDebug { log.Printf("jobClient = %v\n", jobClient) }
+
+	listCloudConnections(rSearch, cloudConnectionClient, jobClient, serviceGuid)
 }
