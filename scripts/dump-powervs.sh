@@ -84,7 +84,7 @@ fi
 
 echo "8<--------8<--------8<--------8<-------- Cloud Connection 8<--------8<--------8<--------8<--------"
 
-CLOUD_UUID=$(ibmcloud pi connections --json | jq -r '.Payload.cloudConnections[] | select (.name|test("'${INFRA_ID}'")) | .cloudConnectionID')
+CLOUD_UUID=$(ibmcloud pi connections --json | jq -r '.cloudConnections[] | select (.name|test("'${INFRA_ID}'")) | .cloudConnectionID')
 
 if [ -z "${CLOUD_UUID}" ]
 then
@@ -157,4 +157,4 @@ done < <( echo "${DHCP_NETWORKS_RESULT}" | jq -r '.[] | .id' )
 
 echo "8<--------8<--------8<--------8<-------- Instance names, ids, and MAC addresses 8<--------8<--------8<--------8<--------"
 
-ibmcloud pi instances --json | jq -r '.Payload.pvmInstances[] | select (.serverName|test("'${INFRA_ID}'")) | [.serverName, .pvmInstanceID, .addresses[].ip, .addresses[].macAddress]'
+ibmcloud pi instances --json | jq -r '.pvmInstances[] | select (.serverName|test("'${INFRA_ID}'")) | [.serverName, .pvmInstanceID, .addresses[].ip, .addresses[].macAddress]'
