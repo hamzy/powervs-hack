@@ -76,19 +76,19 @@ func oldListPowerInstances(ptrSearch *string, instanceClient *instance.IBMPIInst
 
 	ctx, _ = context.WithTimeout(context.Background(), 5 * time.Minute)
 
-	logger.Printf("Listing virtual Power service instances")
+	log.Printf("Listing virtual Power service instances")
 
 	select {
 	case <-ctx.Done():
 		// we're cancelled, abort
-		logger.Printf("oldListPowerInstances: case <-ctx.Done()")
+		log.Printf("oldListPowerInstances: case <-ctx.Done()")
 		return nil, ctx.Err()
 	default:
 	}
 
 	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
 		tryCount++
-		logger.Printf("ExponentialBackoffWithContext: ConditionFunc: tryCount = %v", tryCount)
+		log.Printf("ExponentialBackoffWithContext: ConditionFunc: tryCount = %v", tryCount)
 		if tryCount >= 3 {
 			return true, nil
 		} else {
@@ -96,10 +96,10 @@ func oldListPowerInstances(ptrSearch *string, instanceClient *instance.IBMPIInst
 		}
 	})
 	if err != nil {
-		logger.Fatal("oldListPowerInstances: ExponentialBackoffWithContext returns ", err)
+		log.Fatal("oldListPowerInstances: ExponentialBackoffWithContext returns ", err)
 	}
 
-	logger.Printf("oldListPowerInstances: FINISHED!")
+	log.Printf("oldListPowerInstances: FINISHED!")
 
 	return nil, nil
 }
@@ -110,11 +110,11 @@ const (
 
 // listPowerInstances lists instances in the power server.
 func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
-	logger.Debugf("Listing virtual Power service instances (%s)", o.InfraID)
+	log.Debugf("Listing virtual Power service instances (%s)", o.InfraID)
 
 	instances, err := o.instanceClient.GetAll()
 	if err != nil {
-		logger.Warnf("Error instanceClient.GetAll: %v", err)
+		log.Warnf("Error instanceClient.GetAll: %v", err)
 		return nil, err
 	}
 
@@ -125,7 +125,7 @@ func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
 		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/p_vm_instance.go
 		if strings.Contains(*instance.ServerName, o.InfraID) {
 			foundOne = true
-			logger.Debugf("listPowerInstances: FOUND: %s, %s, %s", *instance.PvmInstanceID, *instance.ServerName, *instance.Status)
+			log.Debugf("listPowerInstances: FOUND: %s, %s, %s", *instance.PvmInstanceID, *instance.ServerName, *instance.Status)
 			result = append(result, cloudResource{
 				key:      *instance.PvmInstanceID,
 				name:     *instance.ServerName,
@@ -136,9 +136,9 @@ func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
 		}
 	}
 	if !foundOne {
-		logger.Debugf("listPowerInstances: NO matching virtual instance against: %s", o.InfraID)
+		log.Debugf("listPowerInstances: NO matching virtual instance against: %s", o.InfraID)
 		for _, instance := range instances.PvmInstances {
-			logger.Debugf("listPowerInstances: only found virtual instance: %s", *instance.ServerName)
+			log.Debugf("listPowerInstances: only found virtual instance: %s", *instance.ServerName)
 		}
 	}
 
@@ -151,26 +151,26 @@ func (o *ClusterUninstaller) destroyPowerInstance(item cloudResource) error {
 	_, err = o.instanceClient.Get(item.id)
 	if err != nil {
 		o.deletePendingItems(item.typeName, []cloudResource{item})
-		logger.Infof("Deleted Power instance %q", item.name)
+		log.Infof("Deleted Power instance %q", item.name)
 		return nil
 	}
 
 	if !shouldDelete {
-		logger.Debugf("Skipping deleting Power instance %q since shouldDelete is false", item.name)
+		log.Debugf("Skipping deleting Power instance %q since shouldDelete is false", item.name)
 		o.deletePendingItems(item.typeName, []cloudResource{item})
 		return nil
 	}
 
-	logger.Debugf("Deleting Power instance %q", item.name)
+	log.Debugf("Deleting Power instance %q", item.name)
 
 	err = o.instanceClient.Delete(item.id)
 	if err != nil {
-		logger.Infof("Error: o.instanceClient.Delete: %q", err)
+		log.Infof("Error: o.instanceClient.Delete: %q", err)
 		return err
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
-	logger.Infof("Deleted Power instance %q", item.name)
+	log.Infof("Deleted Power instance %q", item.name)
 
 	return nil
 }
@@ -205,7 +205,7 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 	for _, item := range items {
 		select {
 		case <-o.Context.Done():
-			logger.Debugf("destroyPowerInstances: case <-o.Context.Done()")
+			log.Debugf("destroyPowerInstances: case <-o.Context.Done()")
 			return o.Context.Err() // we're cancelled, abort
 		default:
 		}
@@ -215,12 +215,12 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 			if err2 == nil {
 				return true, err2
 			} else {
-				o.errorTracker.suppressWarning(item.key, err2, logger)
+				o.errorTracker.suppressWarning(item.key, err2, log)
 				return false, err2
 			}
 		})
 		if err != nil {
-			logger.Fatal("destroyPowerInstances: ExponentialBackoffWithContext (destroy) returns ", err)
+			log.Fatal("destroyPowerInstances: ExponentialBackoffWithContext (destroy) returns ", err)
 		}
 	}
 
@@ -248,13 +248,13 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 			return true, nil
 		} else {
 			for _, item := range secondPassList {
-				logger.Debugf("destroyPowerInstances: found %s in second pass", item.name)
+				log.Debugf("destroyPowerInstances: found %s in second pass", item.name)
 			}
 			return false, nil
 		}
 	})
 	if err != nil {
-		logger.Fatal("destroyPowerInstances: ExponentialBackoffWithContext (list) returns ", err)
+		log.Fatal("destroyPowerInstances: ExponentialBackoffWithContext (list) returns ", err)
 	}
 
 	return nil
@@ -285,14 +285,14 @@ type ClusterUninstaller struct {
 }
 
 // New returns an IBMCloud destroyer from ClusterMetadata.
-func New(logger logrus.FieldLogger,
+func New(log logrus.FieldLogger,
 	apiKey string,
 	infraID string) (*ClusterUninstaller, error) {
 
 	return &ClusterUninstaller{
 		APIKey:             apiKey,
 		Context:            context.Background(),
-		Logger:             logger,
+		Logger:             log,
 		InfraID:            infraID,
 		pendingItemTracker: newPendingItemTracker(),
 	}, nil
@@ -308,20 +308,20 @@ type errorTracker struct {
 }
 
 // suppressWarning logs errors WARN once every duration and the rest to DEBUG.
-func (o *errorTracker) suppressWarning(identifier string, err error, logger logrus.FieldLogger) {
+func (o *errorTracker) suppressWarning(identifier string, err error, log logrus.FieldLogger) {
 	if o.history == nil {
 		o.history = map[string]time.Time{}
 	}
 	if firstSeen, ok := o.history[identifier]; ok {
 		if time.Since(firstSeen) > suppressDuration {
-			logger.Warn(err)
+			log.Warn(err)
 			o.history[identifier] = time.Now() // reset the clock
 		} else {
-			logger.Debug(err)
+			log.Debug(err)
 		}
 	} else { // first error for this identifier
 		o.history[identifier] = time.Now()
-		logger.Debug(err)
+		log.Debug(err)
 	}
 }
 
@@ -513,7 +513,7 @@ func timeout(ctx context.Context) bool {
 
 	deadline, ok = ctx.Deadline()
 	if !ok {
-		logger.Printf("timeout: deadline, ok = %v, %v", deadline, ok)
+		log.Printf("timeout: deadline, ok = %v, %v", deadline, ok)
 		return true
 	}
 
@@ -521,7 +521,7 @@ func timeout(ctx context.Context) bool {
 
 	if after {
 		// 01/02 03:04:05PM ‘06 -0700
-		logger.Printf("timeout: after deadline! (%v)", deadline.Format("2006-01-02 03:04:05PM"))
+		log.Printf("timeout: after deadline! (%v)", deadline.Format("2006-01-02 03:04:05PM"))
 	}
 
 	return after
@@ -575,7 +575,7 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	if err != nil {
 		return nil, "", fmt.Errorf("Error bxsession.New: %v", err)
 	}
-	logger.Printf("bxSession = %v\n", bxSession)
+	log.Printf("bxSession = %v\n", bxSession)
 
 	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
 		DefaultHeader: gohttp.Header{
@@ -585,7 +585,7 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	if err != nil {
 		return nil, "", fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
 	}
-	logger.Printf("tokenRefresher = %v\n", tokenRefresher)
+	log.Printf("tokenRefresher = %v\n", tokenRefresher)
 	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
 	if err != nil {
 		return nil, "", fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
@@ -600,13 +600,13 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	if err != nil {
 		return nil, "", fmt.Errorf("Error controllerv2.New: %v", err)
 	}
-	logger.Printf("ctrlv2 = %v\n", ctrlv2)
+	log.Printf("ctrlv2 = %v\n", ctrlv2)
 
 	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
 	if err != nil {
 		return nil, "", fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
 	}
-	logger.Printf("resourceClientV2 = %v\n", resourceClientV2)
+	log.Printf("resourceClientV2 = %v\n", resourceClientV2)
 
 	svcs, err := resourceClientV2.ListInstances(controllerv2.ServiceInstanceQuery{
 		Type: "service_instance",
@@ -618,10 +618,10 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	var serviceGuid string = ""
 
 	for _, svc := range svcs {
-		logger.Printf("Guid = %v\n", svc.Guid)
-		logger.Printf("RegionID = %v\n", svc.RegionID)
-		logger.Printf("Name = %v\n", svc.Name)
-		logger.Printf("Crn = %v\n", svc.Crn)
+		log.Printf("Guid = %v\n", svc.Guid)
+		log.Printf("RegionID = %v\n", svc.RegionID)
+		log.Printf("Name = %v\n", svc.Name)
+		log.Printf("Crn = %v\n", svc.Crn)
 		if svc.Name == *ptrServiceName {
 			serviceGuid = svc.Guid
 			break
@@ -630,13 +630,13 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 	if serviceGuid == "" {
 		return nil, "", fmt.Errorf("%s not found in list of service instances!\n", *ptrServiceName)
 	}
-	logger.Printf("serviceGuid = %v\n", serviceGuid)
+	log.Printf("serviceGuid = %v\n", serviceGuid)
 
 	serviceInstance, err := resourceClientV2.GetInstance(serviceGuid)
 	if err != nil {
 		return nil, "", fmt.Errorf("Error resourceClientV2.GetInstance: %v", err)
 	}
-	logger.Printf("serviceInstance = %v\n", serviceInstance)
+	log.Printf("serviceInstance = %v\n", serviceInstance)
 
 	region, err:= GetRegion(serviceInstance.RegionID)
 	if err != nil {
@@ -669,17 +669,17 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 		}
 		return nil, "", fmt.Errorf("Error: piSession is nil")
 	}
-	logger.Printf("piSession = %v\n", piSession)
+	log.Printf("piSession = %v\n", piSession)
 
 	return piSession, serviceGuid, nil
 
 }
 
-var logger *logrus.Logger
+var log *logrus.Logger
 
 func main() {
 
-	var loggerMain *logrus.Logger = &logrus.Logger{
+	var logMain *logrus.Logger = &logrus.Logger{
 		Out: os.Stderr,
 		Formatter: new(logrus.TextFormatter),
 		Level: logrus.DebugLevel,
@@ -700,15 +700,15 @@ func main() {
 	flag.Parse()
 
 	if *ptrApiKey == "" {
-		loggerMain.Fatal("Error: No API key set, use --apiKey")
+		logMain.Fatal("Error: No API key set, use --apiKey")
 	}
 
 	if *ptrSearch == "" {
-		loggerMain.Fatal("Error: No search term set, use --search")
+		logMain.Fatal("Error: No search term set, use --search")
 	}
 
 	if *ptrServiceName == "" {
-		loggerMain.Fatal("Error: No cloud service set, use --serviceName")
+		logMain.Fatal("Error: No cloud service set, use --serviceName")
 	}
 	switch strings.ToLower(*ptrShouldDebug) {
 	case "true":
@@ -716,7 +716,7 @@ func main() {
 	case "false":
 		shouldDebug = false
 	default:
-		loggerMain.Fatal("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+		logMain.Fatal("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
 	}
 	switch strings.ToLower(*ptrShouldDelete) {
 	case "true":
@@ -724,7 +724,7 @@ func main() {
 	case "false":
 		shouldDelete = false
 	default:
-		loggerMain.Fatal("Error: shouldDelete is not true/false (%s)\n", *ptrShouldDelete)
+		logMain.Fatal("Error: shouldDelete is not true/false (%s)\n", *ptrShouldDelete)
 	}
 
 	var out io.Writer
@@ -734,7 +734,7 @@ func main() {
 	} else {
 		out = io.Discard
 	}
-	logger = &logrus.Logger{
+	log = &logrus.Logger{
 		Out: out,
 		Formatter: new(logrus.TextFormatter),
 		Level: logrus.DebugLevel,
@@ -743,31 +743,31 @@ func main() {
 	var clusterUninstaller *ClusterUninstaller
 	var err error
 
-	clusterUninstaller, err = New (logger,
+	clusterUninstaller, err = New (log,
 		*ptrApiKey,
 		*ptrSearch)
 	if err != nil {
-		loggerMain.Fatalf("Error New: %v", err)
+		logMain.Fatalf("Error New: %v", err)
 	}
-	if shouldDebug { loggerMain.Printf("clusterUninstaller = %+v\n", clusterUninstaller) }
+	if shouldDebug { logMain.Printf("clusterUninstaller = %+v\n", clusterUninstaller) }
 
 	var piSession *ibmpisession.IBMPISession
 	var serviceGuid string
 
 	piSession, serviceGuid, err = createPiSession(ptrApiKey, ptrServiceName)
 	if err != nil {
-		loggerMain.Fatal("Error createPiSession: %v\n", err)
+		logMain.Fatal("Error createPiSession: %v\n", err)
 	}
 
 	var instanceClient *instance.IBMPIInstanceClient
 
 	instanceClient = instance.NewIBMPIInstanceClient(context.Background(), piSession, serviceGuid)
-	if shouldDebug { loggerMain.Printf("instanceClient = %v\n", instanceClient) }
+	if shouldDebug { logMain.Printf("instanceClient = %v\n", instanceClient) }
 
 	clusterUninstaller.instanceClient = instanceClient
 
 	err = clusterUninstaller.destroyPowerInstances()
 	if err != nil {
-		loggerMain.Fatal("Error clusterUninstaller.destroyPowerInstances:", err)
+		logMain.Fatal("Error clusterUninstaller.destroyPowerInstances:", err)
 	}
 }
