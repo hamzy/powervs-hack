@@ -27,10 +27,10 @@ import (
 	"github.com/IBM/vpc-go-sdk/vpcv1"
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
+	"io"
 	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"io/ioutil"
-	"log"
 	gohttp "net/http"
 	"net/url"
 	"os"
@@ -41,6 +41,7 @@ import (
 	"time"
 )
 
+var log *logrus.Logger = nil
 var shouldDebug = false
 var shouldDelete = false
 var shouldDeleteDHCP = false
@@ -1017,20 +1018,20 @@ type errorTracker struct {
 }
 
 // suppressWarning logs errors WARN once every duration and the rest to DEBUG.
-func (o *errorTracker) suppressWarning(identifier string, err error, logger logrus.FieldLogger) {
+func (o *errorTracker) suppressWarning(identifier string, err error, log logrus.FieldLogger) {
 	if o.history == nil {
 		o.history = map[string]time.Time{}
 	}
 	if firstSeen, ok := o.history[identifier]; ok {
 		if time.Since(firstSeen) > suppressDuration {
-			logger.Warn(err)
+			log.Warn(err)
 			o.history[identifier] = time.Now() // reset the clock
 		} else {
-			logger.Debug(err)
+			log.Debug(err)
 		}
 	} else { // first error for this identifier
 		o.history[identifier] = time.Now()
-		logger.Debug(err)
+		log.Debug(err)
 	}
 }
 
@@ -1201,7 +1202,7 @@ func (o *ClusterUninstaller) listCloudInstances() (cloudResources, error) {
 	if !foundOne {
 		o.Logger.Debugf("listCloudInstances: NO matching virtual instance against: %s", o.InfraID)
 		for _, instance := range resources.Instances {
-			o.Logger.Debugf("listInstances: only found virtual instance: %s", *instance.Name)
+			o.Logger.Debugf("listCloudInstances: only found virtual instance: %s", *instance.Name)
 		}
 	}
 
@@ -1295,7 +1296,7 @@ const (
 	powerInstanceTypeName = "powerInstance"
 )
 
-// listPowerInstances lists instances in the power server.
+// listPowerInstances lists instances in the Power server.
 func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
 	o.Logger.Debugf("Listing virtual Power service instances")
 
@@ -1325,7 +1326,7 @@ func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
 	if !foundOne {
 		o.Logger.Debugf("listPowerInstances: NO matching virtual instance against: %s", o.InfraID)
 		for _, instance := range instances.PvmInstances {
-			o.Logger.Debugf("listInstances: only found virtual instance: %s", *instance.ServerName)
+			o.Logger.Debugf("listPowerInstances: only found virtual instance: %s", *instance.ServerName)
 		}
 	}
 
@@ -2382,7 +2383,7 @@ type ClusterUninstaller struct {
 }
 
 // New returns an IBMCloud destroyer from ClusterMetadata.
-func New(logger logrus.FieldLogger,
+func New(log logrus.FieldLogger,
 	apiKey string,
 	baseDomain string,
 	serviceInstanceGUID string,
@@ -2407,7 +2408,7 @@ func New(logger logrus.FieldLogger,
 		BaseDomain:         baseDomain,
 		ClusterName:        clusterName,
 		Context:            context.Background(),
-		Logger:             logger,
+		Logger:             log,
 		InfraID:            infraID,
 		CISInstanceCRN:     cisInstanceCRN,
 		Region:             region,
@@ -4106,6 +4107,12 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 
 func main() {
 
+	var logMain *logrus.Logger = &logrus.Logger{
+		Out: os.Stderr,
+		Formatter: new(logrus.TextFormatter),
+		Level: logrus.DebugLevel,
+	}
+
 	var data *Metadata = nil
 	var err error
 
@@ -4169,7 +4176,20 @@ func main() {
 	case "false":
 		shouldDebug = false
 	default:
-		log.Fatalf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+		logMain.Fatalf("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+	}
+
+	var out io.Writer
+
+	if shouldDebug {
+		out = os.Stderr
+	} else {
+		out = io.Discard
+	}
+	log = &logrus.Logger{
+		Out: out,
+		Formatter: new(logrus.TextFormatter),
+		Level: logrus.DebugLevel,
 	}
 
 	switch strings.ToLower(*ptrShouldDeleteDHCP) {
@@ -4178,22 +4198,22 @@ func main() {
 	case "false":
 		shouldDeleteDHCP = false
 	default:
-		log.Fatalf("Error: shouldDeleteDHCP is not true/false (%s)\n", *ptrShouldDeleteDHCP)
+		logMain.Fatalf("Error: shouldDeleteDHCP is not true/false (%s)\n", *ptrShouldDeleteDHCP)
 	}
 
 	if *ptrMetadaFilename != "" {
 		data, err = readMetadata(*ptrMetadaFilename)
 		if err != nil {
-			log.Fatal(err)
+			logMain.Fatal(err)
 		}
 
 		if shouldDebug {
-			log.Printf("ClusterName    = %v", data.ClusterName)
-			log.Printf("ClusterID      = %v", data.ClusterID)
-			log.Printf("InfraID        = %v", data.InfraID)
-			log.Printf("CISInstanceCRN = %v", data.PowerVS.CISInstanceCRN)
-			log.Printf("Region         = %v", data.PowerVS.Region)
-			log.Printf("Zone           = %v", data.PowerVS.Zone)
+			logMain.Printf("ClusterName    = %v", data.ClusterName)
+			logMain.Printf("ClusterID      = %v", data.ClusterID)
+			logMain.Printf("InfraID        = %v", data.InfraID)
+			logMain.Printf("CISInstanceCRN = %v", data.PowerVS.CISInstanceCRN)
+			logMain.Printf("Region         = %v", data.PowerVS.Region)
+			logMain.Printf("Zone           = %v", data.PowerVS.Zone)
 		}
 
 		// Handle:
@@ -4221,31 +4241,31 @@ func main() {
 		needZone = false
 	}
 	if needAPIKey && *ptrApiKey == "" {
-		log.Fatal("Error: No API key set, use -apiKey")
+		logMain.Fatal("Error: No API key set, use -apiKey")
 	}
 	if needBaseDomain && *ptrBaseDomain == "" {
-		log.Fatal("Error: No base domain set, use -baseDomain")
+		logMain.Fatal("Error: No base domain set, use -baseDomain")
 	}
 	if needServiceInstanceGUID && *ptrServiceInstanceGUID == "" {
-		log.Fatal("Error: No service instance GUID set, use -serviceInstanceGUID")
+		logMain.Fatal("Error: No service instance GUID set, use -serviceInstanceGUID")
 	}
 	if needClusterName && *ptrClusterName == "" {
-		log.Fatal("Error: No cluster name set, use -clusterName")
+		logMain.Fatal("Error: No cluster name set, use -clusterName")
 	}
 	if needInfraID && *ptrInfraID == "" {
-		log.Fatal("Error: No Infra ID set, use -infraID")
+		logMain.Fatal("Error: No Infra ID set, use -infraID")
 	}
 	if needCISInstanceCRN && *ptrCISInstanceCRN == "" {
-		log.Fatal("Error: No CISInstanceCRN set, use -CISInstanceCRN")
+		logMain.Fatal("Error: No CISInstanceCRN set, use -CISInstanceCRN")
 	}
 	if needRegion && *ptrRegion == "" {
-		log.Fatal("Error: No region set, use -region")
+		logMain.Fatal("Error: No region set, use -region")
 	}
 	if needZone && *ptrZone == "" {
-		log.Fatal("Error: No zone set, use -zone")
+		logMain.Fatal("Error: No zone set, use -zone")
 	}
 	if needResourceGroupID && *ptrResourceGroupID == "" {
-		log.Fatal("Error: No resource group ID set, use -resourceGroupID")
+		logMain.Fatal("Error: No resource group ID set, use -resourceGroupID")
 	}
 	switch strings.ToLower(*ptrShouldDelete) {
 	case "true":
@@ -4253,18 +4273,12 @@ func main() {
 	case "false":
 		shouldDelete = false
 	default:
-		log.Fatalf("Error: shouldDelete is not true/false (%s)\n", *ptrShouldDelete)
-	}
-
-	var logger *logrus.Logger = &logrus.Logger{
-		Out: os.Stderr,
-		Formatter: new(logrus.TextFormatter),
-		Level: logrus.DebugLevel,
+		logMain.Fatalf("Error: shouldDelete is not true/false (%s)\n", *ptrShouldDelete)
 	}
 
 	var clusterUninstaller *ClusterUninstaller
 
-	clusterUninstaller, err = New (logger,
+	clusterUninstaller, err = New (log,
 		*ptrApiKey,
 		*ptrBaseDomain,
 		*ptrServiceInstanceGUID,
@@ -4275,13 +4289,13 @@ func main() {
 		*ptrZone,
 		*ptrResourceGroupID)
 	if err != nil {
-		log.Fatalf("Error ibmpisession.New: %v", err)
+		logMain.Fatalf("Error New: %v", err)
 	}
-	if shouldDebug { log.Printf("clusterUninstaller = %+v\n", clusterUninstaller) }
+	if shouldDebug { logMain.Printf("clusterUninstaller = %+v\n", clusterUninstaller) }
 
 	err = clusterUninstaller.Run ()
 	if err != nil {
-		log.Fatalf("Error clusterUninstaller.Run: %v", err)
+		logMain.Fatalf("Error clusterUninstaller.Run: %v", err)
 	}
 
 }
