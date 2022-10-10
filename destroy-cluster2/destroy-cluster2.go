@@ -42,7 +42,6 @@ import (
 )
 
 var log *logrus.Logger = nil
-var shouldDebug = false
 var shouldDelete = false
 var shouldDeleteDHCP = false
 
@@ -81,15 +80,11 @@ func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error)
 
 	ctx, _ = o.contextWithTimeout()
 
-	if shouldDebug {
-		log.Printf("Listing VPCs in Cloud Connections")
-	}
+	log.Printf("Listing VPCs in Cloud Connections")
 
 	select {
 	case <-ctx.Done():
-		if shouldDebug {
-			log.Printf("listVPCInCloudConnections: case <-ctx.Done()")
-		}
+		log.Printf("listVPCInCloudConnections: case <-ctx.Done()")
 		return nil, o.Context.Err() // we're cancelled, abort
 	default:
 	}
@@ -103,9 +98,7 @@ func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error)
 	for _, cloudConnection = range cloudConnections.CloudConnections {
 		select {
 		case <-ctx.Done():
-			if shouldDebug {
-				log.Printf("listVPCInCloudConnections: case <-ctx.Done()")
-			}
+			log.Printf("listVPCInCloudConnections: case <-ctx.Done()")
 			return nil, o.Context.Err() // we're cancelled, abort
 		default:
 		}
@@ -117,9 +110,7 @@ func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error)
 
 		foundOne = true
 
-		if shouldDebug {
-			log.Printf("listVPCInCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
-		}
+		log.Printf("listVPCInCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
 
 		cloudConnectionID = *cloudConnection.CloudConnectionID
 
@@ -130,23 +121,17 @@ func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error)
 
 		endpointVpc = cloudConnection.Vpc
 
-		if shouldDebug {
-			log.Printf("listVPCInCloudConnections: endpointVpc = %+v\n", endpointVpc)
-		}
+		log.Printf("listVPCInCloudConnections: endpointVpc = %+v\n", endpointVpc)
 
 		foundVpc = false
 		for _, Vpc = range endpointVpc.Vpcs {
-			if shouldDebug {
-				log.Printf("listVPCInCloudConnections: Vpc = %+v\n", Vpc)
-				log.Printf("listVPCInCloudConnections: Vpc.Name = %v, o.InfraID = %v\n", Vpc.Name, o.InfraID)
-			}
+			log.Printf("listVPCInCloudConnections: Vpc = %+v\n", Vpc)
+			log.Printf("listVPCInCloudConnections: Vpc.Name = %v, o.InfraID = %v\n", Vpc.Name, o.InfraID)
 			if strings.Contains(Vpc.Name, o.InfraID) {
 				foundVpc = true
 			}
 		}
-		if shouldDebug {
-			log.Printf("listVPCInCloudConnections: foundVpc = %v\n", foundVpc)
-		}
+		log.Printf("listVPCInCloudConnections: foundVpc = %v\n", foundVpc)
 		if !foundVpc {
 			continue
 		}
@@ -170,20 +155,16 @@ func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error)
 
 		cloudConnectionUpdate.Vpc = &endpointUpdateVpc
 
-		if shouldDebug {
-			var vpcsStrings []string
+		var vpcsStrings []string
 
-			for _, Vpc = range vpcsUpdate {
-				vpcsStrings = append (vpcsStrings, Vpc.Name)
-			}
-			log.Printf("listVPCInCloudConnections: vpcsUpdate = %v\n", vpcsStrings)
-			log.Printf("listVPCInCloudConnections: endpointUpdateVpc = %+v\n", endpointUpdateVpc)
+		for _, Vpc = range vpcsUpdate {
+			vpcsStrings = append (vpcsStrings, Vpc.Name)
 		}
+		log.Printf("listVPCInCloudConnections: vpcsUpdate = %v\n", vpcsStrings)
+		log.Printf("listVPCInCloudConnections: endpointUpdateVpc = %+v\n", endpointUpdateVpc)
 
 		if !shouldDelete {
-			if shouldDebug {
-				log.Printf("Skipping updating the cloud connection %q since shouldDelete is false", *cloudConnection.Name)
-			}
+			log.Printf("Skipping updating the cloud connection %q since shouldDelete is false", *cloudConnection.Name)
 			continue
 		}
 
@@ -192,10 +173,8 @@ func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error)
 			log.Fatalf("Failed to update cloud connection %v", err)
 		}
 
-		if shouldDebug {
-			log.Printf("listVPCInCloudConnections: cloudConnectionUpdateNew = %+v\n", cloudConnectionUpdateNew)
-			log.Printf("listVPCInCloudConnections: jobReference = %+v\n", jobReference)
-		}
+		log.Printf("listVPCInCloudConnections: cloudConnectionUpdateNew = %+v\n", cloudConnectionUpdateNew)
+		log.Printf("listVPCInCloudConnections: jobReference = %+v\n", jobReference)
 
 		result = append(result, cloudResource{
 			key:      *jobReference.ID,
@@ -206,12 +185,10 @@ func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error)
 		})
 	}
 
-	if shouldDebug {
-		if !foundOne {
-			log.Printf("listVPCInCloudConnections: NO matching cloud connections")
-			for _, cloudConnection = range cloudConnections.CloudConnections {
-				log.Printf("listVPCInCloudConnections: only found cloud connection: %s", *cloudConnection.Name)
-			}
+	if !foundOne {
+		log.Printf("listVPCInCloudConnections: NO matching cloud connections")
+		for _, cloudConnection = range cloudConnections.CloudConnections {
+			log.Printf("listVPCInCloudConnections: only found cloud connection: %s", *cloudConnection.Name)
 		}
 	}
 
@@ -355,16 +332,16 @@ func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
 			}
 
 			EndpointVpc = cloudConnection.Vpc
-			if shouldDebug { log.Printf("listCloudConnections: EndpointVpc = %+v\n", EndpointVpc) }
+			log.Printf("listCloudConnections: EndpointVpc = %+v\n", EndpointVpc)
 
 			foundVpc = false
 			for _, Vpc = range EndpointVpc.Vpcs {
 				if Vpc != nil {
 					foundVpc = true
 				}
-				if shouldDebug { log.Printf("listCloudConnections: Vpc = %+v\n", Vpc) }
+				log.Printf("listCloudConnections: Vpc = %+v\n", Vpc)
 			}
-			if shouldDebug { log.Printf("listCloudConnections: foundVpc = %v\n", foundVpc) }
+			log.Printf("listCloudConnections: foundVpc = %v\n", foundVpc)
 			if foundVpc {
 				log.Printf("listCloudConnections: This CC still has VPCs attached, waiting...\n")
 
@@ -380,7 +357,7 @@ func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
 			errors.Errorf("Failed to delete cloud connection (%s): %v", *cloudConnection.CloudConnectionID, err)
 		}
 
-		if shouldDebug { log.Printf("listCloudConnections: jobReference.ID = %s\n", *jobReference.ID) }
+		log.Printf("listCloudConnections: jobReference.ID = %s\n", *jobReference.ID)
 
 		result = append(result, cloudResource{
 			key:      *jobReference.ID,
@@ -2401,7 +2378,7 @@ func New(log logrus.FieldLogger,
 	if err != nil {
 		return nil, err
 	}
-	if shouldDebug { log.Printf("vpcRegion = %v\n", vpcRegion) }
+	log.Printf("vpcRegion = %v\n", vpcRegion)
 
 	return &ClusterUninstaller{
 		APIKey:             apiKey,
@@ -3394,10 +3371,8 @@ func (o *ClusterUninstaller) deleteVPC(item cloudResource) error {
 	getOptions = o.vpcSvc.NewGetVPCOptions(item.id)
 	_, getResponse, err = o.vpcSvc.GetVPC(getOptions)
 
-	if shouldDebug {
-		log.Printf("deleteVPC: getResponse = %v\n", getResponse)
-		log.Printf("deleteVPC: err = %v\n", err)
-	}
+	log.Printf("deleteVPC: getResponse = %v\n", getResponse)
+	log.Printf("deleteVPC: err = %v\n", err)
 
 	// Sadly, there is no way to get the status of this VPC to check on the results of the
 	// delete call.
@@ -3963,7 +3938,7 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 	if err != nil {
 		return "", fmt.Errorf("Error bxsession.New: %v", err)
 	}
-	if shouldDebug { log.Printf("bxSession = %+v\n", bxSession) }
+	log.Printf("bxSession = %+v\n", bxSession)
 
 	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
 		DefaultHeader: gohttp.Header{
@@ -3973,7 +3948,7 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 	if err != nil {
 		return "", fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
 	}
-	if shouldDebug { log.Printf("tokenRefresher = %+v\n", tokenRefresher) }
+	log.Printf("tokenRefresher = %+v\n", tokenRefresher)
 	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
 	if err != nil {
 		return "", fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
@@ -3983,13 +3958,13 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 	if err != nil {
 		return "", fmt.Errorf("Error controllerv2.New: %v", err)
 	}
-	if shouldDebug { log.Printf("ctrlv2 = %+v\n", ctrlv2) }
+	log.Printf("ctrlv2 = %+v\n", ctrlv2)
 
 	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
 	if err != nil {
 		return "", fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
 	}
-	if shouldDebug { log.Printf("resourceClientV2 = %+v\n", resourceClientV2) }
+	log.Printf("resourceClientV2 = %+v\n", resourceClientV2)
 
 	svcs, err := resourceClientV2.ListInstances(controllerv2.ServiceInstanceQuery{
 		Type: "service_instance",
@@ -3999,12 +3974,10 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 	}
 
 	for _, svc := range svcs {
-		if shouldDebug {
-			log.Printf("Guid = %v\n", svc.Guid)
-			log.Printf("RegionID = %v\n", svc.RegionID)
-			log.Printf("Name = %v\n", svc.Name)
-			log.Printf("Crn = %v\n", svc.Crn)
-		}
+		log.Printf("Guid = %v\n", svc.Guid)
+		log.Printf("RegionID = %v\n", svc.RegionID)
+		log.Printf("Name = %v\n", svc.Name)
+		log.Printf("Crn = %v\n", svc.Crn)
 		if (ptrServiceName != nil) && (svc.Name == *ptrServiceName) {
 			serviceGuid = svc.Guid
 			break
@@ -4037,7 +4010,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 	if err != nil {
 		return nil, fmt.Errorf("Error bxsession.New: %v", err)
 	}
-	if shouldDebug { log.Printf("bxSession = %+v\n", bxSession) }
+	log.Printf("bxSession = %+v\n", bxSession)
 
 	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
 		DefaultHeader: gohttp.Header{
@@ -4047,7 +4020,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 	if err != nil {
 		return nil, fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
 	}
-	if shouldDebug { log.Printf("tokenRefresher = %+v\n", tokenRefresher) }
+	log.Printf("tokenRefresher = %+v\n", tokenRefresher)
 	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
 	if err != nil {
 		return nil, fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
@@ -4062,19 +4035,19 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 	if err != nil {
 		return nil, fmt.Errorf("Error controllerv2.New: %v", err)
 	}
-	if shouldDebug { log.Printf("ctrlv2 = %+v\n", ctrlv2) }
+	log.Printf("ctrlv2 = %+v\n", ctrlv2)
 
 	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
 	if err != nil {
 		return nil, fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
 	}
-	if shouldDebug { log.Printf("resourceClientV2 = %+v\n", resourceClientV2) }
+	log.Printf("resourceClientV2 = %+v\n", resourceClientV2)
 
 	serviceInstance, err := resourceClientV2.GetInstance(serviceGuid)
 	if err != nil {
 		return nil, fmt.Errorf("Error resourceClientV2.GetInstance: %v", err)
 	}
-	if shouldDebug { log.Printf("serviceInstance = %+v\n", serviceInstance) }
+	log.Printf("serviceInstance = %+v\n", serviceInstance)
 
 	region, err:= GetRegion(serviceInstance.RegionID)
 	if err != nil {
@@ -4099,7 +4072,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptr
 	if err != nil {
 		return nil, fmt.Errorf("Error ibmpisession.New: %v", err)
 	}
-	if shouldDebug { log.Printf("piSession = %+v\n", piSession) }
+	log.Printf("piSession = %+v\n", piSession)
 
 	return piSession, nil
 
@@ -4142,6 +4115,8 @@ func main() {
 	var ptrRegion *string			// In metadata.json
 	var ptrZone *string			// In metadata.json
 	var ptrResourceGroupID *string
+
+	var shouldDebug = false
 
 	var needAPIKey = true
 	var needBaseDomain = true
