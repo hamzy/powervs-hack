@@ -452,8 +452,11 @@ func (o *ClusterUninstaller) listCOSInstances() (cloudResources, error) {
 	for _, instance := range resources.Resources {
 		// Match the COS instances created by both the installer and the
 		// cluster-image-registry-operator.
-		if fmt.Sprintf("%s-cos", o.InfraID) == *instance.Name ||
-			fmt.Sprintf("%s-image-registry", o.InfraID) == *instance.Name {
+		if strings.Contains(*instance.Name, o.InfraID) {
+			if !(strings.HasSuffix(*instance.Name, "-cos") ||
+				strings.HasSuffix(*instance.Name, "-image-registry")) {
+				continue
+			}
 			foundOne = true
 			o.Logger.Debugf("listCOSInstances: FOUND %s %s", *instance.Name, *instance.GUID)
 			result = append(result, cloudResource{
