@@ -86,7 +86,8 @@ func main() {
 	var err error
 
 	// ibmcloud cis instances --output json | jq -r '.[].crn'
-	var CISInstanceCRN = "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::"
+//	var CISInstanceCRN = "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::"
+	var CISInstanceCRN = "crn:v1:bluemix:public:internet-svcs:global:a/3c24cb272ca44aa1ac9f6e9490ac5ecd:9b372a78-cec3-45b7-875e-04ba0270c87d::"
 
 	var zonesSvc *zonesv1.ZonesV1
 
