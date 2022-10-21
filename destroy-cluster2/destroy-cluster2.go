@@ -2133,17 +2133,17 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 
 	for moreData {
 
-		o.Logger.Debugf("options = %+v\n", options)
-		o.Logger.Debugf("options.Limit = %v\n", *options.Limit)
+		o.Logger.Debugf("options = %+v", options)
+		o.Logger.Debugf("options.Limit = %v", *options.Limit)
 		if options.Start != nil {
-			o.Logger.Debugf("optionsStart = %v\n", *options.Start)
+			o.Logger.Debugf("optionsStart = %v", *options.Start)
 		}
 		resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
 		if err != nil {
 			log.Fatalf("Failed to list resource instances: %v", err)
 		}
 
-		o.Logger.Debugf("resources.RowsCount = %v\n", *resources.RowsCount)
+		o.Logger.Debugf("resources.RowsCount = %v", *resources.RowsCount)
 
 		for _, resource := range resources.Resources {
 			if strings.Contains(*resource.Name, o.InfraID) {
@@ -2165,10 +2165,10 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 			log.Fatalf("Failed to GetQueryParam on start: %v", err)
 		}
 		if nextURL == nil {
-			o.Logger.Debugf("nextURL = nil\n")
+			o.Logger.Debugf("nextURL = nil")
 			options.SetStart("")
 		} else {
-			o.Logger.Debugf("nextURL = %v\n", *nextURL)
+			o.Logger.Debugf("nextURL = %v", *nextURL)
 			options.SetStart(*nextURL)
 		}
 
@@ -2187,17 +2187,17 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 
 		for moreData {
 
-			o.Logger.Debugf("options = %+v\n", options)
-			o.Logger.Debugf("options.Limit = %v\n", *options.Limit)
+			o.Logger.Debugf("options = %+v", options)
+			o.Logger.Debugf("options.Limit = %v", *options.Limit)
 			if options.Start != nil {
-				o.Logger.Debugf("optionsStart = %v\n", *options.Start)
+				o.Logger.Debugf("optionsStart = %v", *options.Start)
 			}
 			resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
 			if err != nil {
 				log.Fatalf("Failed to list COS instances: %v", err)
 			}
 
-			o.Logger.Debugf("resources.RowsCount = %v\n", *resources.RowsCount)
+			o.Logger.Debugf("resources.RowsCount = %v", *resources.RowsCount)
 
 			for _, resource := range resources.Resources {
 				o.Logger.Debugf("listServiceInstances: FOUND: %s, %s", *resource.ID, *resource.Name)
@@ -2209,10 +2209,10 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 				log.Fatalf("Failed to GetQueryParam on start: %v", err)
 			}
 			if nextURL == nil {
-				o.Logger.Debugf("nextURL = nil\n")
+				o.Logger.Debugf("nextURL = nil")
 				options.SetStart("")
 			} else {
-				o.Logger.Debugf("nextURL = %v\n", *nextURL)
+				o.Logger.Debugf("nextURL = %v", *nextURL)
 				options.SetStart(*nextURL)
 			}
 
@@ -2461,7 +2461,7 @@ func New(log logrus.FieldLogger,
 	if err != nil {
 		return nil, err
 	}
-	log.Printf("vpcRegion = %v\n", vpcRegion)
+	log.Printf("vpcRegion = %v", vpcRegion)
 
 	return &ClusterUninstaller{
 		APIKey:             apiKey,
@@ -4349,7 +4349,7 @@ func main() {
 	if err != nil {
 		logMain.Fatalf("Error New: %v", err)
 	}
-	if shouldDebug { logMain.Printf("clusterUninstaller = %+v\n", clusterUninstaller) }
+	if shouldDebug { logMain.Printf("clusterUninstaller = %+v", clusterUninstaller) }
 
 	err = clusterUninstaller.Run ()
 	if err != nil {
