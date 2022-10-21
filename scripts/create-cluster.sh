@@ -62,9 +62,13 @@ set -euo pipefail
 # export IBMCLOUD_REGION=${VPCREGION} # ${POWERVS_REGION}
 # export IBMCLOUD_ZONE=${POWERVS_ZONE}
 
+# https://github.com/openshift/installer/blob/master/data/data/coreos/rhcos.json#L267
+# The format is the-contents-of-the-bucket-variable / the-contents-of-the-object-variable
+export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-412-86-202208090152-0-ppc64le-powervs.ova.gz"
+
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.5-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.3-ppc64le"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.12.0-0.nightly-ppc64le-2022-09-20-050920"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.12.0-0.nightly-ppc64le-2022-10-20-055626"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -213,13 +217,33 @@ compute:
 - architecture: ppc64le
   hyperthreading: Enabled
   name: worker
+# VERSION 1
   platform: {}
+# VERSION 2
+# platform:
+#   powervs:
+#     sysType: e980
+# VERSION 3
+# platform:
+#   powervs:
+#     processors: 1
+#     procType: "Dedicated"
   replicas: 3
 controlPlane:
   architecture: ppc64le
   hyperthreading: Enabled
   name: master
+# VERSION 1
   platform: {}
+# VERSION 2
+# platform:
+#   powervs:
+#     sysType: e980
+# VERSION 3
+# platform:
+#   powervs:
+#     processors: 1
+#     procType: "Dedicated"
   replicas: 3
 metadata:
   creationTimestamp: null
@@ -229,8 +253,9 @@ networking:
   - cidr: 10.128.0.0/14
     hostPrefix: 23
   machineNetwork:
-  - cidr: 192.168.0.0/24
-  networkType: OpenShiftSDN
+  - cidr: 192.168.220.0/24
+# networkType: OpenShiftSDN
+  networkType: OVNKubernetes
   serviceNetwork:
   - 172.30.0.0/16
 platform:
