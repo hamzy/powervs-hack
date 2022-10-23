@@ -2091,6 +2091,152 @@ func (o *ClusterUninstaller) destroySubnets() error {
 	return nil
 }
 
+const networkTypeName = "network"
+
+// listNetworks lists networks in the service instance.
+func (o *ClusterUninstaller) listNetworks() (cloudResources, error) {
+	var (
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/networks.go#L20
+		networks *models.Networks
+
+		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/network_reference.go#L20
+		networkRef *models.NetworkReference
+
+		err error
+	)
+
+	o.Logger.Debugf("Listing Networks")
+
+	select {
+	case <-o.Context.Done():
+		o.Logger.Debugf("listNetworks: case <-o.Context.Done()")
+		return nil, o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	networks, err = o.networkClient.GetAll()
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to list networks")
+	}
+
+	var foundOne = false
+
+	result := []cloudResource{}
+	for _, networkRef = range networks.Networks {
+		if strings.Contains(*networkRef.Name, o.InfraID) {
+			foundOne = true
+			o.Logger.Debugf("listNetworks: FOUND: %s, %s", *networkRef.NetworkID, *networkRef.Name)
+			result = append(result, cloudResource{
+				key:      *networkRef.NetworkID,
+				name:     *networkRef.Name,
+				status:   "",
+				typeName: networkTypeName,
+				id:       *networkRef.NetworkID,
+			})
+		}
+	}
+	if !foundOne {
+		o.Logger.Debugf("listNetworks: NO matching subnet against: %s", o.InfraID)
+		for _, networkRef := range networks.Networks {
+			o.Logger.Debugf("listNetworks: network: %s", *networkRef.Name)
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+func (o *ClusterUninstaller) deleteNetwork(item cloudResource) error {
+	o.Logger.Debugf("Deleting network %q", item.name)
+
+	select {
+	case <-o.Context.Done():
+		o.Logger.Debugf("deleteNetwork: case <-o.Context.Done()")
+		return o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	if !shouldDelete {
+		o.Logger.Debugf("Skipping deleting network %q since shouldDelete is false", item.name)
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		return nil
+	}
+
+	err := o.networkClient.Delete(item.id)
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete network %s", item.name)
+	}
+
+	return nil
+}
+
+// destroyNetworks removes all network resources that have a name prefixed
+// with the cluster's infra ID.
+func (o *ClusterUninstaller) destroyNetworks() error {
+	firstPassList, err := o.listNetworks()
+	if err != nil {
+		return err
+	}
+
+	items := o.insertPendingItems(networkTypeName, firstPassList.list())
+
+	ctx, _ := o.contextWithTimeout()
+
+	for _, item := range items {
+		select {
+		case <-o.Context.Done():
+			o.Logger.Debugf("destroyNetworks: case <-o.Context.Done()")
+			return o.Context.Err() // we're cancelled, abort
+		default:
+		}
+
+		backoff := wait.Backoff{Duration: 15 * time.Second,
+			Factor: 1.5,
+			Cap:    10 * time.Minute,
+			Steps:  math.MaxInt32}
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+			err2 := o.deleteNetwork(item)
+			if err2 == nil {
+				return true, err2
+			} else {
+				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+				return false, err2
+			}
+		})
+		if err != nil {
+			o.Logger.Fatal("destroyNetworks: ExponentialBackoffWithContext (destroy) returns ", err)
+		}
+	}
+
+	if items = o.getPendingItems(networkTypeName); len(items) > 0 {
+		return errors.Errorf("destroyNetworks: %d undeleted items pending", len(items))
+	}
+
+	backoff := wait.Backoff{Duration: 15 * time.Second,
+		Factor: 1.5,
+		Cap:    10 * time.Minute,
+		Steps:  math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		secondPassList, err2 := o.listNetworks()
+		if err2 != nil {
+			return false, err2
+		}
+		if len(secondPassList) == 0 {
+			// We finally don't see any remaining instances!
+			return true, nil
+		} else {
+			for _, item := range secondPassList {
+				o.Logger.Debugf("destroyNetworks: found %s in second pass", item.name)
+			}
+			return false, nil
+		}
+	})
+	if err != nil {
+		o.Logger.Fatal("destroyNetworks: ExponentialBackoffWithContext (list) returns ", err)
+	}
+
+	return nil
+}
+
 const serviceInstanceTypeName = "serviceInstance"
 
 // listServiceInstances lists serviceInstances in the cloud.
@@ -2429,6 +2575,7 @@ type ClusterUninstaller struct {
 	keyClient             *instance.IBMPIKeyClient
 	cloudConnectionClient *instance.IBMPICloudConnectionClient
 	dhcpClient            *instance.IBMPIDhcpClient
+	networkClient         *instance.IBMPINetworkClient
 
 	resourceGroupID string
 	cosInstanceID   string
@@ -2556,6 +2703,8 @@ func (o *ClusterUninstaller) destroyCluster() error {
 		{name: "VPC Cloud Connections", execute: o.destroyVPCInCloudConnections},
 	}, {
 		{name: "Cloud Connections", execute: o.destroyCloudConnections},
+	}, {
+		{name: "Networks", execute: o.destroyNetworks},
 	}, {
 		{name: "VPCs", execute: o.destroyVPCs},
 	}, {
@@ -2958,6 +3107,24 @@ func (o *ClusterUninstaller) loadSDKServices() error {
 		o.Logger.Debugf("loadSDKServices: o.keyClient = %v", o.keyClient)
 		o.Logger.Debugf("loadSDKServices: o.cloudConnectionClient = %v", o.cloudConnectionClient)
 		return fmt.Errorf("loadSDKServices: loadSDKServices: o.dhcpClient is nil")
+	}
+
+	o.networkClient = instance.NewIBMPINetworkClient(ctx, o.piSession, o.ServiceGUID)
+	if o.networkClient == nil {
+		o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
+		o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
+		o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
+		o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
+		o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
+		o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
+		o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
+		o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
+		o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
+		o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
+		o.Logger.Debugf("loadSDKServices: o.keyClient = %v", o.keyClient)
+		o.Logger.Debugf("loadSDKServices: o.cloudConnectionClient = %v", o.cloudConnectionClient)
+		o.Logger.Debugf("loadSDKServices: o.dhcpClient = %v", o.dhcpClient)
+		return fmt.Errorf("loadSDKServices: loadSDKServices: o.networkClient is nil")
 	}
 
 	authenticator = &core.IamAuthenticator{
