@@ -53,9 +53,28 @@ then
 	export INSTANCE_NAME="${INFRA_ID}-jumpbox"
 fi
 
-if ! ibmcloud pi network hamzy-public-network
+USER=$(id -un)
+
+VPC_INSTANCE_NAME="${INFRA_ID}-vs1"
+VPC_ID=$(ibmcloud is vpcs --output json | jq -r '.[] | select (.name|test("'${INFRA_ID}'")) | .id')
+VPC_SUBNET="vpc-subnet-${INFRA_ID}"
+VPC_SUBNET_ZONE=$(ibmcloud is subnet ${VPC_SUBNET} --output json | jq -r '.zone.name')
+IMAGE_NAME=$(ibmcloud is images --output json | jq -r '.[] | select (.name|test("ibm-centos.*amd64")) | select (.status|test("available")) | .name')
+RESOURCE_GROUP=$(jq -r '.powervs.powerVSResourceGroup' ${CLUSTER_DIR}/metadata.json)
+
+ibmcloud is instance-create ${VPC_INSTANCE_NAME} ${VPC_ID} ${VPC_SUBNET_ZONE} cx2-2x4 ${VPC_SUBNET} --keys ${USER}-key --image ${IMAGE_NAME} --resource-group-name ${RESOURCE_GROUP}
+
+NET_IFACE_ID=$(ibmcloud is instance ${VPC_ID} --output json | jq -r '.primary_network_interface.id')
+
+ibmcloud is floating-ip-reserve ${VPC_ID}-floating-ip --nic ${NET_IFACE_ID}
+
+SECURITY_GROUP_NAME=$(ibmcloud is instance ${VPC_ID} --output json | jq -r '.primary_network_interface.security_groups[].name')
+
+ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound tcp --port-min 22 --port-max 22 --remote '0.0.0.0/0'
+
+if ! ibmcloud pi network ${USER}-public-network
 then
-	ibmcloud pi network-create-public hamzy-public-network --dns-servers "1.1.1.1 9.9.9.9 8.8.8.8"
+	ibmcloud pi network-create-public ${USER}-public-network --dns-servers "1.1.1.1 9.9.9.9 8.8.8.8"
 fi
 
 CENTOS_ID=$(ibmcloud pi images --json | jq -r '.images[] | select (.name|test("CentOS-Stream-8")) | .imageID')
@@ -75,7 +94,7 @@ fi
 
 if ! ibmcloud pi instance ${INSTANCE_NAME}
 then
-	CMD="ibmcloud pi instance-create ${INSTANCE_NAME} --image CentOS-Stream-8 --memory 8 --key-name hamzy-key --network hamzy-public-network"
+	CMD="ibmcloud pi instance-create ${INSTANCE_NAME} --image CentOS-Stream-8 --memory 8 --key-name ${USER}-key --network ${USER}-public-network"
 	if [ -n "${NETWORK_NAME}" ]
 	then	
 		CMD="${CMD} --network ${NETWORK_NAME}"
@@ -99,7 +118,7 @@ done
 
 while true
 do
-	export IP=$(ibmcloud pi instance ${INSTANCE_NAME} --json | jq -r '.networks[] | select(.networkName|test("hamzy-public-network")) | .externalIP')
+	export IP=$(ibmcloud pi instance ${INSTANCE_NAME} --json | jq -r '.networks[] | select(.networkName|test("'${USER}'-public-network")) | .externalIP')
 	if [ $? -eq 0 ]
 	then
 		break
