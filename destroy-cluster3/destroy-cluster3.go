@@ -291,12 +291,11 @@ func (o *ClusterUninstaller) destroyVPCInCloudConnections() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyVPCInCloudConnections: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyVPCInCloudConnections: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyVPCInCloudConnections: ExponentialBackoffWithContext (list) returns ", err)
@@ -347,7 +346,7 @@ func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
 
 	cloudConnections, err = o.cloudConnectionClient.GetAll()
 	if err != nil {
-		o.Logger.Fatalf("Failed to list cloud connections: %v", err)
+		return nil, errors.Wrapf(err, "failed to list cloud connections")
 	}
 
 	result := []cloudResource{}
@@ -503,12 +502,11 @@ func (o *ClusterUninstaller) destroyCloudConnections() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyCloudConnections: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyCloudConnections: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyCloudConnections: ExponentialBackoffWithContext (list) returns ", err)
@@ -707,10 +705,9 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 			err2 := o.destroyCOSInstance(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyCOSInstances: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -737,12 +734,11 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyCOSInstances: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyCOSInstances: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyCOSInstances: ExponentialBackoffWithContext (list) returns ", err)
@@ -913,10 +909,9 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 			err2 := o.destroyDHCPNetwork(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyDHCPNetworks: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -943,12 +938,11 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyDHCPNetworks: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyDHCPNetworks: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyDHCPNetworks: ExponentialBackoffWithContext (list) returns ", err)
@@ -1116,10 +1110,9 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 			err2 := o.destroyDNSRecord(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyDNSRecords: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -1146,12 +1139,11 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyDNSRecords: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyDNSRecords: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyDNSRecords: ExponentialBackoffWithContext (list) returns ", err)
@@ -1308,10 +1300,9 @@ func (o *ClusterUninstaller) destroyImages() error {
 			err2 := o.deleteImage(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyImages: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -1338,12 +1329,11 @@ func (o *ClusterUninstaller) destroyImages() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyImages: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyImages: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyImages: ExponentialBackoffWithContext (list) returns ", err)
@@ -1418,6 +1408,12 @@ func (o *ClusterUninstaller) destroyCloudInstance(item cloudResource) error {
 		return nil
 	}
 
+	if !shouldDelete {
+		o.Logger.Debugf("Skipping deleting Cloud instance %q since shouldDelete is false", item.name)
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		return nil
+	}
+
 	o.Logger.Debugf("Deleting Cloud instance %q", item.name)
 
 	deleteInstanceOptions = o.vpcSvc.NewDeleteInstanceOptions(item.id)
@@ -1480,10 +1476,9 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 			err2 := o.destroyCloudInstance(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyCloudInstances: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -1510,12 +1505,11 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyCloudInstances: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyCloudInstances: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyCloudInstances: ExponentialBackoffWithContext (list) returns ", err)
@@ -1642,10 +1636,9 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 			err2 := o.destroyPowerInstance(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyPowerInstances: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -1672,12 +1665,11 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyPowerInstances: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyPowerInstances: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyPowerInstances: ExponentialBackoffWithContext (list) returns ", err)
@@ -1869,10 +1861,9 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 			err2 := o.deletePublicGateway(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyPublicGateways: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -1899,12 +1890,11 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyPublicGateways: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyPublicGateways: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyPublicGateways: ExponentialBackoffWithContext (list) returns ", err)
@@ -2084,12 +2074,11 @@ func (o *ClusterUninstaller) destroyJobs() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyJobs: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyJobs: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyJobs: ExponentialBackoffWithContext (list) returns ", err)
@@ -2242,10 +2231,9 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 			err2 := o.deleteLoadBalancer(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyLoadBalancers: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -2272,12 +2260,11 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyLoadBalancers: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyLoadBalancers: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyLoadBalancers: ExponentialBackoffWithContext (list) returns ", err)
@@ -2411,10 +2398,9 @@ func (o *ClusterUninstaller) destroySubnets() error {
 			err2 := o.deleteSubnet(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroySubnets: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -2441,12 +2427,11 @@ func (o *ClusterUninstaller) destroySubnets() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroySubnets: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroySubnets: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroySubnets: ExponentialBackoffWithContext (list) returns ", err)
@@ -2567,10 +2552,9 @@ func (o *ClusterUninstaller) destroyNetworks() error {
 			err2 := o.deleteNetwork(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyNetworks: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -2597,12 +2581,11 @@ func (o *ClusterUninstaller) destroyNetworks() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyNetworks: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyNetworks: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyNetworks: ExponentialBackoffWithContext (list) returns ", err)
@@ -2825,10 +2808,9 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 			err2 := o.deleteServiceInstance(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyServiceInstances: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -2855,12 +2837,11 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyServiceInstances: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyServiceInstances: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyServiceInstances: ExponentialBackoffWithContext (list) returns ", err)
@@ -2997,10 +2978,9 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 			err2 := o.deleteSecurityGroup(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroySecurityGroups: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -3027,12 +3007,11 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroySecurityGroups: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroySecurityGroups: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroySecurityGroups: ExponentialBackoffWithContext (list) returns ", err)
@@ -3178,10 +3157,9 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 			err2 := o.deleteVPC(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyVPCs: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -3208,12 +3186,11 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyVPCs: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyVPCs: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyVPCs: ExponentialBackoffWithContext (list) returns ", err)
@@ -3403,10 +3380,9 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 			err2 := o.deleteCloudSSHKey(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyCloudSSHKeys: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -3433,12 +3409,11 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyCloudSSHKeys: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyCloudSSHKeys: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyCloudSSHKeys: ExponentialBackoffWithContext (list) returns ", err)
@@ -3562,10 +3537,9 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 			err2 := o.deletePowerSSHKey(item)
 			if err2 == nil {
 				return true, err2
-			} else {
-				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-				return false, err2
 			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
 		})
 		if err != nil {
 			o.Logger.Fatal("destroyPowerSSHKeys: ExponentialBackoffWithContext (destroy) returns ", err)
@@ -3592,12 +3566,11 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 		if len(secondPassList) == 0 {
 			// We finally don't see any remaining instances!
 			return true, nil
-		} else {
-			for _, item := range secondPassList {
-				o.Logger.Debugf("destroyPowerSSHKeys: found %s in second pass", item.name)
-			}
-			return false, nil
 		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyPowerSSHKeys: found %s in second pass", item.name)
+		}
+		return false, nil
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyPowerSSHKeys: ExponentialBackoffWithContext (list) returns ", err)
