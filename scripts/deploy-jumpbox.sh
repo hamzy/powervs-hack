@@ -71,6 +71,7 @@ ibmcloud is floating-ip-reserve ${VPC_ID}-floating-ip --nic ${NET_IFACE_ID}
 SECURITY_GROUP_NAME=$(ibmcloud is instance ${VPC_ID} --output json | jq -r '.primary_network_interface.security_groups[].name')
 
 ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound tcp --port-min 22 --port-max 22 --remote '0.0.0.0/0'
+ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound icmp --remote '0.0.0.0/0'
 
 if ! ibmcloud pi network ${USER}-public-network
 then
