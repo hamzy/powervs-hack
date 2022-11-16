@@ -62,13 +62,16 @@ VPC_SUBNET_ZONE=$(ibmcloud is subnet ${VPC_SUBNET} --output json | jq -r '.zone.
 IMAGE_NAME=$(ibmcloud is images --output json | jq -r '.[] | select (.name|test("ibm-centos.*amd64")) | select (.status|test("available")) | .name')
 RESOURCE_GROUP=$(jq -r '.powervs.powerVSResourceGroup' ${CLUSTER_DIR}/metadata.json)
 
-ibmcloud is instance-create ${VPC_INSTANCE_NAME} ${VPC_ID} ${VPC_SUBNET_ZONE} cx2-2x4 ${VPC_SUBNET} --keys ${USER}-key --image ${IMAGE_NAME} --resource-group-name ${RESOURCE_GROUP}
+if (( $(ibmcloud is instance ${VPC_INSTANCE_NAME} --output json | jq -r 'def count(s): reduce s as $i (0; .+1); count(select(.id))') == 0 ))
+then
+	ibmcloud is instance-create ${VPC_INSTANCE_NAME} ${VPC_ID} ${VPC_SUBNET_ZONE} cx2-2x4 ${VPC_SUBNET} --keys ${USER}-key --image ${IMAGE_NAME} --resource-group-name ${RESOURCE_GROUP}
+fi
 
-NET_IFACE_ID=$(ibmcloud is instance ${VPC_ID} --output json | jq -r '.primary_network_interface.id')
+NET_IFACE_ID=$(ibmcloud is instance ${VPC_INSTANCE_NAME} --output json | jq -r '.primary_network_interface.id')
 
-ibmcloud is floating-ip-reserve ${VPC_ID}-floating-ip --nic ${NET_IFACE_ID}
+ibmcloud is floating-ip-reserve ${VPC_INSTANCE_NAME}-floating-ip --nic ${NET_IFACE_ID}
 
-SECURITY_GROUP_NAME=$(ibmcloud is instance ${VPC_ID} --output json | jq -r '.primary_network_interface.security_groups[].name')
+SECURITY_GROUP_NAME=$(ibmcloud is instance ${VPC_INSTANCE_NAME} --output json | jq -r '.primary_network_interface.security_groups[].name')
 
 ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound tcp --port-min 22 --port-max 22 --remote '0.0.0.0/0'
 ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound icmp --remote '0.0.0.0/0'
