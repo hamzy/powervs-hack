@@ -162,6 +162,14 @@ ibmcloud pi instances --json | jq -r '.pvmInstances[] | select (.serverName|test
 echo "8<--------8<--------8<--------8<-------- Instance names, health 8<--------8<--------8<--------8<--------"
 ibmcloud pi instances --json | jq -r '.pvmInstances[] | select (.serverName|test("'${CLUSTER_NAME}'")) | " \(.serverName) - \(.status) - health: \(.health.reason) - \(.health.status)"'
 
+echo "8<--------8<--------8<--------8<-------- Instances in ERROR state 8<--------8<--------8<--------8<--------"
+
+while read UUID
+do
+	ibmcloud pi instance ${UUID}
+	echo "8<--------8<--------"
+done < <(ibmcloud pi instances --json | jq -r '.pvmInstances[] | select (.status|test("ERROR")) | .pvmInstanceID')
+
 echo "8<--------8<--------8<--------8<-------- Running jobs 8<--------8<--------8<--------8<--------"
 ibmcloud pi jobs --json | jq -r '.jobs[] | select (.status.state|test("running"))'
 
