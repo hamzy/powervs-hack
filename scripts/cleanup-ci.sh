@@ -52,23 +52,23 @@ do
 #			;;
 		"ocp-ipi-ci-mon01")
 			export POWERVS_REGION="ca-tor"
-	       		export POWERVS_ZONE="mon01"
+			export POWERVS_ZONE="mon01"
 			;;
 		"ocp-ipi-ci-osa21")
 			export POWERVS_REGION="jp-osa"
-	       		export POWERVS_ZONE="osa21"
+			export POWERVS_ZONE="osa21"
 			;;
 		"ocp-ipi-ci-sao01")
 			export POWERVS_REGION="br-sao"
-	       		export POWERVS_ZONE="sao01"
+			export POWERVS_ZONE="sao01"
 			;;
 		"ocp-ipi-ci-syd04")
 			export POWERVS_REGION="au-syd"
-	       		export POWERVS_ZONE="syd04"
+			export POWERVS_ZONE="syd04"
 			;;
 		"ocp-ipi-ci-syd05")
 			export POWERVS_REGION="au-syd"
-	       		export POWERVS_ZONE="syd05"
+			export POWERVS_ZONE="syd05"
 			;;
 		"ocp-ipi-ci-tok04")
 			export POWERVS_REGION="jp-tok"
@@ -76,7 +76,7 @@ do
 			;;
 		"ocp-ipi-ci-tor01")
 			export POWERVS_REGION="ca-tor"
-	       		export POWERVS_ZONE="tor01"
+			export POWERVS_ZONE="tor01"
 			;;
 		*)
 			echo "Error: Unknown SERVICE_INSTANCE (${SERVICE_INSTANCE})!"
@@ -87,7 +87,7 @@ do
 	export CLUSTER_NAME="rdr-multiarch-${POWERVS_ZONE}"
 
 	ibmcloud logout
-       	ibmcloud login --apikey "${IBMCLOUD_API_KEY}" -r "${POWERVS_REGION}"
+	ibmcloud login --apikey "${IBMCLOUD_API_KEY}" -r "${POWERVS_REGION}"
 	SERVICE_INSTANCE_CRN=$(ibmcloud resource service-instance ${SERVICE_INSTANCE} --output json | jq -r '.[].crn')
 	ibmcloud pi service-target ${SERVICE_INSTANCE_CRN}
 
