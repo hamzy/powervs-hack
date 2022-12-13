@@ -160,7 +160,7 @@ echo "8<--------8<--------8<--------8<-------- Instance names, ids, and MAC addr
 ibmcloud pi instances --json | jq -r '.pvmInstances[] | select (.serverName|test("'${INFRA_ID}'")) | [.serverName, .pvmInstanceID, .addresses[].ip, .addresses[].macAddress]'
 
 echo "8<--------8<--------8<--------8<-------- Instance names, health 8<--------8<--------8<--------8<--------"
-ibmcloud pi instances --json | jq -r '.pvmInstances[] | select (.serverName|test("'${CLUSTER_NAME}'")) | " \(.serverName) - \(.status) - health: \(.health.reason) - \(.health.status)"'
+ibmcloud pi instances --json | jq -r '.pvmInstances[] | select (.serverName|test("'${INFRA_ID}'")) | " \(.serverName) - \(.status) - health: \(.health.reason) - \(.health.status)"'
 
 echo "8<--------8<--------8<--------8<-------- Instances in ERROR state 8<--------8<--------8<--------8<--------"
 
