@@ -62,6 +62,11 @@ VPC_SUBNET_ZONE=$(ibmcloud is subnet ${VPC_SUBNET} --output json | jq -r '.zone.
 IMAGE_NAME=$(ibmcloud is images --output json | jq -r '.[] | select (.name|test("ibm-centos.*amd64")) | select (.status|test("available")) | .name')
 RESOURCE_GROUP=$(jq -r '.powervs.powerVSResourceGroup' ${CLUSTER_DIR}/metadata.json)
 
+if ! ibmcloud is key ${USER}-key 1>/dev/null 2>&1
+then
+	ibmcloud is key-create ${USER}-key @~/.ssh/id_rsa.pub
+fi
+
 COUNT_INSTANCES=$(ibmcloud is instances --output json | jq -r '.[] | select (.name|test("'${INFRA_ID}'")) | length')
 if [ "${COUNT_INSTANCES}" == "" ]
 then
