@@ -87,6 +87,7 @@ else
 		"-c"|"-C")
 			ACTION=POST
 			CLOUD_CON_ID=${DHCP_ID}
+			# NOTE: You can also add "name": "value" to the --data section
 			RESULT=$(curl --silent --location --request ${ACTION} "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_ID}" --header "Authorization: Bearer ${BEARER_TOKEN}" --data '{"cloudConnectionID": "'${CLOUD_CON_ID}'"}')
 			;;
 		"-q"|"-Q"|"-g"|"-G"|*)
