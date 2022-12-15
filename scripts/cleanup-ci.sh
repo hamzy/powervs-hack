@@ -20,8 +20,8 @@ done
 
 set -xeuo pipefail
 
-USE_POWERVS_HACK2=true
-USE_POWERVS_HACK3=false
+USE_POWERVS_HACK2=false
+USE_POWERVS_HACK3=true
 
 if ${USE_POWERVS_HACK2}
 then
@@ -40,6 +40,7 @@ export BASEDOMAIN="ocp-dev-ppc64le.com"
 export CIS_INSTANCE="pvs-ipi-dns"
 export RESOURCE_GROUP_ID="ba5e48e53192476092e188e0e0c6eb9e"
 
+# NOTE: Problem in ocp-ipi-ci-sao01
 # for SERVICE_INSTANCE in "ocp-ipi-ci-mon01" "ocp-ipi-ci-osa21" "ocp-ipi-ci-sao01" "ocp-ipi-ci-syd04" "ocp-ipi-ci-syd05" "ocp-ipi-ci-tok04" "ocp-ipi-ci-tor01"
 for SERVICE_INSTANCE in "ocp-ipi-ci-mon01" "ocp-ipi-ci-osa21" "ocp-ipi-ci-syd04" "ocp-ipi-ci-syd05" "ocp-ipi-ci-tok04" "ocp-ipi-ci-tor01"
 do
@@ -114,14 +115,14 @@ do
 		then
 			USE_POWERVS_HACK=true
 			CMD=destroy-cluster3
-			INSTANCE_CRN="-CISInstanceCRN ${CIS_INSTANCE_CRN} -DNSInstanceCRN ${DNS_INSTANCE_CRN}"
+			INSTANCE_CRN='-CISInstanceCRN "'${CIS_INSTANCE_CRN}'" -DNSInstanceCRN "'${DNS_INSTANCE_CRN}'"'
 		fi
 
 		if ${USE_POWERVS_HACK}
 		then
 
 			set +e
-			${CMD} \
+			eval ${CMD} \
 				-apiKey "${IBMCLOUD_API_KEY}" \
 				-baseDomain "ocp-dev-ppc64le.com" \
 				-clusterName "${CLUSTER_NAME}" \
