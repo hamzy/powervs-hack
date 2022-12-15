@@ -13,6 +13,7 @@ import (
 	"github.com/IBM-Cloud/bluemix-go"
 	"github.com/IBM-Cloud/bluemix-go/api/resource/resourcev2/controllerv2"
 	"github.com/IBM-Cloud/bluemix-go/authentication"
+	"github.com/IBM-Cloud/bluemix-go/crn"
 	"github.com/IBM-Cloud/bluemix-go/http"
 	"github.com/IBM-Cloud/bluemix-go/rest"
 	bxsession "github.com/IBM-Cloud/bluemix-go/session"
@@ -21,6 +22,8 @@ import (
 	"github.com/IBM-Cloud/power-go-client/power/models"
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
+	"github.com/IBM/networking-go-sdk/dnszonesv1"
+	"github.com/IBM/networking-go-sdk/resourcerecordsv1"
 	"github.com/IBM/networking-go-sdk/zonesv1"
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 	"github.com/IBM/platform-services-go-sdk/resourcemanagerv2"
@@ -951,7 +954,9 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 	return nil
 }
 
-const dnsRecordTypeName = "dns record"
+const (
+	cisDNSRecordTypeName = "cis dns record"
+)
 
 // listDNSRecords lists DNS records for the cluster.
 func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
@@ -961,7 +966,7 @@ func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 
 	select {
 	case <-o.Context.Done():
-		o.Logger.Debugf("listLoadBalancers: case <-o.Context.Done()")
+		o.Logger.Debugf("listDNSRecords: case <-o.Context.Done()")
 		return nil, o.Context.Err() // we're cancelled, abort
 	default:
 	}
@@ -997,7 +1002,7 @@ func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 					key:      *record.ID,
 					name:     *record.Name,
 					status:   "",
-					typeName: dnsRecordTypeName,
+					typeName: cisDNSRecordTypeName,
 					id:       *record.ID,
 				})
 			}
@@ -1028,23 +1033,23 @@ func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 	return cloudResources{}.insert(result...), nil
 }
 
+// destroyDNSRecord destroys a DNS record.
 func (o *ClusterUninstaller) destroyDNSRecord(item cloudResource) error {
 	var (
-		getOptions *dnsrecordsv1.GetDnsRecordOptions
-		response   *core.DetailedResponse
-		err        error
+		response *core.DetailedResponse
+		err      error
 	)
 
 	ctx, _ := o.contextWithTimeout()
 
 	select {
 	case <-o.Context.Done():
-		o.Logger.Debugf("deleteFloatingIP: case <-o.Context.Done()")
+		o.Logger.Debugf("destroyDNSRecord: case <-o.Context.Done()")
 		return o.Context.Err() // we're cancelled, abort
 	default:
 	}
 
-	getOptions = o.dnsRecordsSvc.NewGetDnsRecordOptions(item.id)
+	getOptions := o.dnsRecordsSvc.NewGetDnsRecordOptions(item.id)
 	_, response, err = o.dnsRecordsSvc.GetDnsRecordWithContext(ctx, getOptions)
 
 	if err != nil && response != nil && response.StatusCode == gohttp.StatusNotFound {
@@ -1058,20 +1063,14 @@ func (o *ClusterUninstaller) destroyDNSRecord(item cloudResource) error {
 		return nil
 	}
 
-	if !shouldDelete {
-		o.Logger.Debugf("Skipping deleting DNS record %q since shouldDelete is false", item.name)
-		o.deletePendingItems(item.typeName, []cloudResource{item})
-		return nil
-	}
-
-	o.Logger.Debugf("Deleting DNS record %q", item.name)
-
 	deleteOptions := o.dnsRecordsSvc.NewDeleteDnsRecordOptions(item.id)
+
 	_, _, err = o.dnsRecordsSvc.DeleteDnsRecordWithContext(ctx, deleteOptions)
 	if err != nil {
 		return errors.Wrapf(err, "failed to delete DNS record %s", item.name)
 	}
 
+	o.Logger.Debugf("Deleting DNS record %q", item.name)
 	o.deletePendingItems(item.typeName, []cloudResource{item})
 
 	return nil
@@ -1080,6 +1079,10 @@ func (o *ClusterUninstaller) destroyDNSRecord(item cloudResource) error {
 // destroyDNSRecords removes all DNS record resources that have a name containing
 // the cluster's infra ID.
 func (o *ClusterUninstaller) destroyDNSRecords() error {
+	if o.dnsRecordsSvc == nil {
+		return errors.Errorf("destroyDNSRecords: o.dnsRecordsSvc is nil!")
+	}
+
 	firstPassList, err := o.listDNSRecords()
 	if err != nil {
 		return err
@@ -1089,7 +1092,7 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 		return nil
 	}
 
-	items := o.insertPendingItems(dnsRecordTypeName, firstPassList.list())
+	items := o.insertPendingItems(cosTypeName, firstPassList.list())
 
 	ctx, _ := o.contextWithTimeout()
 
@@ -1119,7 +1122,7 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 		}
 	}
 
-	if items = o.getPendingItems(dnsRecordTypeName); len(items) > 0 {
+	if items = o.getPendingItems(cosTypeName); len(items) > 0 {
 		for _, item := range items {
 			o.Logger.Debugf("destroyDNSRecords: found %s in pending items", item.name)
 		}
@@ -1147,6 +1150,179 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyDNSRecords: ExponentialBackoffWithContext (list) returns ", err)
+	}
+
+	return nil
+}
+
+const (
+	ibmDNSRecordTypeName = "ibm dns record"
+)
+
+// listResourceRecords lists DNS Resource records for the cluster.
+func (o *ClusterUninstaller) listResourceRecords() (cloudResources, error) {
+	o.Logger.Debugf("Listing DNS resource records")
+
+	select {
+	case <-o.Context.Done():
+		o.Logger.Debugf("listResourceRecords: case <-o.Context.Done()")
+		return nil, o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	result := []cloudResource{}
+
+	dnsCRN, err := crn.Parse(o.DNSInstanceCRN)
+	if err != nil {
+		return nil, errors.Wrap(err, "Failed to parse DNSInstanceCRN")
+	}
+	records, _, err := o.resourceRecordsSvc.ListResourceRecords(&resourcerecordsv1.ListResourceRecordsOptions{
+		InstanceID: &dnsCRN.ServiceInstance,
+		DnszoneID:  &o.dnsZoneID,
+	})
+	for _, record := range records.ResourceRecords {
+		// Match all of the cluster's DNS records
+		exp := fmt.Sprintf(`.*\Q%s.%s\E$`, o.ClusterName, o.BaseDomain)
+		nameMatches, _ := regexp.Match(exp, []byte(*record.Name))
+		if nameMatches {
+			o.Logger.Debugf("listResourceRecords: FOUND: %v, %v", *record.ID, *record.Name)
+			result = append(result, cloudResource{
+				key:      *record.ID,
+				name:     *record.Name,
+				status:   "",
+				typeName: ibmDNSRecordTypeName,
+				id:       *record.ID,
+			})
+		}
+	}
+	if err != nil {
+		return nil, errors.Wrap(err, "could not retrieve DNS records")
+	}
+	return cloudResources{}.insert(result...), nil
+}
+
+// destroyResourceRecord destroys a Resource Record.
+func (o *ClusterUninstaller) destroyResourceRecord(item cloudResource) error {
+	var (
+		response *core.DetailedResponse
+		err      error
+	)
+
+	select {
+	case <-o.Context.Done():
+		o.Logger.Debugf("destroyResourceRecord: case <-o.Context.Done()")
+		return o.Context.Err() // we're cancelled, abort
+	default:
+	}
+
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete DNS Resource record %s", item.name)
+	}
+	dnsCRN, err := crn.Parse(o.DNSInstanceCRN)
+	if err != nil {
+		return errors.Wrap(err, "Failed to parse DNSInstanceCRN")
+	}
+	getOptions := o.resourceRecordsSvc.NewGetResourceRecordOptions(dnsCRN.ServiceInstance, o.dnsZoneID, item.id)
+	_, response, err = o.resourceRecordsSvc.GetResourceRecord(getOptions)
+
+	if err != nil && response != nil && response.StatusCode == gohttp.StatusNotFound {
+		// The resource is gone
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted DNS Resource record %q", item.name)
+		return nil
+	}
+	if err != nil && response != nil && response.StatusCode == gohttp.StatusInternalServerError {
+		o.Logger.Infof("destroyResourceRecord: internal server error")
+		return nil
+	}
+
+	deleteOptions := o.resourceRecordsSvc.NewDeleteResourceRecordOptions(dnsCRN.ServiceInstance, o.dnsZoneID, item.id)
+
+	_, err = o.resourceRecordsSvc.DeleteResourceRecord(deleteOptions)
+	if err != nil {
+		return errors.Wrapf(err, "failed to delete DNS Resource record %s", item.name)
+	}
+
+	o.Logger.Debugf("Deleting DNS Resource record %q", item.name)
+	o.deletePendingItems(item.typeName, []cloudResource{item})
+
+	return nil
+}
+
+// destroyResourceRecords removes all DNS record resources that have a name containing
+// the cluster's infra ID.
+func (o *ClusterUninstaller) destroyResourceRecords() error {
+	if o.resourceRecordsSvc == nil {
+		return errors.Errorf("destroyResourceRecords: o.resourceRecordsSvc is nil!")
+	}
+
+	firstPassList, err := o.listResourceRecords()
+	if err != nil {
+		return err
+	}
+
+	if len(firstPassList.list()) == 0 {
+		return nil
+	}
+
+	items := o.insertPendingItems(cosTypeName, firstPassList.list())
+
+	ctx, _ := o.contextWithTimeout()
+
+	for _, item := range items {
+		select {
+		case <-o.Context.Done():
+			o.Logger.Debugf("destroyResourceRecords: case <-o.Context.Done()")
+			return o.Context.Err() // we're cancelled, abort
+		default:
+		}
+
+		backoff := wait.Backoff{
+			Duration: 15 * time.Second,
+			Factor:   1.1,
+			Cap:      leftInContext(ctx),
+			Steps:    math.MaxInt32}
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+			err2 := o.destroyResourceRecord(item)
+			if err2 == nil {
+				return true, err2
+			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
+		})
+		if err != nil {
+			o.Logger.Fatal("destroyResourceRecords: ExponentialBackoffWithContext (destroy) returns ", err)
+		}
+	}
+
+	if items = o.getPendingItems(cosTypeName); len(items) > 0 {
+		for _, item := range items {
+			o.Logger.Debugf("destroyResourceRecords: found %s in pending items", item.name)
+		}
+		return errors.Errorf("destroyResourceRecords: %d undeleted items pending", len(items))
+	}
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		secondPassList, err2 := o.listResourceRecords()
+		if err2 != nil {
+			return false, err2
+		}
+		if len(secondPassList) == 0 {
+			// We finally don't see any remaining instances!
+			return true, nil
+		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyResourceRecords: found %s in second pass", item.name)
+		}
+		return false, nil
+	})
+	if err != nil {
+		o.Logger.Fatal("destroyResourceRecords: ExponentialBackoffWithContext (list) returns ", err)
 	}
 
 	return nil
@@ -1682,18 +1858,46 @@ const (
 	publicGatewayTypeName = "publicGateway"
 )
 
+// listAttachedSubnets lists subnets attached to the specified publicGateway.
+func (o *ClusterUninstaller) listAttachedSubnets(publicGatewayID string) (cloudResources, error) {
+	o.Logger.Debugf("Finding subnets attached to public gateway %s", publicGatewayID)
+
+	ctx, _ := o.contextWithTimeout()
+
+	options := o.vpcSvc.NewListSubnetsOptions()
+	resources, _, err := o.vpcSvc.ListSubnetsWithContext(ctx, options)
+	if err != nil {
+		return nil, errors.Wrapf(err, "failed to list subnets")
+	}
+
+	result := []cloudResource{}
+	for _, subnet := range resources.Subnets {
+		if subnet.PublicGateway != nil && *subnet.PublicGateway.ID == publicGatewayID {
+			result = append(result, cloudResource{
+				key:      *subnet.ID,
+				name:     *subnet.Name,
+				status:   *subnet.Status,
+				typeName: subnetTypeName,
+				id:       *subnet.ID,
+			})
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
 // listPublicGateways lists publicGateways in the vpc.
 func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 	var (
-		ctx                       context.Context
+		ctx context.Context
 		// https://raw.githubusercontent.com/IBM/vpc-go-sdk/master/vpcv1/vpc_v1.go
 		listPublicGatewaysOptions *vpcv1.ListPublicGatewaysOptions
 		publicGatewayCollection   *vpcv1.PublicGatewayCollection
 		detailedResponse          *core.DetailedResponse
 		err                       error
-		moreData                  bool                       = true
-		foundOne                  bool                       = false
-		perPage                   int64                      = 20
+		moreData                  bool  = true
+		foundOne                  bool  = false
+		perPage                   int64 = 20
 	)
 
 	o.Logger.Debugf("Listing publicGateways")
@@ -1782,13 +1986,7 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 }
 
 func (o *ClusterUninstaller) deletePublicGateway(item cloudResource) error {
-	var (
-		ctx                        context.Context
-		// https://raw.githubusercontent.com/IBM/vpc-go-sdk/master/vpcv1/vpc_v1.go
-		getPublicGatewayOptions    *vpcv1.GetPublicGatewayOptions
-		err                        error
-		deletePublicGatewayOptions *vpcv1.DeletePublicGatewayOptions
-	)
+	ctx, _ := o.contextWithTimeout()
 
 	select {
 	case <-o.Context.Done():
@@ -1797,11 +1995,9 @@ func (o *ClusterUninstaller) deletePublicGateway(item cloudResource) error {
 	default:
 	}
 
-	ctx, _ = o.contextWithTimeout()
+	getPublicGatewayOptions := o.vpcSvc.NewGetPublicGatewayOptions(item.id)
 
-	getPublicGatewayOptions = o.vpcSvc.NewGetPublicGatewayOptions(item.id)
-
-	_, _, err = o.vpcSvc.GetPublicGatewayWithContext(ctx, getPublicGatewayOptions)
+	_, _, err := o.vpcSvc.GetPublicGatewayWithContext(ctx, getPublicGatewayOptions)
 	if err != nil {
 		o.Logger.Debugf("deletePublicGateway: publicGateway %q no longer exists", item.name)
 		o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -1809,13 +2005,21 @@ func (o *ClusterUninstaller) deletePublicGateway(item cloudResource) error {
 		return nil
 	}
 
-	if !shouldDelete {
-		o.Logger.Debugf("Skipping deleting publicGateway %q since shouldDelete is false", item.name)
-		o.deletePendingItems(item.typeName, []cloudResource{item})
-		return nil
+	// Detach gateway from any subnets using it
+	subnets, err := o.listAttachedSubnets(item.id)
+	if err != nil {
+		return errors.Wrapf(err, "failed to list subnets with gateway %s attached", item.name)
+	}
+	for _, subnet := range subnets {
+		unsetSubnetPublicGatewayOptions := o.vpcSvc.NewUnsetSubnetPublicGatewayOptions(subnet.id)
+
+		_, err = o.vpcSvc.UnsetSubnetPublicGatewayWithContext(ctx, unsetSubnetPublicGatewayOptions)
+		if err != nil {
+			return errors.Wrapf(err, "failed to detach publicGateway %s from subnet %s", item.name, subnet.id)
+		}
 	}
 
-	deletePublicGatewayOptions = o.vpcSvc.NewDeletePublicGatewayOptions(item.id)
+	deletePublicGatewayOptions := o.vpcSvc.NewDeletePublicGatewayOptions(item.id)
 
 	_, err = o.vpcSvc.DeletePublicGatewayWithContext(ctx, deletePublicGatewayOptions)
 	if err != nil {
@@ -3672,6 +3876,8 @@ type ClusterUninstaller struct {
 	CISInstanceCRN string
 	ClusterName    string
 	Context        context.Context
+	DNSInstanceCRN string
+	DNSZone        string
 	InfraID        string
 	Logger         logrus.FieldLogger
 	Region         string
@@ -3684,6 +3890,8 @@ type ClusterUninstaller struct {
 	vpcSvc                *vpcv1.VpcV1
 	zonesSvc              *zonesv1.ZonesV1
 	dnsRecordsSvc         *dnsrecordsv1.DnsRecordsV1
+	dnsZonesSvc           *dnszonesv1.DnsZonesV1
+	resourceRecordsSvc    *resourcerecordsv1.ResourceRecordsV1
 	piSession             *ibmpisession.IBMPISession
 	instanceClient        *instance.IBMPIInstanceClient
 	imageClient           *instance.IBMPIImageClient
@@ -3695,6 +3903,7 @@ type ClusterUninstaller struct {
 
 	resourceGroupID string
 	cosInstanceID   string
+	dnsZoneID       string
 
 	errorTracker
 	pendingItemTracker
@@ -3708,6 +3917,7 @@ func New(log logrus.FieldLogger,
 	clusterName string,
 	infraID string,
 	cisInstanceCRN string,
+	dnsInstanceCRN string,
 	region string,
 	zone string,
 	resourceGroupID string) (*ClusterUninstaller, error) {
@@ -3729,6 +3939,7 @@ func New(log logrus.FieldLogger,
 		Logger:             log,
 		InfraID:            infraID,
 		CISInstanceCRN:     cisInstanceCRN,
+		DNSInstanceCRN:     dnsInstanceCRN,
 		Region:             region,
 		ServiceGUID:        serviceInstanceGUID,
 		VPCRegion:          vpcRegion,
@@ -4017,7 +4228,8 @@ func GetCISInstanceCRN(BaseDomain string) (string, error) {
 }
 
 func (o *ClusterUninstaller) loadSDKServices() error {
-
+	// TODO(mjturek): We should clean up the error reporting here to avoid the
+	// duplicate Logger calls.
 	if o.APIKey == "" {
 		return fmt.Errorf("loadSDKServices: missing APIKey in metadata.json")
 	}
@@ -4281,7 +4493,7 @@ func (o *ClusterUninstaller) loadSDKServices() error {
 		return fmt.Errorf("loadSDKServices: loadSDKServices: vpcv1.NewVpcV1: %v", err)
 	}
 
-	userAgentString := fmt.Sprintf("OpenShift/4.x Destroyer/%s", "TODO")// version.Raw)
+	userAgentString := fmt.Sprintf("OpenShift/4.x Destroyer/%s", "@TODO")
 	o.vpcSvc.Service.SetUserAgent(userAgentString)
 
 	authenticator = &core.IamAuthenticator{
@@ -4345,59 +4557,6 @@ func (o *ClusterUninstaller) loadSDKServices() error {
 		ApiKey: o.APIKey,
 	}
 
-	err = authenticator.Validate()
-	if err != nil {
-	}
-
-	o.zonesSvc, err = zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
-		Authenticator: authenticator,
-		Crn:           &o.CISInstanceCRN,
-	})
-	if err != nil {
-		o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
-		o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
-		o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
-		o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
-		o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
-		o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
-		o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
-		o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
-		o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
-		o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
-		o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
-		o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
-		o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
-		return fmt.Errorf("loadSDKServices: loadSDKServices: creating zonesSvc: %v", err)
-	}
-
-	// Get the Zone ID
-	zoneOptions := o.zonesSvc.NewListZonesOptions()
-	zoneResources, detailedResponse, err := o.zonesSvc.ListZonesWithContext(ctx, zoneOptions)
-	if err != nil {
-		o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
-		o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
-		o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
-		o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
-		o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
-		o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
-		o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
-		o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
-		o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
-		o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
-		o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
-		o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
-		o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
-		return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to list Zones: %v and the response is: %s", err, detailedResponse)
-	}
-
-	zoneID := ""
-	for _, zone := range zoneResources.Result {
-		o.Logger.Debugf("loadSDKServices: Zone: %v", *zone.Name)
-		if strings.Contains(o.BaseDomain, *zone.Name) {
-			zoneID = *zone.ID
-		}
-	}
-
 	authenticator = &core.IamAuthenticator{
 		ApiKey: o.APIKey,
 	}
@@ -4406,26 +4565,158 @@ func (o *ClusterUninstaller) loadSDKServices() error {
 	if err != nil {
 	}
 
-	o.dnsRecordsSvc, err = dnsrecordsv1.NewDnsRecordsV1(&dnsrecordsv1.DnsRecordsV1Options{
-		Authenticator:  authenticator,
-		Crn:            &o.CISInstanceCRN,
-		ZoneIdentifier: &zoneID,
-	})
-	if err != nil {
-		o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
-		o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
-		o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
-		o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
-		o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
-		o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
-		o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
-		o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
-		o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
-		o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
-		o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
-		o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
-		o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
-		return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to instantiate dnsRecordsSvc: %v", err)
+	// Either CISInstanceCRN is set or DNSInstanceCRN is set. Both should not be set at the same time,
+	// but check both just to be safe.
+	if len(o.CISInstanceCRN) > 0 {
+		err = authenticator.Validate()
+		if err != nil {
+		}
+
+		o.zonesSvc, err = zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
+			Authenticator: authenticator,
+			Crn:           &o.CISInstanceCRN,
+		})
+		if err != nil {
+			o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
+			o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
+			o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
+			o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
+			o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
+			o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
+			o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
+			o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
+			o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
+			o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
+			o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
+			o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
+			o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
+			return fmt.Errorf("loadSDKServices: loadSDKServices: creating zonesSvc: %v", err)
+		}
+
+		// Get the Zone ID
+		zoneOptions := o.zonesSvc.NewListZonesOptions()
+		zoneResources, detailedResponse, err := o.zonesSvc.ListZonesWithContext(ctx, zoneOptions)
+		if err != nil {
+			o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
+			o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
+			o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
+			o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
+			o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
+			o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
+			o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
+			o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
+			o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
+			o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
+			o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
+			o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
+			o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
+			return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to list Zones: %v and the response is: %s", err, detailedResponse)
+		}
+
+		for _, zone := range zoneResources.Result {
+			o.Logger.Debugf("loadSDKServices: Zone: %v", *zone.Name)
+			if strings.Contains(o.BaseDomain, *zone.Name) {
+				o.dnsZoneID = *zone.ID
+			}
+		}
+		o.dnsRecordsSvc, err = dnsrecordsv1.NewDnsRecordsV1(&dnsrecordsv1.DnsRecordsV1Options{
+			Authenticator:  authenticator,
+			Crn:            &o.CISInstanceCRN,
+			ZoneIdentifier: &o.dnsZoneID,
+		})
+		if err != nil {
+			o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
+			o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
+			o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
+			o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
+			o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
+			o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
+			o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
+			o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
+			o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
+			o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
+			o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
+			o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
+			o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
+			return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to instantiate dnsRecordsSvc: %v", err)
+		}
+	}
+
+	if len(o.DNSInstanceCRN) > 0 {
+		err = authenticator.Validate()
+		if err != nil {
+		}
+
+		o.dnsZonesSvc, err = dnszonesv1.NewDnsZonesV1(&dnszonesv1.DnsZonesV1Options{
+			Authenticator: authenticator,
+		})
+		if err != nil {
+			o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
+			o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
+			o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
+			o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
+			o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
+			o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
+			o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
+			o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
+			o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
+			o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
+			o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
+			o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
+			o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
+			return fmt.Errorf("loadSDKServices: loadSDKServices: creating zonesSvc: %v", err)
+		}
+
+		// Get the Zone ID
+		dnsCRN, err := crn.Parse(o.DNSInstanceCRN)
+		if err != nil {
+			return errors.Wrap(err, "Failed to parse DNSInstanceCRN")
+		}
+		options := o.dnsZonesSvc.NewListDnszonesOptions(dnsCRN.ServiceInstance)
+		listZonesResponse, detailedResponse, err := o.dnsZonesSvc.ListDnszones(options)
+		if err != nil {
+			o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
+			o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
+			o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
+			o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
+			o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
+			o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
+			o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
+			o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
+			o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
+			o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
+			o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
+			o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
+			o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
+			return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to list Zones: %v and the response is: %s", err, detailedResponse)
+		}
+
+		for _, zone := range listZonesResponse.Dnszones {
+			o.Logger.Debugf("loadSDKServices: Zone: %v", *zone.Name)
+			if strings.Contains(o.BaseDomain, *zone.Name) {
+				o.dnsZoneID = *zone.ID
+			}
+		}
+
+		o.resourceRecordsSvc, err = resourcerecordsv1.NewResourceRecordsV1(&resourcerecordsv1.ResourceRecordsV1Options{
+			Authenticator: authenticator,
+		})
+		if err != nil {
+			o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
+			o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
+			o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
+			o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
+			o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
+			o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
+			o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
+			o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
+			o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
+			o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
+			o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
+			o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
+			o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
+			return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to instantiate resourceRecordsSvc: %v", err)
+		}
 	}
 
 	return nil
@@ -4678,6 +4969,7 @@ func VPCRegionForPowerVSZone(zone string) (string, error) {
 
 type PowerVSStruct struct {
 	CISInstanceCRN string `json:"cisInstanceCRN"`
+	DNSInstanceCRN string `json:"dnsInstanceCRN"`
 	Region         string `json:"region"`
 	Zone           string `json:"zone"`
 }
@@ -4910,6 +5202,7 @@ func main() {
 	var ptrClusterName *string		// In metadata.json
 	var ptrInfraID *string			// In metadata.json
 	var ptrCISInstanceCRN *string		// In metadata.json
+	var ptrDNSInstanceCRN *string		// In metadata.json
 	var ptrRegion *string			// In metadata.json
 	var ptrZone *string			// In metadata.json
 	var ptrResourceGroupID *string
@@ -4922,6 +5215,7 @@ func main() {
 	var needClusterName = true
 	var needInfraID = true
 	var needCISInstanceCRN = true
+	var needDNSInstanceCRN = true
 	var needRegion = true
 	var needZone = true
 	var needResourceGroupID = true
@@ -4937,6 +5231,7 @@ func main() {
 	ptrClusterName = flag.String("clusterName", "", "The cluster name")
 	ptrInfraID = flag.String("infraID", "", "The infra ID")
 	ptrCISInstanceCRN = flag.String("CISInstanceCRN", "", "ibmcloud cis instances --output json | jq -r '.[] | select (.name|test(\"powervs-ipi-cis\")) | .crn'")
+	ptrDNSInstanceCRN = flag.String("DNSInstanceCRN", "", "ibmcloud cis instances --output json | jq -r '.[] | select (.name|test(\"powervs-ipi-cis\")) | .crn'")
 	ptrRegion = flag.String("region", "", "The region to use")
 	ptrZone = flag.String("zone", "", "The zone to use")
 	ptrResourceGroupID = flag.String("resourceGroupID", "", "The resource group to use")
@@ -4985,6 +5280,7 @@ func main() {
 			logMain.Printf("ClusterID      = %v", data.ClusterID)
 			logMain.Printf("InfraID        = %v", data.InfraID)
 			logMain.Printf("CISInstanceCRN = %v", data.PowerVS.CISInstanceCRN)
+			logMain.Printf("DNSInstanceCRN = %v", data.PowerVS.DNSInstanceCRN)
 			logMain.Printf("Region         = %v", data.PowerVS.Region)
 			logMain.Printf("Zone           = %v", data.PowerVS.Zone)
 		}
@@ -5007,6 +5303,9 @@ func main() {
 		ptrCISInstanceCRN= &data.PowerVS.CISInstanceCRN
 		needCISInstanceCRN = false
 
+		ptrDNSInstanceCRN= &data.PowerVS.DNSInstanceCRN
+		needDNSInstanceCRN = false
+
 		ptrRegion = &data.PowerVS.Region
 		needRegion = false
 
@@ -5028,8 +5327,17 @@ func main() {
 	if needInfraID && *ptrInfraID == "" {
 		logMain.Fatal("Error: No Infra ID set, use -infraID")
 	}
+	if *ptrCISInstanceCRN != "" {
+		needDNSInstanceCRN = false
+	}
+	if *ptrDNSInstanceCRN != "" {
+		needCISInstanceCRN = false
+	}
 	if needCISInstanceCRN && *ptrCISInstanceCRN == "" {
 		logMain.Fatal("Error: No CISInstanceCRN set, use -CISInstanceCRN")
+	}
+	if needDNSInstanceCRN && *ptrDNSInstanceCRN == "" {
+		logMain.Fatal("Error: No DNSInstanceCRN set, use -DNSInstanceCRN")
 	}
 	if needRegion && *ptrRegion == "" {
 		logMain.Fatal("Error: No region set, use -region")
@@ -5058,6 +5366,7 @@ func main() {
 		*ptrClusterName,
 		*ptrInfraID,
 		*ptrCISInstanceCRN,
+		*ptrDNSInstanceCRN,
 		*ptrRegion,
 		*ptrZone,
 		*ptrResourceGroupID)
