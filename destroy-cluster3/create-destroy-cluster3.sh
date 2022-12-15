@@ -1226,6 +1226,8 @@ func (o *ClusterUninstaller) loadSDKServices() error {
 		o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
 		o.Logger.Debugf("loadSDKServices: o.keyClient = %v", o.keyClient)
 		o.Logger.Debugf("loadSDKServices: o.cloudConnectionClient = %v", o.cloudConnectionClient)
+		o.Logger.Debugf("loadSDKServices: o.dhcpClient = %v", o.dhcpClient)
+		o.Logger.Debugf("loadSDKServices: o.networkClient = %v", o.networkClient)
 		o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
 		o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
 		o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
@@ -1340,6 +1342,11 @@ func (o *ClusterUninstaller) loadSDKServices() error {
 	o.dhcpClient = instance.NewIBMPIDhcpClient(context.Background(), o.piSession, o.ServiceGUID)
 	if o.dhcpClient == nil {
 		return fmt.Errorf("loadSDKServices: loadSDKServices: o.dhcpClient is nil")
+	}
+
+	o.networkClient = instance.NewIBMPINetworkClient(context.Background(), o.piSession, o.ServiceGUID)
+	if o.networkClient == nil {
+		return fmt.Errorf("loadSDKServices: loadSDKServices: o.networkClient is nil")
 	}
 
 	authenticator = &core.IamAuthenticator{
@@ -1990,6 +1997,23 @@ func main() {
 		Out: out,
 		Formatter: new(logrus.TextFormatter),
 		Level: logrus.DebugLevel,
+	}
+
+	if shouldDebug {
+		logMain.Printf("ptrMetadaFilename      = %v", *ptrMetadaFilename)
+		logMain.Printf("ptrShouldDebug         = %v", *ptrShouldDebug)
+		logMain.Printf("ptrShouldDelete        = %v", *ptrShouldDelete)
+		logMain.Printf("ptrShouldDeleteDHCP    = %v", *ptrShouldDeleteDHCP)
+		logMain.Printf("ptrApiKey              = %v", *ptrApiKey)
+		logMain.Printf("ptrBaseDomain          = %v", *ptrBaseDomain)
+		logMain.Printf("ptrServiceInstanceGUID = %v", *ptrServiceInstanceGUID)
+		logMain.Printf("ptrClusterName         = %v", *ptrClusterName)
+		logMain.Printf("ptrInfraID             = %v", *ptrInfraID)
+		logMain.Printf("ptrCISInstanceCRN      = %v", *ptrCISInstanceCRN)
+		logMain.Printf("ptrDNSInstanceCRN      = %v", *ptrDNSInstanceCRN)
+		logMain.Printf("ptrRegion              = %v", *ptrRegion)
+		logMain.Printf("ptrZone                = %v", *ptrZone)
+		logMain.Printf("ptrResourceGroupID     = %v", *ptrResourceGroupID)
 	}
 
 	switch strings.ToLower(*ptrShouldDeleteDHCP) {
