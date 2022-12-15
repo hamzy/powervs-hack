@@ -6,13 +6,14 @@ require (
 	github.com/IBM-Cloud/bluemix-go v0.0.0-20221026143540-4d6050d2dbc5
 	github.com/IBM-Cloud/power-go-client v1.2.1
 	github.com/IBM/go-sdk-core/v5 v5.10.2
-	github.com/IBM/networking-go-sdk v0.34.0
-	github.com/IBM/platform-services-go-sdk v0.29.3
-	github.com/IBM/vpc-go-sdk v0.27.0
+	github.com/IBM/networking-go-sdk v0.36.0
+	github.com/IBM/platform-services-go-sdk v0.31.1
+	github.com/IBM/vpc-go-sdk v0.28.0
 	github.com/golang-jwt/jwt v3.2.2+incompatible
+	github.com/openshift/installer v0.16.1
 	github.com/pkg/errors v0.9.1
 	github.com/sirupsen/logrus v1.9.0
-	k8s.io/apimachinery v0.25.3
+	k8s.io/apimachinery v0.26.0
 )
 
 require (
@@ -41,11 +42,11 @@ require (
 	github.com/oklog/ulid v1.3.1 // indirect
 	github.com/opentracing/opentracing-go v1.2.0 // indirect
 	go.mongodb.org/mongo-driver v1.10.0 // indirect
-	golang.org/x/net v0.0.0-20221004154528-8021a29435af // indirect
-	golang.org/x/sys v0.0.0-20220817070843-5a390386f1f2 // indirect
-	golang.org/x/text v0.3.7 // indirect
+	golang.org/x/net v0.3.1-0.20221206200815-1e63c2f08a10 // indirect
+	golang.org/x/sys v0.3.0 // indirect
+	golang.org/x/text v0.5.0 // indirect
 	gopkg.in/go-playground/validator.v9 v9.31.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	k8s.io/klog/v2 v2.70.1 // indirect
-	k8s.io/utils v0.0.0-20220728103510-ee6ede2d64ed // indirect
+	k8s.io/klog/v2 v2.80.1 // indirect
+	k8s.io/utils v0.0.0-20221107191617-1a15be271d1d // indirect
 )
