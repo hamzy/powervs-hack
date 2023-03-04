@@ -372,6 +372,21 @@ spec:
     namespace: openshift-ingress-operator
 ___EOF___
 
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-image-registry-installer-cloud-credentials-credentials.yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: installer-cloud-credentials
+  namespace: openshift-image-registry
+stringData:
+  ibm-credentials.env: |-
+    IBMCLOUD_AUTHTYPE=iam
+    IBMCLOUD_APIKEY=${IBMCLOUD_OIRICCC_API_KEY}
+  ibmcloud_api_key: ${IBMCLOUD_OIRICCC_API_KEY}
+type: Opaque
+___EOF___
+
 cat << ___EOF___ > ${CLUSTER_DIR}/manifests/0000_50_cluster-storage-operator_03_credentials_request_powervs.yaml
 ---
 apiVersion: cloudcredential.openshift.io/v1
