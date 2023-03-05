@@ -15,6 +15,11 @@
 # openshift-install create cluster
 #
 
+TEST_QUOTA_DNS=/usr/bin/false
+TEST_QUOTA_CLOUD_CONNECTIONS=/usr/bin/false
+TEST_QUOTA_DHCP=/usr/bin/false
+TEST_QUOTA_IMAGE_IMPORT=/usr/bin/true
+
 function log_to_file()
 {
 	local LOG_FILE=$1
@@ -64,11 +69,15 @@ set -euo pipefail
 
 # https://github.com/openshift/installer/blob/master/data/data/coreos/rhcos.json#L267
 # The format is the-contents-of-the-bucket-variable / the-contents-of-the-object-variable
-export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-412-86-202208090152-0-ppc64le-powervs.ova.gz"
+#export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-412-86-202208090152-0-ppc64le-powervs.ova.gz"
+#export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-412-86-202211031740-0-ppc64le-powervs.ova.gz"
+export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-413-86-202212131234-0-ppc64le-powervs.ova.gz"
 
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.5-ppc64le"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.3-ppc64le"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.12.0-0.nightly-ppc64le-2022-10-20-055626"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.5-ppc64le"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.0-ec.3-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:powervs-ci-emptydir"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.12.0-0.nightly-ppc64le-2022-10-26-111147"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -84,6 +93,8 @@ fi
 # Uncomment for even moar debugging!
 #export TF_LOG_PROVIDER=TRACE
 #export TF_LOG=TRACE
+#export TF_LOG_PROVIDER=DEBUG
+#export TF_LOG=DEBUG
 #export TF_LOG_PATH=/tmp/tf.log
 #export IBMCLOUD_TRACE=true
 
@@ -104,63 +115,72 @@ fi
 
 set -x
 
-#
-# Quota check DNS
-#
-if ibmcloud cis 1>/dev/null 2>&1
+if ${TEST_QUOTA_DNS}
 then
-	# Currently, only support on x86_64 arch :(
-	ibmcloud cis instance-set $(ibmcloud cis instances --output json | jq -r '.[].name')
-	export DNS_DOMAIN_ID=$(ibmcloud cis domains --output json | jq -r '.[].id')
-	RECORDS=$(ibmcloud cis dns-records ${DNS_DOMAIN_ID} --output json | jq -r '.[] | select (.name|test("'${CLUSTER_NAME}'.*")) | "\(.name) - \(.id)"')
-	if [ -n "${RECORDS}" ]
+	#
+	# Quota check DNS
+	#
+	if ibmcloud cis 1>/dev/null 2>&1
 	then
-		echo "${RECORDS}"
+		# Currently, only support on x86_64 arch :(
+		ibmcloud cis instance-set $(ibmcloud cis instances --output json | jq -r '.[].name')
+		export DNS_DOMAIN_ID=$(ibmcloud cis domains --output json | jq -r '.[].id')
+		RECORDS=$(ibmcloud cis dns-records ${DNS_DOMAIN_ID} --output json | jq -r '.[] | select (.name|test("'${CLUSTER_NAME}'.*")) | "\(.name) - \(.id)"')
+		if [ -n "${RECORDS}" ]
+		then
+			echo "${RECORDS}"
+			exit 1
+		fi
+	fi
+fi
+
+if ${TEST_QUOTA_CLOUD_CONNECTIONS}
+then
+	#
+	# Quota check cloud connections
+	#
+	CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.cloudConnections|length')
+	if (( ${CONNECTIONS} >= 2 ))
+	then
+		echo "Error: Cannot have 2 or more cloud connections.  You currently have ${CONNECTIONS}."
 		exit 1
 	fi
 fi
 
-#
-# Quota check cloud connections
-#
-CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.cloudConnections|length')
-if (( ${CONNECTIONS} >= 2 ))
+if ${TEST_QUOTA_DHCP}
 then
-	echo "Error: Cannot have 2 or more cloud connections.  You currently have ${CONNECTIONS}."
-	exit 1
+	#
+	# Quota check DHCP networks
+	#
+	SERVICE_INSTANCE_CRN=$(ibmcloud resource service-instances --output JSON | jq -r '.[] | select(.guid|test("'${SERVICE_INSTANCE_GUID}'")) | .crn')
+	CLOUD_INSTANCE_ID=$(echo ${SERVICE_INSTANCE_CRN} | cut -d: -f8)
+	[ -z "${CLOUD_INSTANCE_ID}" ] && exit 1
+	echo "CLOUD_INSTANCE_ID=${CLOUD_INSTANCE_ID}"
+	set +x
+	BEARER_TOKEN=$(curl --silent -X POST "https://iam.cloud.ibm.com/identity/token" -H "content-type: application/x-www-form-urlencoded" -H "accept: application/json" -d "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=${IBMCLOUD_API_KEY}" | jq -r .access_token)
+	[ -z "${BEARER_TOKEN}" ] && exit 1
+	[ "${BEARER_TOKEN}" == "null" ] && exit 1
+	RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_INSTANCE_CRN}" --header "Authorization: Bearer ${BEARER_TOKEN}")
+	set -x
+	LINES=$(echo "${RESULT}" | jq -r '.[] | .id' | wc -l)
+	if (( ${LINES} > 0))
+	then
+		echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
+		exit 1
+	fi
 fi
 
-if false
+if ${TEST_QUOTA_IMAGE_IMPORT}
 then
-#
-# Quota check DHCP networks
-#
-SERVICE_INSTANCE_CRN=$(ibmcloud resource service-instances --output JSON | jq -r '.[] | select(.guid|test("'${SERVICE_INSTANCE_GUID}'")) | .crn')
-CLOUD_INSTANCE_ID=$(echo ${SERVICE_INSTANCE_CRN} | cut -d: -f8)
-[ -z "${CLOUD_INSTANCE_ID}" ] && exit 1
-echo "CLOUD_INSTANCE_ID=${CLOUD_INSTANCE_ID}"
-set +x
-BEARER_TOKEN=$(curl --silent -X POST "https://iam.cloud.ibm.com/identity/token" -H "content-type: application/x-www-form-urlencoded" -H "accept: application/json" -d "grant_type=urn%3Aibm%3Aparams%3Aoauth%3Agrant-type%3Aapikey&apikey=${IBMCLOUD_API_KEY}" | jq -r .access_token)
-[ -z "${BEARER_TOKEN}" ] && exit 1
-[ "${BEARER_TOKEN}" == "null" ] && exit 1
-RESULT=$(curl --silent --location --request GET "https://${POWERVS_REGION}.power-iaas.cloud.ibm.com/pcloud/v1/cloud-instances/${CLOUD_INSTANCE_ID}/services/dhcp" --header 'Content-Type: application/json' --header "CRN: ${SERVICE_INSTANCE_CRN}" --header "Authorization: Bearer ${BEARER_TOKEN}")
-set -x
-LINES=$(echo "${RESULT}" | jq -r '.[] | .id' | wc -l)
-if (( ${LINES} > 0))
-then
-	echo "${RESULT}" | jq -r '.[] | "\(.id) - \(.network.name)"'
-	exit 1
-fi
-fi
-
-#
-# Quota check for image imports
-#
-JOBS=$(ibmcloud pi jobs --operation-action imageImport --json | jq -r '.jobs[] | select (.status.state|test("running")) | .id')
-if [ -n "${JOBS}" ]
-then
-	echo "${JOBS}"
-	exit 1
+	#
+	# Quota check for image imports
+	#
+	JOBS=$(ibmcloud pi jobs --operation-action imageImport --json | jq -r '.jobs[] | select (.status.state|test("running")) | .id')
+	if [ -n "${JOBS}" ]
+	then
+		echo "${JOBS}"
+		exit 1
+	fi
 fi
 
 declare -a JOBS
@@ -228,6 +248,11 @@ compute:
 #   powervs:
 #     processors: 1
 #     procType: "Dedicated"
+# platform:
+#   powervs:
+#     processors: 1
+#     procType: "Dedicated"
+#     sysType: e980
   replicas: 3
 controlPlane:
   architecture: ppc64le
@@ -244,6 +269,11 @@ controlPlane:
 #   powervs:
 #     processors: 1
 #     procType: "Dedicated"
+# platform:
+#   powervs:
+#     processors: 1
+#     procType: "Dedicated"
+#     sysType: e980
   replicas: 3
 metadata:
   creationTimestamp: null
@@ -266,6 +296,7 @@ platform:
 #   vpcRegion: ${VPCREGION}
     zone: ${POWERVS_ZONE}
     serviceInstanceID: ${SERVICE_INSTANCE_GUID}
+#   cloudConnectionName: cloud-con-rdr-hamzy-test1-syd04-57kpj
 publish: External
 #publish: Internal
 pullSecret: '${PULL_SECRET}'
@@ -422,7 +453,6 @@ ___EOF___
 
 DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
 echo "${DATE}"
-openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
@@ -505,22 +535,22 @@ fi
 
 if false
 then
-if [ -z "$(jq -r '.powervs["vpcRegion"]' ${CLUSTER_DIR}/metadata.json)" ]
-then
-	#
-	# Fix bug where vpcRegion is not set but needed for destroy logic
-	#
-	(
-		set -xe
-		FILE=$(mktemp)
-		trap "/bin/rm ${FILE}" EXIT
-		jq -r --arg VPCREGION "${VPCREGION}" \
-			' .powervs["vpcRegion"] = $VPCREGION' \
-			< ${CLUSTER_DIR}/metadata.json \
-			> ${FILE}
-		/bin/cp ${FILE} ${CLUSTER_DIR}/metadata.json
-	)
-fi
+	if [ -z "$(jq -r '.powervs["vpcRegion"]' ${CLUSTER_DIR}/metadata.json)" ]
+	then
+		#
+		# Fix bug where vpcRegion is not set but needed for destroy logic
+		#
+		(
+			set -xe
+			FILE=$(mktemp)
+			trap "/bin/rm ${FILE}" EXIT
+			jq -r --arg VPCREGION "${VPCREGION}" \
+				' .powervs["vpcRegion"] = $VPCREGION' \
+				< ${CLUSTER_DIR}/metadata.json \
+				> ${FILE}
+			/bin/cp ${FILE} ${CLUSTER_DIR}/metadata.json
+		)
+	fi
 fi
 
 JENKINS_FILE=$(mktemp)
