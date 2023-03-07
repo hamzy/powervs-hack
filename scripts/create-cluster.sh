@@ -15,10 +15,10 @@
 # openshift-install create cluster
 #
 
-TEST_QUOTA_DNS=/usr/bin/false
-TEST_QUOTA_CLOUD_CONNECTIONS=/usr/bin/false
-TEST_QUOTA_DHCP=/usr/bin/false
-TEST_QUOTA_IMAGE_IMPORT=/usr/bin/true
+TEST_QUOTA_DNS=false
+TEST_QUOTA_CLOUD_CONNECTIONS=false
+TEST_QUOTA_DHCP=false
+TEST_QUOTA_IMAGE_IMPORT=true
 
 function log_to_file()
 {
