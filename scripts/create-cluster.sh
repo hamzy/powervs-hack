@@ -453,6 +453,7 @@ ___EOF___
 
 DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
 echo "${DATE}"
+openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
