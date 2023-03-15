@@ -75,9 +75,9 @@ export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rh
 
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.5-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.5-ppc64le"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.0-ec.3-ppc64le"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.0-ec.4-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:powervs-ci-emptydir"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.12.0-0.nightly-ppc64le-2022-10-26-111147"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.13.0-0.nightly-ppc64le-2023-03-14-105429"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -206,10 +206,14 @@ mkdir ${PI_SESSION_DIR}
 		--arg APIKEY "${IBMCLOUD_API_KEY}" \
 		--arg REGION "${POWERVS_REGION}" \
 		--arg ZONE "${POWERVS_ZONE}" \
+		--arg SERVICE_INSTANCE "${SERVICE_INSTANCE_GUID}" \
+		--arg RESOURCE_GROUP "${RESOURCE_GROUP}" \
 		' .id = $ID
 		| .apikey = $APIKEY
 		| .region = $REGION
 		| .zone = $ZONE
+		| .serviceinstance = $SERVICE_INSTANCE
+		| .resourcegroup = $RESOURCE_GROUP
 		' > ${FILE}
 	/bin/cp ${FILE} ${PI_SESSION_DIR}/config.json
 )
@@ -225,6 +229,10 @@ init_ibmcloud
 
 #SSH_KEY=$(cat ~/.ssh/id_rsa.pub)
 SSH_KEY=$(cat ~/.ssh/id_installer_rsa.pub)
+
+#
+# perl -pi -e 'chomp if eof' < ~/.pullSecretCompact | xclip -i -selection clipboard
+#
 PULL_SECRET=$(cat ~/.pullSecret)
 
 #
