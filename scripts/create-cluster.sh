@@ -13,6 +13,7 @@
 # openshift-install create ignition-configs
 # openshift-install create manifests
 # openshift-install create cluster
+# openshift-install wait-for install-complete
 #
 
 TEST_QUOTA_DNS=false
@@ -71,13 +72,13 @@ set -euo pipefail
 # The format is the-contents-of-the-bucket-variable / the-contents-of-the-object-variable
 #export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-412-86-202208090152-0-ppc64le-powervs.ova.gz"
 #export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-412-86-202211031740-0-ppc64le-powervs.ova.gz"
-export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-413-86-202212131234-0-ppc64le-powervs.ova.gz"
+#export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-413-86-202212131234-0-ppc64le-powervs.ova.gz"
 
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.5-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.5-ppc64le"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.0-ec.4-ppc64le"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.0-rc.2-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:powervs-ci-emptydir"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.13.0-0.nightly-ppc64le-2023-03-14-105429"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.13.0-0.nightly-ppc64le-2023-03-23-145443"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -217,6 +218,14 @@ mkdir ${PI_SESSION_DIR}
 		' > ${FILE}
 	/bin/cp ${FILE} ${PI_SESSION_DIR}/config.json
 )
+#		' .id = $ID
+#		| .apikey = $APIKEY
+#		| .region = $REGION
+#		| .zone = $ZONE
+#		| .serviceinstance = $SERVICE_INSTANCE
+#		| .resourcegroup = $RESOURCE_GROUP
+#		| .resourcegroup = "Default"
+#		' > ${FILE}
 #/bin/rm -rf ${PI_SESSION_DIR}
 
 #
@@ -234,6 +243,9 @@ SSH_KEY=$(cat ~/.ssh/id_installer_rsa.pub)
 # perl -pi -e 'chomp if eof' < ~/.pullSecretCompact | xclip -i -selection clipboard
 #
 PULL_SECRET=$(cat ~/.pullSecret)
+
+#openshift-install create install-config --dir ${CLUSTER_DIR} --log-level=debug
+#exit 0
 
 #
 # Create the openshift-installer's install configuration file
@@ -305,6 +317,15 @@ platform:
     zone: ${POWERVS_ZONE}
     serviceInstanceID: ${SERVICE_INSTANCE_GUID}
 #   cloudConnectionName: cloud-con-rdr-hamzy-test1-syd04-57kpj
+#capabilities:
+#  baselineCapabilitySet: None
+#  additionalEnabledCapabilities:
+#    - openshift-samples
+#    - baremetal
+#    - marketplace
+#    - Console
+#    - Insights
+#    - NodeTuning
 publish: External
 #publish: Internal
 pullSecret: '${PULL_SECRET}'
@@ -462,6 +483,8 @@ ___EOF___
 DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
 echo "${DATE}"
 openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
+#echo openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
+#exit 0
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
