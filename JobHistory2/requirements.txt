@@ -1,0 +1,4 @@
+#!/usr/bin/pip3
+# pip3 install --upgrade --force-reinstall --requirement requirements.txt
+urllib3
+beautifulsoup4
