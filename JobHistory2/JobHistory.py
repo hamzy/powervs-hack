@@ -70,7 +70,6 @@ def print_test_run_1 (spyglass_link, ci_type_str):
     test_log_str = get_url_string(test_log_url)
 
     if test_log_str.find('<!doctype html>') == -1:
-        print("test cluster succeeded!")
         print(test_log_url)
 
         flaky_tests_re = re.compile('(.*)(Flaky tests:\n)(.*)', re.MULTILINE|re.DOTALL)
@@ -84,7 +83,7 @@ def print_test_run_1 (spyglass_link, ci_type_str):
             if failing_tests_match is not None:
                 print(failing_tests_match.group(3))
             else:
-                print("Test log not matching anything?")
+                print("Error: Test log not matching anything?")
                 # pdb.set_trace()
 
 def print_test_run_2 (spyglass_link, ci_type_str):
@@ -97,7 +96,7 @@ def print_test_run_2 (spyglass_link, ci_type_str):
     if test_failure_summary_filename_match is not None:
         test_failure_summary_filename_str = test_failure_summary_filename_match.group(1)
     else:
-        print("Error: Could not file test-failures-summary_*.json?")
+        print("Error: Could not find test-failures-summary_*.json?")
         print("")
         return
 
@@ -108,9 +107,9 @@ def print_test_run_2 (spyglass_link, ci_type_str):
 
     tests = test_log_junit_json['Tests']
     if tests == []:
-        print("All tests succeeded!")
+        print("SUCCESS: All tests succeeded!")
     else:
-        print("Failing tests:")
+        print("FAILURE: Failing tests:")
         for test in tests:
             print(test['Test']['Name'])
 
@@ -214,14 +213,14 @@ if __name__ == "__main__":
             create_cluster_match = create_cluster_re.match(build_log_str)
 
             if build_finished_json['result'] == 'SUCCESS':
-                print("create cluster succeeded!")
+                print("SUCCESS: create cluster succeeded!")
 
                 print_test_run_2(spyglass_link, ci_type_str)
             else:
                 if create_cluster_match is not None:
                     print(create_cluster_match.group(3))
                 else:
-                    print("Could not find create cluster?")
+                    print("FAILURE: Could not find create cluster?")
                     print("")
 
             # pdb.set_trace()
