@@ -13,8 +13,9 @@
 
 # 0.1 on 2020-06-14
 # 0.2 on 2023-04-10
-__version__ = "0.2"
-__date__ = "2023-04-10"
+# 0.3 on 2023-04-11
+__version__ = "0.3"
+__date__ = "2023-04-11"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
@@ -63,6 +64,59 @@ def run_match (tag):
     if tag["class"][0] == "run-failure":
         return True
     return tag["class"][0] == "run-success"
+
+def print_test_run_1 (spyglass_link, ci_type_str):
+    test_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/e2e.log"
+    test_log_str = get_url_string(test_log_url)
+
+    if test_log_str.find('<!doctype html>') == -1:
+        print("test cluster succeeded!")
+        print(test_log_url)
+
+        flaky_tests_re = re.compile('(.*)(Flaky tests:\n)(.*)', re.MULTILINE|re.DOTALL)
+        flaky_tests_match = flaky_tests_re.match(test_log_str)
+        if flaky_tests_match is not None:
+            print(flaky_tests_match.group(3))
+        else:
+            failing_tests_re = re.compile('(.*)(Failing tests:\n)(.*)', re.MULTILINE|re.DOTALL)
+            failing_tests_match = failing_tests_re.match(test_log_str)
+
+            if failing_tests_match is not None:
+                print(failing_tests_match.group(3))
+            else:
+                print("Test log not matching anything?")
+                # pdb.set_trace()
+
+def print_test_run_2 (spyglass_link, ci_type_str):
+    test_log_junit_dir_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/junit/"
+    test_log_junit_dir_str = get_url_string(test_log_junit_dir_url)
+
+    test_failure_summary_filename_str = None
+    test_failure_summary_filename_re = re.compile('(test-failures-summary_[^.]*\.json)')
+    test_failure_summary_filename_match = test_failure_summary_filename_re.search(test_log_junit_dir_str, re.MULTILINE|re.DOTALL)
+    if test_failure_summary_filename_match is not None:
+        test_failure_summary_filename_str = test_failure_summary_filename_match.group(1)
+    else:
+        print("Error: Could not file test-failures-summary_*.json?")
+        print("")
+        return
+
+    test_log_junit_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/junit/" + test_failure_summary_filename_str
+    test_log_junit_str = get_url_string(test_log_junit_url)
+
+    test_log_junit_json = json.loads(test_log_junit_str)
+
+    tests = test_log_junit_json['Tests']
+    if tests == []:
+        print("All tests succeeded!")
+    else:
+        print("Failing tests:")
+        for test in tests:
+            print(test['Test']['Name'])
+
+    print("")
+
+    # pdb.set_trace()
 
 if __name__ == "__main__":
 
@@ -161,25 +215,8 @@ if __name__ == "__main__":
 
             if build_finished_json['result'] == 'SUCCESS':
                 print("create cluster succeeded!")
-                test_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/e2e.log"
-                test_log_str = get_url_string(test_log_url)
-                if test_log_str.find('<!doctype html>') == -1:
-                    print("test cluster succeeded!")
-                    print(test_log_url)
 
-                    flaky_tests_re = re.compile('(.*)(Flaky tests:\n)(.*)', re.MULTILINE|re.DOTALL)
-                    flaky_tests_match = flaky_tests_re.match(test_log_str)
-                    if flaky_tests_match is not None:
-                        print(flaky_tests_match.group(3))
-                    else:
-                        failing_tests_re = re.compile('(.*)(Failing tests:\n)(.*)', re.MULTILINE|re.DOTALL)
-                        failing_tests_match = failing_tests_re.match(test_log_str)
-
-                        if failing_tests_match is not None:
-                            print(failing_tests_match.group(3))
-                        else:
-                            print("Test log not matching anything?")
-                            # pdb.set_trace()
+                print_test_run_2(spyglass_link, ci_type_str)
             else:
                 if create_cluster_match is not None:
                     print(create_cluster_match.group(3))
