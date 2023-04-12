@@ -14,12 +14,14 @@
 # 0.1 on 2020-06-14
 # 0.2 on 2023-04-10
 # 0.3 on 2023-04-11
-__version__ = "0.3"
-__date__ = "2023-04-11"
+# 0.3.1 on 2023-04-12
+__version__ = "0.3.1"
+__date__ = "2023-04-12"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
 from bs4 import BeautifulSoup
+from datetime import datetime
 import gzip
 import http.cookiejar
 import io
@@ -29,6 +31,10 @@ import re
 import sys
 import urllib.request
 import zlib
+
+num_deploys = 0
+deploys_succeeded = 0
+green_runs = 0
 
 def get_url_string(url):
     url_response = opener.open(url)
@@ -65,6 +71,21 @@ def run_match (tag):
         return True
     return tag["class"][0] == "run-success"
 
+def include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
+    started_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/started.json"
+    started_str = get_url_string(started_url)
+    started_json = json.loads(started_str)
+    started_dt = datetime.utcfromtimestamp(int(started_json['timestamp']))
+    # print(started_json['timestamp'])
+    # print("started_dt = " + started_dt.isoformat())
+    # print("started_dt >= after_dt = " + str(started_dt >= after_dt))
+    # print("started_dt <= before_dt = " + str(started_dt <= before_dt))
+
+    if (started_dt >= after_dt) and (started_dt <= before_dt):
+        return True
+    else:
+        return False
+
 def print_test_run_1 (spyglass_link, ci_type_str):
     test_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/e2e.log"
     test_log_str = get_url_string(test_log_url)
@@ -87,6 +108,8 @@ def print_test_run_1 (spyglass_link, ci_type_str):
                 # pdb.set_trace()
 
 def print_test_run_2 (spyglass_link, ci_type_str):
+    global green_runs
+
     test_log_junit_dir_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/junit/"
     test_log_junit_dir_str = get_url_string(test_log_junit_dir_url)
 
@@ -108,6 +131,8 @@ def print_test_run_2 (spyglass_link, ci_type_str):
     tests = test_log_junit_json['Tests']
     if tests == []:
         print("SUCCESS: All tests succeeded!")
+
+        green_runs += 1
     else:
         print("FAILURE: Failing tests:")
         for test in tests:
@@ -134,6 +159,9 @@ if __name__ == "__main__":
     if idx == -1:
         print("Error: unknown URL")
         exit(1)
+
+    after_dt = datetime.min
+    before_dt = datetime.today()
 
     # Ex:
     # url:
@@ -175,6 +203,12 @@ if __name__ == "__main__":
         table_str = table_match.group(2)
         table_map = json.loads(table_str)
         for spyglass_link in table_map:
+
+            if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
+                continue
+
+            num_deploys += 1
+
             print('8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------')
 
             # Ex:
@@ -196,7 +230,7 @@ if __name__ == "__main__":
             # job_soup = BeautifulSoup(job_data, features = "html.parser")
 
             build_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/build-log.txt"
-            print(build_log_url)
+            # print(build_log_url)
 
             build_finished_str = get_url_string("https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/finished.json")
             if build_finished_str.find('<!doctype html>') == -1:
@@ -215,6 +249,8 @@ if __name__ == "__main__":
             if build_finished_json['result'] == 'SUCCESS':
                 print("SUCCESS: create cluster succeeded!")
 
+                deploys_succeeded += 1
+
                 print_test_run_2(spyglass_link, ci_type_str)
             else:
                 if create_cluster_match is not None:
@@ -226,3 +262,5 @@ if __name__ == "__main__":
             # pdb.set_trace()
 
         print("finished")
+        print("%d/%d deploys succeeded" % (deploys_succeeded, num_deploys, ))
+        print("%d/%d e2e green runs" % (green_runs, num_deploys, ))
