@@ -15,7 +15,8 @@
 # 0.2 on 2023-04-10
 # 0.3 on 2023-04-11
 # 0.3.1 on 2023-04-12
-__version__ = "0.3.1"
+# 0.4 on 2023-04-12
+__version__ = "0.4"
 __date__ = "2023-04-12"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
@@ -81,6 +82,7 @@ def include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
     # print("started_dt >= after_dt = " + str(started_dt >= after_dt))
     # print("started_dt <= before_dt = " + str(started_dt <= before_dt))
 
+    print("Started on %s" % (started_dt, ))
     if (started_dt >= after_dt) and (started_dt <= before_dt):
         return True
     else:
@@ -142,10 +144,49 @@ def print_test_run_2 (spyglass_link, ci_type_str):
 
     # pdb.set_trace()
 
+def fromisoformat (date_str):
+    # Argh! New in version 3.7: datetime.fromisoformat :(
+    # dt = datetime.fromisoformat(date_str)
+
+    # https://en.wikipedia.org/wiki/ISO_8601
+    recognized_formats = [
+            "%Y-%m-%dT%H:%M:%S.%fZ",
+            "%Y-%m-%dT%H:%M:%SZ",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S",
+            "%Y-%m-%d"
+    ]
+
+    dt = None
+    for date_format in recognized_formats:
+        try:
+            dt = datetime.strptime(date_str, date_format)
+        except ValueError as e:
+            pass
+        if dt is not None:
+            return dt
+
+    return dt
+
 if __name__ == "__main__":
 
-    parser = argparse.ArgumentParser()
-    parser.add_argument('url', type=str, nargs=1)
+    parser = argparse.ArgumentParser(description='Extract CI runs')
+    parser.add_argument('-a', '--after-date',
+                        type=str,
+                        dest='after_str',
+                        nargs=1,
+                        help='Only queries after this date')
+    parser.add_argument('-b', '--before-date',
+                        type=str,
+                        dest='before_str',
+                        nargs=1,
+                        help='Only queries before this date')
+    parser.add_argument('-u', '--url',
+                        type=str,
+                        required=True,
+                        dest='url',
+                        nargs=1,
+                        help='URL of the CI to use')
 
     args = parser.parse_args()
 
@@ -157,11 +198,30 @@ if __name__ == "__main__":
     url = args.url[0]
     idx = url.find('https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/')
     if idx == -1:
-        print("Error: unknown URL")
+        print("Error: unknown CI URL")
         exit(1)
 
-    after_dt = datetime.min
-    before_dt = datetime.today()
+    after_str = datetime.min.isoformat()
+    if args.after_str is not None:
+        after_str = args.after_str[0]
+    # print("after_str = " + after_str)
+    after_dt = fromisoformat(after_str)
+    # print("after_dt = %s" % (after_dt, ))
+    if after_dt is None:
+        print("Error: unknown formatted date %s" % (after_str, ))
+        sys.exit(1)
+
+    before_str = datetime.today().isoformat()
+    if args.before_str is not None:
+        before_str = args.before_str[0]
+    # print("before_str = " + before_str)
+    before_dt = fromisoformat(before_str)
+    # print("before_dt = %s" % (before_dt, ))
+    if before_dt is None:
+        print("Error: unknown formatted date %s" % (before_str, ))
+        sys.exit(1)
+
+    print("Finding CI runs between %s and %s" % (after_str, before_dt, ))
 
     # Ex:
     # url:
