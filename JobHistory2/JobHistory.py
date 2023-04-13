@@ -16,8 +16,9 @@
 # 0.3 on 2023-04-11
 # 0.3.1 on 2023-04-12
 # 0.4 on 2023-04-12
-__version__ = "0.4"
-__date__ = "2023-04-12"
+# 0.5 on 2023-04-13
+__version__ = "0.5"
+__date__ = "2023-04-13"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
@@ -187,7 +188,11 @@ if __name__ == "__main__":
                         dest='url',
                         nargs=1,
                         help='URL of the CI to use')
-
+    parser.add_argument('-v', '--version',
+                        dest='version',
+                        action='version',
+                        version='%(prog)s {version}'.format(version=__version__),
+                        help='Display the version of this program')
     args = parser.parse_args()
 
     if len(args.url) != 1:
@@ -226,12 +231,16 @@ if __name__ == "__main__":
     # Ex:
     # url:
     #   https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs
+    # base_url_str:
+    #   https://prow.ci.openshift.org
     # ci_str:
     #   periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs
     # ci_version_str:
     #   4.13
     # ci_type_str:
     #   ocp-e2e-ovn-ppc64le-powervs
+    parts = url.split('/')
+    base_url_str = parts[0] + '//' + parts[2]
     idx = url.rfind('/')
     ci_str = url[idx+1:]
     ci_info_re = re.compile('([^0-9].*)-([0-9]\.[0-9]*)-(.*)')
@@ -249,78 +258,103 @@ if __name__ == "__main__":
                                          urllib.request.HTTPSHandler(debuglevel=0),
                                          urllib.request.HTTPCookieProcessor(cj))
 
-    root_response = opener.open(url)
-    root_data = get_data(root_response)
+    while True:
 
-    root_soup = BeautifulSoup(root_data, features = "html.parser")
+        processed_any = False
 
-    for script_bs in root_soup.findAll('script'):
-        script_str = script_bs.text
-        idx = script_str.find('var allBuilds')
-        if idx == -1:
-            continue
-        table_match = re.search('(var allBuilds = )(\[[^]]+\])(;)', script_str)
-        table_str = table_match.group(2)
-        table_map = json.loads(table_str)
-        for spyglass_link in table_map:
+        root_response = opener.open(url)
+        root_data = get_data(root_response)
 
-            if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
+        root_soup = BeautifulSoup(root_data, features = "html.parser")
+
+        older_href = None
+        for td in root_soup.findAll('td'):
+            td_str = td.text
+            idx = td_str.find('Older Runs')
+            if idx == -1:
                 continue
+            for child in td.children:
+                if 'href' not in child.attrs:
+                    continue
+                older_href = child.attrs['href']
 
-            num_deploys += 1
+        for script_bs in root_soup.findAll('script'):
+            script_str = script_bs.text
+            idx = script_str.find('var allBuilds')
+            if idx == -1:
+                continue
+            table_match = re.search('(var allBuilds = )(\[[^]]+\])(;)', script_str)
+            table_str = table_match.group(2)
+            table_map = json.loads(table_str)
+            for spyglass_link in table_map:
 
-            print('8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------')
+                if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
+                    continue
 
-            # Ex:
-            # {'SpyglassLink': '/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.12-ocp-e2e-ovn-ppc64le-powervs/1620753919086956544', 'ID': '1620753919086956544', 'Started': '2023-02-01T12:00:25Z', 'Duration': 12390000000000, 'Result': 'FAILURE', 'Refs': None}
-            # 
-            # print(spyglass_link['SpyglassLink'])
+                processed_any = True
 
-            # https://prow.ci.openshift.org
-            # job_url:
-            #   https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208
-            # build_log_url:
-            #   https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208/artifacts/ocp-e2e-ovn-ppc64le-powervs/ipi-install-powervs-install/build-log.txt
-            #
-            job_url = "https://prow.ci.openshift.org" + spyglass_link['SpyglassLink']
-            print(job_url)
+                num_deploys += 1
 
-            # job_response = opener.open(job_url)
-            # job_data = get_data(job_response)
-            # job_soup = BeautifulSoup(job_data, features = "html.parser")
+                print('8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------')
 
-            build_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/build-log.txt"
-            # print(build_log_url)
+                # Ex:
+                # {'SpyglassLink': '/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.12-ocp-e2e-ovn-ppc64le-powervs/1620753919086956544', 'ID': '1620753919086956544', 'Started': '2023-02-01T12:00:25Z', 'Duration': 12390000000000, 'Result': 'FAILURE', 'Refs': None}
+                # 
+                # print(spyglass_link['SpyglassLink'])
 
-            build_finished_str = get_url_string("https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/finished.json")
-            if build_finished_str.find('<!doctype html>') == -1:
-                build_finished_json = json.loads(build_finished_str)
-            else:
-                build_finished_json = {'result': 'FAILURE'}
+                # https://prow.ci.openshift.org
+                # job_url:
+                #   https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208
+                # build_log_url:
+                #   https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208/artifacts/ocp-e2e-ovn-ppc64le-powervs/ipi-install-powervs-install/build-log.txt
+                #
+                job_url = "https://prow.ci.openshift.org" + spyglass_link['SpyglassLink']
+                print(job_url)
 
-            build_log_response = opener.open(build_log_url)
-            build_log_data = get_data(build_log_response)
-            # build_log_soup = BeautifulSoup(build_log_data, features = "html.parser")
+                # job_response = opener.open(job_url)
+                # job_data = get_data(job_response)
+                # job_soup = BeautifulSoup(job_data, features = "html.parser")
 
-            build_log_str = build_log_data.decode()
-            create_cluster_re = re.compile('(.*)(8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n)(.*)(8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n)(.*)', re.MULTILINE|re.DOTALL)
-            create_cluster_match = create_cluster_re.match(build_log_str)
+                build_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/build-log.txt"
+                # print(build_log_url)
 
-            if build_finished_json['result'] == 'SUCCESS':
-                print("SUCCESS: create cluster succeeded!")
-
-                deploys_succeeded += 1
-
-                print_test_run_2(spyglass_link, ci_type_str)
-            else:
-                if create_cluster_match is not None:
-                    print(create_cluster_match.group(3))
+                build_finished_str = get_url_string("https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/finished.json")
+                if build_finished_str.find('<!doctype html>') == -1:
+                    build_finished_json = json.loads(build_finished_str)
                 else:
-                    print("FAILURE: Could not find create cluster?")
-                    print("")
+                    build_finished_json = {'result': 'FAILURE'}
 
-            # pdb.set_trace()
+                build_log_response = opener.open(build_log_url)
+                build_log_data = get_data(build_log_response)
+                # build_log_soup = BeautifulSoup(build_log_data, features = "html.parser")
 
-        print("finished")
-        print("%d/%d deploys succeeded" % (deploys_succeeded, num_deploys, ))
-        print("%d/%d e2e green runs" % (green_runs, num_deploys, ))
+                build_log_str = build_log_data.decode()
+                create_cluster_re = re.compile('(.*)(8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n)(.*)(8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n)(.*)', re.MULTILINE|re.DOTALL)
+                create_cluster_match = create_cluster_re.match(build_log_str)
+
+                if build_finished_json['result'] == 'SUCCESS':
+                    print("SUCCESS: create cluster succeeded!")
+
+                    deploys_succeeded += 1
+
+                    print_test_run_2(spyglass_link, ci_type_str)
+                else:
+                    if create_cluster_match is not None:
+                        print(create_cluster_match.group(3))
+                    else:
+                        print("FAILURE: Could not find create cluster?")
+                        print("")
+
+                # pdb.set_trace()
+
+        if older_href is None:
+            break
+        else:
+            if not processed_any:
+                # If older runs are outside our date range, why go even older?
+                break
+            url = base_url_str + older_href
+
+    print("finished")
+    print("%d/%d deploys succeeded" % (deploys_succeeded, num_deploys, ))
+    print("%d/%d e2e green runs" % (green_runs, num_deploys, ))
