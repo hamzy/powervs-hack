@@ -17,7 +17,8 @@
 # 0.3.1 on 2023-04-12
 # 0.4 on 2023-04-12
 # 0.5 on 2023-04-13
-__version__ = "0.5"
+# 0.6 on 2023-04-13
+__version__ = "0.6"
 __date__ = "2023-04-13"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
@@ -72,6 +73,22 @@ def run_match (tag):
     if tag["class"][0] == "run-failure":
         return True
     return tag["class"][0] == "run-success"
+
+def include_with_zone (zone, spyglass_link, ci_type_str):
+    zone_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/build-log.txt"
+    zone_log_str = get_url_string(zone_log_url)
+    zone_log_re = re.compile('(Acquired 1 lease\(s\) for powervs-1-quota-slice: \[)([^]]+)(\])', re.MULTILINE|re.DOTALL)
+    zone_log_match = zone_log_re.search(zone_log_str)
+
+    if zone is not None:
+        if zone_log_match is None:
+            return False
+        zone_str = zone_log_match.group(2)
+        print("Zone is %s" % (zone_str, ))
+        if zone_str != zone:
+            return False
+
+    return True
 
 def include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
     started_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/started.json"
@@ -193,6 +210,11 @@ if __name__ == "__main__":
                         action='version',
                         version='%(prog)s {version}'.format(version=__version__),
                         help='Display the version of this program')
+    parser.add_argument('-z', '--zone',
+                        type=str,
+                        dest='zone',
+                        nargs=1,
+                        help='The zone to limit queries on')
     args = parser.parse_args()
 
     if len(args.url) != 1:
@@ -225,6 +247,10 @@ if __name__ == "__main__":
     if before_dt is None:
         print("Error: unknown formatted date %s" % (before_str, ))
         sys.exit(1)
+
+    zone_str = None
+    if args.zone is not None:
+        zone_str = args.zone[0]
 
     print("Finding CI runs between %s and %s" % (after_str, before_dt, ))
 
@@ -287,6 +313,9 @@ if __name__ == "__main__":
             table_str = table_match.group(2)
             table_map = json.loads(table_str)
             for spyglass_link in table_map:
+
+                if not include_with_zone (zone_str, spyglass_link, ci_type_str):
+                    continue
 
                 if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
                     continue
