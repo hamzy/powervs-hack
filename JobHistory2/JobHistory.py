@@ -19,7 +19,8 @@
 # 0.5 on 2023-04-13
 # 0.6 on 2023-04-13
 # 0.7 on 2023-04-14
-__version__ = "0.7"
+# 0.7.1 on 2023-04-14
+__version__ = "0.7.1"
 __date__ = "2023-04-14"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
@@ -49,7 +50,6 @@ def get_url_string(url):
     return url_data.decode()
 
 def get_data(response):
-    global output_fp
     global info_fp
 
     data_ret = None
@@ -82,7 +82,6 @@ def run_match (tag):
     return tag["class"][0] == "run-success"
 
 def include_with_zone (zone, spyglass_link, ci_type_str):
-    global output_fp
     global info_fp
 
     zone_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/build-log.txt"
@@ -101,7 +100,6 @@ def include_with_zone (zone, spyglass_link, ci_type_str):
     return True
 
 def include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
-    global output_fp
     global info_fp
 
     started_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/started.json"
@@ -120,10 +118,42 @@ def include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
     else:
         return False
 
-def print_test_run (spyglass_link, ci_type_str):
+def gather_build_run(spyglass_link, ci_type_str):
+    build_finished_json = {'result': 'FAILURE'}
+
+    build_summary_str = ""
+    build_details_str = ""
+
+    build_finished_str = get_url_string("https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/finished.json")
+    if build_finished_str.find('<!doctype html>') == -1:
+        build_finished_json = json.loads(build_finished_str)
+
+    if build_finished_json['result'] == 'SUCCESS':
+        build_summary_str = "SUCCESS: create cluster succeeded!"
+
+        return (build_finished_json, build_summary_str, build_details_str)
+
+    build_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/build-log.txt"
+    build_log_response = opener.open(build_log_url)
+    build_log_data = get_data(build_log_response)
+    build_log_str = build_log_data.decode()
+
+    create_cluster_re = re.compile('(.*)(8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n)(.*)(8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n)(.*)', re.MULTILINE|re.DOTALL)
+    create_cluster_match = create_cluster_re.match(build_log_str)
+
+    if create_cluster_match is not None:
+        build_summary_str = "FAILURE: create cluster failed!"
+        build_details_str = create_cluster_match.group(3)
+    else:
+        build_summary_str = "FAILURE: Could not find create cluster?"
+
+    return (build_finished_json, build_summary_str, build_details_str)
+
+def gather_test_run (spyglass_link, ci_type_str):
     global green_runs
-    global output_fp
-    global info_fp
+
+    test_summary_str = ""
+    test_details_str = ""
 
     test_log_junit_dir_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/junit/"
     test_log_junit_dir_str = get_url_string(test_log_junit_dir_url)
@@ -134,9 +164,9 @@ def print_test_run (spyglass_link, ci_type_str):
     if test_failure_summary_filename_match is not None:
         test_failure_summary_filename_str = test_failure_summary_filename_match.group(1)
     else:
-        info_fp.write("ERROR: Could not find test-failures-summary_*.json?\n")
-        info_fp.write("\n")
-        return
+        test_summary_str = "ERROR: Could not find test-failures-summary_*.json?"
+
+        return (test_summary_str, test_details_str)
 
     test_log_junit_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/junit/" + test_failure_summary_filename_str
     test_log_junit_str = get_url_string(test_log_junit_url)
@@ -145,17 +175,17 @@ def print_test_run (spyglass_link, ci_type_str):
 
     tests = test_log_junit_json['Tests']
     if tests == []:
-        output_fp.write("SUCCESS: All tests succeeded!\n")
+        test_summary_str = "SUCCESS: All tests succeeded!"
 
         green_runs += 1
     else:
-        output_fp.write("FAILURE: Failing tests:\n")
+        test_summary_str = "FAILURE: Failing tests:"
         for test in tests:
-            output_fp.write("%s\n" % (test['Test']['Name'], ))
-
-    output_fp.write("\n")
+            test_details_str += ("%s\n" % (test['Test']['Name'], ))
 
     # pdb.set_trace()
+
+    return (test_summary_str, test_details_str)
 
 def fromisoformat (date_str):
     # Argh! New in version 3.7: datetime.fromisoformat :(
@@ -203,6 +233,10 @@ if __name__ == "__main__":
                         dest='output',
                         nargs=1,
                         help='The filename for output')
+    parser.add_argument('-t', '--test-status-only',
+                        action="store_true",
+                        dest='test_status_only',
+                        help='Only show test failures')
     parser.add_argument('-u', '--url',
                         type=str,
                         required=True,
@@ -323,6 +357,17 @@ if __name__ == "__main__":
             table_map = json.loads(table_str)
             for spyglass_link in table_map:
 
+                # Ex:
+                # {'SpyglassLink': '/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.12-ocp-e2e-ovn-ppc64le-powervs/1620753919086956544', 'ID': '1620753919086956544', 'Started': '2023-02-01T12:00:25Z', 'Duration': 12390000000000, 'Result': 'FAILURE', 'Refs': None}
+                # 
+                # print(spyglass_link['SpyglassLink'])
+
+                # https://prow.ci.openshift.org
+                # job_url:
+                #   https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208
+                # build_log_url:
+                #   https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208/artifacts/ocp-e2e-ovn-ppc64le-powervs/ipi-install-powervs-install/build-log.txt
+
                 info_fp.write("INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
 
                 if not include_with_zone (zone_str, spyglass_link, ci_type_str):
@@ -337,56 +382,25 @@ if __name__ == "__main__":
 
                 num_deploys += 1
 
-                # Ex:
-                # {'SpyglassLink': '/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.12-ocp-e2e-ovn-ppc64le-powervs/1620753919086956544', 'ID': '1620753919086956544', 'Started': '2023-02-01T12:00:25Z', 'Duration': 12390000000000, 'Result': 'FAILURE', 'Refs': None}
-                # 
-                # print(spyglass_link['SpyglassLink'])
-
-                # https://prow.ci.openshift.org
-                # job_url:
-                #   https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208
-                # build_log_url:
-                #   https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208/artifacts/ocp-e2e-ovn-ppc64le-powervs/ipi-install-powervs-install/build-log.txt
-                #
                 job_url = "https://prow.ci.openshift.org" + spyglass_link['SpyglassLink']
                 info_fp.write("INFO: %s\n" % (job_url, ))
 
-                # job_response = opener.open(job_url)
-                # job_data = get_data(job_response)
-                # job_soup = BeautifulSoup(job_data, features = "html.parser")
+                (build_finished_json, build_summary_str, build_details_str) = gather_build_run(spyglass_link, ci_type_str)
 
-                build_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/build-log.txt"
-
-                build_finished_str = get_url_string("https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/finished.json")
-                if build_finished_str.find('<!doctype html>') == -1:
-                    build_finished_json = json.loads(build_finished_str)
-                else:
-                    build_finished_json = {'result': 'FAILURE'}
+                if not args.test_status_only:
+                    output_fp.write("%s\n%s" % (build_summary_str, build_details_str, ))
 
                 if build_finished_json['result'] == 'SUCCESS':
-                    output_fp.write("SUCCESS: create cluster succeeded!\n")
-
                     deploys_succeeded += 1
 
                     if not args.deploy_status_only:
-                        print_test_run(spyglass_link, ci_type_str)
+                        (test_summary_str, test_details_str) = gather_test_run(spyglass_link, ci_type_str)
+
+                        output_fp.write("%s\n%s\n" % (test_summary_str, test_details_str, ))
                     else:
                         output_fp.write("\n")
                 else:
-                    build_log_response = opener.open(build_log_url)
-                    build_log_data = get_data(build_log_response)
-                    build_log_str = build_log_data.decode()
-
-                    create_cluster_re = re.compile('(.*)(8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n)(.*)(8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n)(.*)', re.MULTILINE|re.DOTALL)
-                    create_cluster_match = create_cluster_re.match(build_log_str)
-
-                    if create_cluster_match is not None:
-                        output_fp.write("%s\n" % (create_cluster_match.group(3), ))
-                    else:
-                        output_fp.write("FAILURE: Could not find create cluster?\n")
-                        output_fp.write("\n")
-
-                # pdb.set_trace()
+                    output_fp.write("\n")
 
         if older_href is None:
             break
@@ -396,8 +410,8 @@ if __name__ == "__main__":
                 break
             url = base_url_str + older_href
 
-    output_fp.write("\n")
     output_fp.write("Finished\n")
-    output_fp.write("%d/%d deploys succeeded\n" % (deploys_succeeded, num_deploys, ))
+    if not args.test_status_only:
+        output_fp.write("%d/%d deploys succeeded\n" % (deploys_succeeded, num_deploys, ))
     if not args.deploy_status_only:
         output_fp.write("%d/%d e2e green runs\n" % (green_runs, num_deploys, ))
