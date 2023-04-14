@@ -182,6 +182,10 @@ if __name__ == "__main__":
                         dest='before_str',
                         nargs=1,
                         help='Only queries before this date')
+    parser.add_argument('-d', '--deploy-status-only',
+                        action="store_true",
+                        dest='deploy_status_only',
+                        help='Only show deploy failures')
     parser.add_argument('-u', '--url',
                         type=str,
                         required=True,
@@ -336,8 +340,8 @@ if __name__ == "__main__":
                     print("SUCCESS: create cluster succeeded!")
 
                     deploys_succeeded += 1
-
-                    print_test_run_2(spyglass_link, ci_type_str)
+                    if not args.deploy_status_only:
+                        print_test_run_2(spyglass_link, ci_type_str)
                 else:
                     if create_cluster_match is not None:
                         print(create_cluster_match.group(3))
@@ -357,4 +361,5 @@ if __name__ == "__main__":
 
     print("finished")
     print("%d/%d deploys succeeded" % (deploys_succeeded, num_deploys, ))
-    print("%d/%d e2e green runs" % (green_runs, num_deploys, ))
+    if not args.deploy_status_only:
+        print("%d/%d e2e green runs" % (green_runs, num_deploys, ))
