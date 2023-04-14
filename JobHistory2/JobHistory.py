@@ -18,8 +18,9 @@
 # 0.4 on 2023-04-12
 # 0.5 on 2023-04-13
 # 0.6 on 2023-04-13
-__version__ = "0.6"
-__date__ = "2023-04-13"
+# 0.7 on 2023-04-14
+__version__ = "0.7"
+__date__ = "2023-04-14"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
@@ -35,6 +36,9 @@ import sys
 import urllib.request
 import zlib
 
+output_fp = sys.stdout
+info_fp = sys.stderr
+
 num_deploys = 0
 deploys_succeeded = 0
 green_runs = 0
@@ -45,6 +49,9 @@ def get_url_string(url):
     return url_data.decode()
 
 def get_data(response):
+    global output_fp
+    global info_fp
+
     data_ret = None
     if response.info().get('Content-Encoding') in ['gzip', 'x-gzip']:
         buf = io.BytesIO(response.read())
@@ -60,7 +67,7 @@ def get_data(response):
     elif response.info().get('Content-Encoding') is None:
         data_ret = response.read()
     else:
-        print("Error: Unknown response!")
+        info_fp.write("ERROR: Unknown response!\n")
         sys.exit(1)
 
     return data_ret
@@ -75,6 +82,9 @@ def run_match (tag):
     return tag["class"][0] == "run-success"
 
 def include_with_zone (zone, spyglass_link, ci_type_str):
+    global output_fp
+    global info_fp
+
     zone_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/build-log.txt"
     zone_log_str = get_url_string(zone_log_url)
     zone_log_re = re.compile('(Acquired 1 lease\(s\) for powervs-1-quota-slice: \[)([^]]+)(\])', re.MULTILINE|re.DOTALL)
@@ -84,51 +94,36 @@ def include_with_zone (zone, spyglass_link, ci_type_str):
         if zone_log_match is None:
             return False
         zone_str = zone_log_match.group(2)
-        print("Zone is %s" % (zone_str, ))
+        info_fp.write("INFO: Zone is %s\n" % (zone_str, ))
         if zone_str != zone:
             return False
 
     return True
 
 def include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
+    global output_fp
+    global info_fp
+
     started_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/started.json"
     started_str = get_url_string(started_url)
     started_json = json.loads(started_str)
     started_dt = datetime.utcfromtimestamp(int(started_json['timestamp']))
     # print(started_json['timestamp'])
-    # print("started_dt = " + started_dt.isoformat())
-    # print("started_dt >= after_dt = " + str(started_dt >= after_dt))
-    # print("started_dt <= before_dt = " + str(started_dt <= before_dt))
+    after_bool = started_dt >= after_dt
+    before_bool = started_dt <= before_dt
 
-    print("Started on %s" % (started_dt, ))
+    sys.stderr.write("INFO: Started on %s (%s) (%s)\n" % (started_dt, after_bool, before_bool, ))
+    if info_fp != sys.stderr:
+        info_fp.write("INFO: Started on %s (%s) (%s)\n" % (started_dt, after_bool, before_bool, ))
     if (started_dt >= after_dt) and (started_dt <= before_dt):
         return True
     else:
         return False
 
-def print_test_run_1 (spyglass_link, ci_type_str):
-    test_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/e2e.log"
-    test_log_str = get_url_string(test_log_url)
-
-    if test_log_str.find('<!doctype html>') == -1:
-        print(test_log_url)
-
-        flaky_tests_re = re.compile('(.*)(Flaky tests:\n)(.*)', re.MULTILINE|re.DOTALL)
-        flaky_tests_match = flaky_tests_re.match(test_log_str)
-        if flaky_tests_match is not None:
-            print(flaky_tests_match.group(3))
-        else:
-            failing_tests_re = re.compile('(.*)(Failing tests:\n)(.*)', re.MULTILINE|re.DOTALL)
-            failing_tests_match = failing_tests_re.match(test_log_str)
-
-            if failing_tests_match is not None:
-                print(failing_tests_match.group(3))
-            else:
-                print("Error: Test log not matching anything?")
-                # pdb.set_trace()
-
-def print_test_run_2 (spyglass_link, ci_type_str):
+def print_test_run (spyglass_link, ci_type_str):
     global green_runs
+    global output_fp
+    global info_fp
 
     test_log_junit_dir_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/junit/"
     test_log_junit_dir_str = get_url_string(test_log_junit_dir_url)
@@ -139,8 +134,8 @@ def print_test_run_2 (spyglass_link, ci_type_str):
     if test_failure_summary_filename_match is not None:
         test_failure_summary_filename_str = test_failure_summary_filename_match.group(1)
     else:
-        print("Error: Could not find test-failures-summary_*.json?")
-        print("")
+        info_fp.write("ERROR: Could not find test-failures-summary_*.json?\n")
+        info_fp.write("\n")
         return
 
     test_log_junit_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/openshift-e2e-libvirt-test/artifacts/junit/" + test_failure_summary_filename_str
@@ -150,15 +145,15 @@ def print_test_run_2 (spyglass_link, ci_type_str):
 
     tests = test_log_junit_json['Tests']
     if tests == []:
-        print("SUCCESS: All tests succeeded!")
+        output_fp.write("SUCCESS: All tests succeeded!\n")
 
         green_runs += 1
     else:
-        print("FAILURE: Failing tests:")
+        output_fp.write("FAILURE: Failing tests:\n")
         for test in tests:
-            print(test['Test']['Name'])
+            output_fp.write("%s\n" % (test['Test']['Name'], ))
 
-    print("")
+    output_fp.write("\n")
 
     # pdb.set_trace()
 
@@ -199,6 +194,15 @@ if __name__ == "__main__":
                         dest='before_str',
                         nargs=1,
                         help='Only queries before this date')
+    parser.add_argument('-d', '--deploy-status-only',
+                        action="store_true",
+                        dest='deploy_status_only',
+                        help='Only show deploy failures')
+    parser.add_argument('-o', '--output',
+                        type=str,
+                        dest='output',
+                        nargs=1,
+                        help='The filename for output')
     parser.add_argument('-u', '--url',
                         type=str,
                         required=True,
@@ -218,14 +222,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if len(args.url) != 1:
-        print("Error: Expecting exactly one URL")
-        print("Usage: ./JobHistory.py https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-serial-ovn-ppc64le-powervs")
+        info_fp.write("ERROR: Expecting exactly one URL\n")
+        info_fp.write("ERROR: Usage: ./JobHistory.py https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-serial-ovn-ppc64le-powervs\n")
         sys.exit(1)
 
     url = args.url[0]
     idx = url.find('https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/')
     if idx == -1:
-        print("Error: unknown CI URL")
+        info_fp.write("ERROR: unknown CI URL\n")
         exit(1)
 
     after_str = datetime.min.isoformat()
@@ -235,24 +239,29 @@ if __name__ == "__main__":
     after_dt = fromisoformat(after_str)
     # print("after_dt = %s" % (after_dt, ))
     if after_dt is None:
-        print("Error: unknown formatted date %s" % (after_str, ))
+        info_fp.write("ERROR: Unknown formatted date %s\n" % (after_str, ))
         sys.exit(1)
 
-    before_str = datetime.today().isoformat()
+    before_str = datetime.utcnow().isoformat()
     if args.before_str is not None:
         before_str = args.before_str[0]
     # print("before_str = " + before_str)
     before_dt = fromisoformat(before_str)
     # print("before_dt = %s" % (before_dt, ))
     if before_dt is None:
-        print("Error: unknown formatted date %s" % (before_str, ))
+        info_fp.write("ERROR: Unknown formatted date %s\n" % (before_str, ))
         sys.exit(1)
+
+    if args.output is not None:
+        output_fp = open(args.output[0], "w")
+        info_fp = output_fp
 
     zone_str = None
     if args.zone is not None:
         zone_str = args.zone[0]
 
-    print("Finding CI runs between %s and %s" % (after_str, before_dt, ))
+    sys.stderr.write("INFO: Finding CI runs between %s and %s\n" % (after_str, before_dt, ))
+    sys.stderr.write("\n")
 
     # Ex:
     # url:
@@ -272,7 +281,7 @@ if __name__ == "__main__":
     ci_info_re = re.compile('([^0-9].*)-([0-9]\.[0-9]*)-(.*)')
     ci_info_match = ci_info_re.match(ci_str)
     if ci_info_match is None:
-        print("Error: ci_info_re didn't match?")
+        info_fp.write("ERROR: ci_info_re didn't match?\n")
         exit(1)
     ci_version_str = ci_info_match.group(2)
     ci_type_str = ci_info_match.group(3)
@@ -314,17 +323,19 @@ if __name__ == "__main__":
             table_map = json.loads(table_str)
             for spyglass_link in table_map:
 
+                info_fp.write("INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
+
                 if not include_with_zone (zone_str, spyglass_link, ci_type_str):
+                    output_fp.write("\n")
                     continue
 
                 if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
+                    output_fp.write("\n")
                     continue
 
                 processed_any = True
 
                 num_deploys += 1
-
-                print('8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------')
 
                 # Ex:
                 # {'SpyglassLink': '/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.12-ocp-e2e-ovn-ppc64le-powervs/1620753919086956544', 'ID': '1620753919086956544', 'Started': '2023-02-01T12:00:25Z', 'Duration': 12390000000000, 'Result': 'FAILURE', 'Refs': None}
@@ -338,14 +349,13 @@ if __name__ == "__main__":
                 #   https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208/artifacts/ocp-e2e-ovn-ppc64le-powervs/ipi-install-powervs-install/build-log.txt
                 #
                 job_url = "https://prow.ci.openshift.org" + spyglass_link['SpyglassLink']
-                print(job_url)
+                info_fp.write("INFO: %s\n" % (job_url, ))
 
                 # job_response = opener.open(job_url)
                 # job_data = get_data(job_response)
                 # job_soup = BeautifulSoup(job_data, features = "html.parser")
 
                 build_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/build-log.txt"
-                # print(build_log_url)
 
                 build_finished_str = get_url_string("https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/artifacts/" + ci_type_str + "/ipi-install-powervs-install/finished.json")
                 if build_finished_str.find('<!doctype html>') == -1:
@@ -353,26 +363,28 @@ if __name__ == "__main__":
                 else:
                     build_finished_json = {'result': 'FAILURE'}
 
-                build_log_response = opener.open(build_log_url)
-                build_log_data = get_data(build_log_response)
-                # build_log_soup = BeautifulSoup(build_log_data, features = "html.parser")
-
-                build_log_str = build_log_data.decode()
-                create_cluster_re = re.compile('(.*)(8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n)(.*)(8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n)(.*)', re.MULTILINE|re.DOTALL)
-                create_cluster_match = create_cluster_re.match(build_log_str)
-
                 if build_finished_json['result'] == 'SUCCESS':
-                    print("SUCCESS: create cluster succeeded!")
+                    output_fp.write("SUCCESS: create cluster succeeded!\n")
 
                     deploys_succeeded += 1
 
-                    print_test_run_2(spyglass_link, ci_type_str)
-                else:
-                    if create_cluster_match is not None:
-                        print(create_cluster_match.group(3))
+                    if not args.deploy_status_only:
+                        print_test_run(spyglass_link, ci_type_str)
                     else:
-                        print("FAILURE: Could not find create cluster?")
-                        print("")
+                        output_fp.write("\n")
+                else:
+                    build_log_response = opener.open(build_log_url)
+                    build_log_data = get_data(build_log_response)
+                    build_log_str = build_log_data.decode()
+
+                    create_cluster_re = re.compile('(.*)(8<--------8<--------8<--------8<-------- BEGIN: create cluster 8<--------8<--------8<--------8<--------\n)(.*)(8<--------8<--------8<--------8<-------- END: create cluster 8<--------8<--------8<--------8<--------\n)(.*)', re.MULTILINE|re.DOTALL)
+                    create_cluster_match = create_cluster_re.match(build_log_str)
+
+                    if create_cluster_match is not None:
+                        output_fp.write("%s\n" % (create_cluster_match.group(3), ))
+                    else:
+                        output_fp.write("FAILURE: Could not find create cluster?\n")
+                        output_fp.write("\n")
 
                 # pdb.set_trace()
 
@@ -384,6 +396,8 @@ if __name__ == "__main__":
                 break
             url = base_url_str + older_href
 
-    print("finished")
-    print("%d/%d deploys succeeded" % (deploys_succeeded, num_deploys, ))
-    print("%d/%d e2e green runs" % (green_runs, num_deploys, ))
+    output_fp.write("\n")
+    output_fp.write("Finished\n")
+    output_fp.write("%d/%d deploys succeeded\n" % (deploys_succeeded, num_deploys, ))
+    if not args.deploy_status_only:
+        output_fp.write("%d/%d e2e green runs\n" % (green_runs, num_deploys, ))
