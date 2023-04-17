@@ -20,12 +20,14 @@
 # 0.6 on 2023-04-13
 # 0.7 on 2023-04-14
 # 0.7.1 on 2023-04-14
-__version__ = "0.7.1"
-__date__ = "2023-04-14"
+# 0.8 on 2023-04-15
+__version__ = "0.8"
+__date__ = "2023-04-15"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
 from bs4 import BeautifulSoup
+import csv
 from datetime import datetime
 import gzip
 import http.cookiejar
@@ -91,6 +93,7 @@ def include_with_zone (zone, spyglass_link, ci_type_str):
 
     if zone is not None:
         if zone_log_match is None:
+            info_fp.write("ERROR: Zone was not found?\n")
             return False
         zone_str = zone_log_match.group(2)
         info_fp.write("INFO: Zone is %s\n" % (zone_str, ))
@@ -211,6 +214,13 @@ def fromisoformat (date_str):
 
     return dt
 
+def encode_string(input_str):
+#   return input_str.replace("\n", "\\n")
+    encoded_str = input_str.encode("unicode_escape").decode("utf-8")
+#   print("input_str = %s\n" % (input_str, ))
+#   print("encoded_str = %s\n" % (encoded_str, ))
+    return input_str.encode("unicode_escape").decode("utf-8")
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='Extract CI runs')
@@ -224,6 +234,10 @@ if __name__ == "__main__":
                         dest='before_str',
                         nargs=1,
                         help='Only queries before this date')
+    parser.add_argument('-c', '--csv',
+                        action="store_true",
+                        dest='csv',
+                        help='Output in CSV format')
     parser.add_argument('-d', '--deploy-status-only',
                         action="store_true",
                         dest='deploy_status_only',
@@ -288,7 +302,12 @@ if __name__ == "__main__":
 
     if args.output is not None:
         output_fp = open(args.output[0], "w")
-        info_fp = output_fp
+        if not args.csv:
+          info_fp = output_fp
+
+    if args.csv:
+        csv_writer = csv.writer(output_fp, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        csv_writer.writerow(["Job URL", "Build summary", "Build details", "Test summary", "Test details"])
 
     zone_str = None
     if args.zone is not None:
@@ -354,28 +373,32 @@ if __name__ == "__main__":
                 continue
             table_match = re.search('(var allBuilds = )(\[[^]]+\])(;)', script_str)
             table_str = table_match.group(2)
-            table_map = json.loads(table_str)
-            for spyglass_link in table_map:
+            table_json = json.loads(table_str)
+            for spyglass_link in table_json:
 
                 # Ex:
                 # {'SpyglassLink': '/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.12-ocp-e2e-ovn-ppc64le-powervs/1620753919086956544', 'ID': '1620753919086956544', 'Started': '2023-02-01T12:00:25Z', 'Duration': 12390000000000, 'Result': 'FAILURE', 'Refs': None}
                 # 
-                # print(spyglass_link['SpyglassLink'])
-
-                # https://prow.ci.openshift.org
                 # job_url:
                 #   https://prow.ci.openshift.org/view/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208
                 # build_log_url:
                 #   https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs/1645426556757086208/artifacts/ocp-e2e-ovn-ppc64le-powervs/ipi-install-powervs-install/build-log.txt
 
+                build_summary_str = ""
+                build_details_str = ""
+                test_summary_str  = ""
+                test_details_str  = ""
+
                 info_fp.write("INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
 
                 if not include_with_zone (zone_str, spyglass_link, ci_type_str):
-                    output_fp.write("\n")
+                    if not args.csv:
+                        output_fp.write("\n")
                     continue
 
                 if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
-                    output_fp.write("\n")
+                    if not args.csv:
+                        output_fp.write("\n")
                     continue
 
                 processed_any = True
@@ -388,7 +411,8 @@ if __name__ == "__main__":
                 (build_finished_json, build_summary_str, build_details_str) = gather_build_run(spyglass_link, ci_type_str)
 
                 if not args.test_status_only:
-                    output_fp.write("%s\n%s" % (build_summary_str, build_details_str, ))
+                    if not args.csv:
+                        output_fp.write("%s\n%s" % (build_summary_str, build_details_str, ))
 
                 if build_finished_json['result'] == 'SUCCESS':
                     deploys_succeeded += 1
@@ -396,11 +420,25 @@ if __name__ == "__main__":
                     if not args.deploy_status_only:
                         (test_summary_str, test_details_str) = gather_test_run(spyglass_link, ci_type_str)
 
-                        output_fp.write("%s\n%s\n" % (test_summary_str, test_details_str, ))
+                        if not args.csv:
+                            output_fp.write("%s\n%s\n" % (test_summary_str, test_details_str, ))
                     else:
                         output_fp.write("\n")
                 else:
-                    output_fp.write("\n")
+                    if not args.csv:
+                        output_fp.write("\n")
+
+                if args.csv:
+                    csv_row = None
+                    if len(test_details_str) > 0 and test_details_str[-1] == '\n':
+                        test_details_str = test_details_str[:-1]
+                    for field in [job_url, build_summary_str, build_details_str, test_summary_str, test_details_str]:
+                        if csv_row is not None:
+                            csv_row.append(encode_string(field))
+                        else:
+                            csv_row = [encode_string(field)]
+                    csv_writer.writerow(csv_row)
+                    info_fp.write("\n")
 
         if older_href is None:
             break
@@ -410,8 +448,8 @@ if __name__ == "__main__":
                 break
             url = base_url_str + older_href
 
-    output_fp.write("Finished\n")
+    info_fp.write("Finished\n")
     if not args.test_status_only:
-        output_fp.write("%d/%d deploys succeeded\n" % (deploys_succeeded, num_deploys, ))
+        info_fp.write("%d/%d deploys succeeded\n" % (deploys_succeeded, num_deploys, ))
     if not args.deploy_status_only:
-        output_fp.write("%d/%d e2e green runs\n" % (green_runs, num_deploys, ))
+        info_fp.write("%d/%d e2e green runs\n" % (green_runs, num_deploys, ))
