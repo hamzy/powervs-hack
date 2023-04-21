@@ -6,9 +6,9 @@
 # $ pip install --upgrade pip
 # $ pip install --requirement requirements.txt
 #
-# (venv) JobHistory2$ ./JobHistory.py https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs
+# (venv) JobHistory2$ ./JobHistory.py --url https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs
 #
-# (venv) JobHistory2$ ./JobHistory.py https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-serial-ovn-ppc64le-powervs
+# (venv) JobHistory2$ ./JobHistory.py --url https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-serial-ovn-ppc64le-powervs
 
 
 # 0.1 on 2020-06-14
@@ -21,8 +21,9 @@
 # 0.7 on 2023-04-14
 # 0.7.1 on 2023-04-14
 # 0.8 on 2023-04-15
-__version__ = "0.8"
-__date__ = "2023-04-15"
+# 0.8.1 on 2023-04-21
+__version__ = "0.8.1"
+__date__ = "2023-04-21"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
@@ -83,24 +84,15 @@ def run_match (tag):
         return True
     return tag["class"][0] == "run-success"
 
-def include_with_zone (zone, spyglass_link, ci_type_str):
-    global info_fp
-
+def get_zone (spyglass_link, ci_type_str):
     zone_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/build-log.txt"
     zone_log_str = get_url_string(zone_log_url)
     zone_log_re = re.compile('(Acquired 1 lease\(s\) for powervs-1-quota-slice: \[)([^]]+)(\])', re.MULTILINE|re.DOTALL)
     zone_log_match = zone_log_re.search(zone_log_str)
-
-    if zone is not None:
-        if zone_log_match is None:
-            info_fp.write("ERROR: Zone was not found?\n")
-            return False
-        zone_str = zone_log_match.group(2)
-        info_fp.write("INFO: Zone is %s\n" % (zone_str, ))
-        if zone_str != zone:
-            return False
-
-    return True
+    if zone_log_match is None:
+        return None
+    else:
+        return zone_log_match.group(2)
 
 def include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
     global info_fp
@@ -391,11 +383,18 @@ if __name__ == "__main__":
 
                 info_fp.write("INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
 
-                if not include_with_zone (zone_str, spyglass_link, ci_type_str):
-                    if not args.csv:
-                        output_fp.write("\n")
+                # Test if we should process this run against a zone restriction
+                current_zone_str = get_zone(spyglass_link, ci_type_str)
+                if current_zone_str is None:
+                    info_fp.write("ERROR: Could not find the zone?\n")
                     continue
+                else:
+                    if (zone_str is not None) and (current_zone_str != zone_str):
+                        if not args.csv:
+                            output_fp.write("\n")
+                        continue
 
+                # Test if we should process this run against a date restriction
                 if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
                     if not args.csv:
                         output_fp.write("\n")
@@ -406,7 +405,9 @@ if __name__ == "__main__":
                 num_deploys += 1
 
                 job_url = "https://prow.ci.openshift.org" + spyglass_link['SpyglassLink']
-                info_fp.write("INFO: %s\n" % (job_url, ))
+                info_fp.write("INFO: URL:  %s\n" % (job_url, ))
+
+                info_fp.write("INFO: Zone: %s\n" % (current_zone_str, ))
 
                 (build_finished_json, build_summary_str, build_details_str) = gather_build_run(spyglass_link, ci_type_str)
 
