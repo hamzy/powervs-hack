@@ -23,7 +23,8 @@
 # 0.8 on 2023-04-15
 # 0.8.1 on 2023-04-21
 # 0.8.2 on 2023-04-21
-__version__ = "0.8.2"
+# 0.8.3 on 2023-04-21
+__version__ = "0.8.3"
 __date__ = "2023-04-21"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
@@ -88,7 +89,7 @@ def run_match (tag):
 def get_zone (spyglass_link, ci_type_str):
     zone_log_url = "https://gcsweb-ci.apps.ci.l2s4.p1.openshiftapps.com/gcs" + spyglass_link['SpyglassLink'][8:] + "/build-log.txt"
     zone_log_str = get_url_string(zone_log_url)
-    zone_log_re = re.compile('(Acquired 1 lease\(s\) for powervs-1-quota-slice: \[)([^]]+)(\])', re.MULTILINE|re.DOTALL)
+    zone_log_re = re.compile('(Acquired 1 lease\(s\) for powervs-[1-9]-quota-slice: \[)([^]]+)(\])', re.MULTILINE|re.DOTALL)
     zone_log_match = zone_log_re.search(zone_log_str)
     if zone_log_match is None:
         return None
