@@ -22,7 +22,8 @@
 # 0.7.1 on 2023-04-14
 # 0.8 on 2023-04-15
 # 0.8.1 on 2023-04-21
-__version__ = "0.8.1"
+# 0.8.2 on 2023-04-21
+__version__ = "0.8.2"
 __date__ = "2023-04-21"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
@@ -299,7 +300,12 @@ if __name__ == "__main__":
 
     if args.csv:
         csv_writer = csv.writer(output_fp, delimiter=',', quotechar='"', quoting=csv.QUOTE_MINIMAL)
-        csv_writer.writerow(["Job URL", "Build summary", "Build details", "Test summary", "Test details"])
+        csv_writer.writerow(["Job URL",
+            "Zone",
+            "Build summary",
+            "Build details",
+            "Test summary",
+            "Test details"])
 
     zone_str = None
     if args.zone is not None:
@@ -386,7 +392,7 @@ if __name__ == "__main__":
                 # Test if we should process this run against a zone restriction
                 current_zone_str = get_zone(spyglass_link, ci_type_str)
                 if current_zone_str is None:
-                    info_fp.write("ERROR: Could not find the zone?\n")
+                    info_fp.write("ERROR: Could not find the zone?\n\n")
                     continue
                 else:
                     if (zone_str is not None) and (current_zone_str != zone_str):
@@ -431,13 +437,21 @@ if __name__ == "__main__":
 
                 if args.csv:
                     csv_row = None
+                    # Remove any trailing newline
                     if len(test_details_str) > 0 and test_details_str[-1] == '\n':
                         test_details_str = test_details_str[:-1]
-                    for field in [job_url, build_summary_str, build_details_str, test_summary_str, test_details_str]:
+                    # Create an array of data
+                    for field in [job_url,
+                            current_zone_str,
+                            build_summary_str,
+                            build_details_str,
+                            test_summary_str,
+                            test_details_str]:
                         if csv_row is not None:
                             csv_row.append(encode_string(field))
                         else:
                             csv_row = [encode_string(field)]
+                    # CSV write that array out
                     csv_writer.writerow(csv_row)
                     info_fp.write("\n")
 
