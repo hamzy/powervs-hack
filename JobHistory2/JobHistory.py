@@ -9,6 +9,10 @@
 # (venv) JobHistory2$ ./JobHistory.py --url https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-ovn-ppc64le-powervs
 #
 # (venv) JobHistory2$ ./JobHistory.py --url https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.13-ocp-e2e-serial-ovn-ppc64le-powervs
+#
+# (venv) JobHistory2$ ./JobHistory.py --url https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.14-ocp-e2e-ovn-ppc64le-powervs
+#
+# (venv) JobHistory2$ ./JobHistory.py --url https://prow.ci.openshift.org/job-history/gs/origin-ci-test/logs/periodic-ci-openshift-multiarch-master-nightly-4.14-ocp-e2e-serial-ovn-ppc64le-powervs
 
 
 # 0.1 on 2020-06-14
@@ -24,14 +28,17 @@
 # 0.8.1 on 2023-04-21
 # 0.8.2 on 2023-04-21
 # 0.8.3 on 2023-04-21
-__version__ = "0.8.3"
-__date__ = "2023-04-21"
+# 0.9.0 on 2023-04-29
+__version__ = "0.9.0"
+__date__ = "2023-04-29"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
 from bs4 import BeautifulSoup
 import csv
+from datetime import date
 from datetime import datetime
+from datetime import timedelta
 import gzip
 import http.cookiejar
 import io
@@ -210,7 +217,7 @@ def fromisoformat (date_str):
 
 def encode_string(input_str):
 #   return input_str.replace("\n", "\\n")
-    encoded_str = input_str.encode("unicode_escape").decode("utf-8")
+#   encoded_str = input_str.encode("unicode_escape").decode("utf-8")
 #   print("input_str = %s\n" % (input_str, ))
 #   print("encoded_str = %s\n" % (encoded_str, ))
     return input_str.encode("unicode_escape").decode("utf-8")
@@ -245,6 +252,10 @@ if __name__ == "__main__":
                         action="store_true",
                         dest='test_status_only',
                         help='Only show test failures')
+    parser.add_argument('--today',
+                        action="store_true",
+                        dest='today',
+                        help='Only queries for today')
     parser.add_argument('-u', '--url',
                         type=str,
                         required=True,
@@ -256,6 +267,10 @@ if __name__ == "__main__":
                         action='version',
                         version='%(prog)s {version}'.format(version=__version__),
                         help='Display the version of this program')
+    parser.add_argument('--yesterday',
+                        action="store_true",
+                        dest='yesterday',
+                        help='Only queries for yesterday')
     parser.add_argument('-z', '--zone',
                         type=str,
                         dest='zone',
@@ -274,7 +289,34 @@ if __name__ == "__main__":
         info_fp.write("ERROR: unknown CI URL\n")
         exit(1)
 
-    after_str = datetime.min.isoformat()
+    if args.today:
+        if args.after_str is not None:
+            info_fp.write("ERROR: Cannot have both --after-date and --today\n")
+            sys.exit(1)
+        if args.before_str is not None:
+            info_fp.write("ERROR: Cannot have both --before-date and --today\n")
+            sys.exit(1)
+        today = date.today()
+        after_dt = datetime(date.today().year, date.today().month, date.today().day)
+        after_str = after_dt.isoformat()
+        before_dt = datetime(date.today().year, date.today().month, date.today().day, 23, 59, 59, 999999)
+        before_str = before_dt.isoformat()
+    elif args.yesterday:
+        if args.after_str is not None:
+            info_fp.write("ERROR: Cannot have both --after-date and --yesterday\n")
+            sys.exit(1)
+        if args.before_str is not None:
+            info_fp.write("ERROR: Cannot have both --before-date and --yesterday\n")
+            sys.exit(1)
+        yesterday = date.today() - timedelta(days=1)
+        after_dt = datetime(yesterday.year, yesterday.month, yesterday.day)
+        after_str = after_dt.isoformat()
+        before_dt = datetime(yesterday.year, yesterday.month, yesterday.day, 23, 59, 59, 999999)
+        before_str = before_dt.isoformat()
+    else:
+        after_str = datetime.min.isoformat()
+        before_str = datetime.utcnow().isoformat()
+
     if args.after_str is not None:
         after_str = args.after_str[0]
     # print("after_str = " + after_str)
@@ -284,7 +326,6 @@ if __name__ == "__main__":
         info_fp.write("ERROR: Unknown formatted date %s\n" % (after_str, ))
         sys.exit(1)
 
-    before_str = datetime.utcnow().isoformat()
     if args.before_str is not None:
         before_str = args.before_str[0]
     # print("before_str = " + before_str)
