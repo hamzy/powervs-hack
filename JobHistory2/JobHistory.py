@@ -29,8 +29,9 @@
 # 0.8.2 on 2023-04-21
 # 0.8.3 on 2023-04-21
 # 0.9.0 on 2023-04-29
-__version__ = "0.9.0"
-__date__ = "2023-04-29"
+# 0.9.1 on 2023-05-25
+__version__ = "0.9.1"
+__date__ = "2023-05-25"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
@@ -243,6 +244,11 @@ if __name__ == "__main__":
                         action="store_true",
                         dest='deploy_status_only',
                         help='Only show deploy failures')
+    parser.add_argument('-l', '--last-n-days',
+                        type=str,
+                        dest='last_n_days',
+                        nargs=1,
+                        help='Only queries for the last n days')
     parser.add_argument('-o', '--output',
                         type=str,
                         dest='output',
@@ -296,6 +302,12 @@ if __name__ == "__main__":
         if args.before_str is not None:
             info_fp.write("ERROR: Cannot have both --before-date and --today\n")
             sys.exit(1)
+        if args.yesterday:
+            info_fp.write("ERROR: Cannot have both --yesterday and --today\n")
+            sys.exit(1)
+        if args.last_n_days is not None:
+            info_fp.write("ERROR: Cannot have both --last-n-days and --today\n")
+            sys.exit(1)
         today = date.today()
         after_dt = datetime(date.today().year, date.today().month, date.today().day)
         after_str = after_dt.isoformat()
@@ -308,10 +320,31 @@ if __name__ == "__main__":
         if args.before_str is not None:
             info_fp.write("ERROR: Cannot have both --before-date and --yesterday\n")
             sys.exit(1)
+        if args.today:
+            info_fp.write("ERROR: Cannot have both --yesterday and --today\n")
+            sys.exit(1)
+        if args.last_n_days is not None:
+            info_fp.write("ERROR: Cannot have both --last-n-days and --yesterday\n")
+            sys.exit(1)
         yesterday = date.today() - timedelta(days=1)
         after_dt = datetime(yesterday.year, yesterday.month, yesterday.day)
         after_str = after_dt.isoformat()
         before_dt = datetime(yesterday.year, yesterday.month, yesterday.day, 23, 59, 59, 999999)
+        before_str = before_dt.isoformat()
+    elif args.last_n_days:
+        if args.today:
+            info_fp.write("ERROR: Cannot have both --last-n-days and --today\n")
+            sys.exit(1)
+        if args.yesterday:
+            info_fp.write("ERROR: Cannot have both --last-n-days and --yesterday\n")
+            sys.exit(1)
+        last_days = int(args.last_n_days[0]) - 1
+        last_date = date.today() - timedelta(days=last_days)
+        # print("last_days = " + str(last_days))
+        # print("last_date = " + str(last_date))
+        after_dt = datetime(last_date.year, last_date.month, last_date.day)
+        after_str = after_dt.isoformat()
+        before_dt = datetime(date.today().year, date.today().month, date.today().day, 23, 59, 59, 999999)
         before_str = before_dt.isoformat()
     else:
         after_str = datetime.min.isoformat()
@@ -429,7 +462,17 @@ if __name__ == "__main__":
                 test_summary_str  = ""
                 test_details_str  = ""
 
+                job_url = "https://prow.ci.openshift.org" + spyglass_link['SpyglassLink']
+
                 info_fp.write("INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
+
+                # Test if we should process this run against a date restriction
+                if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
+                    if not args.csv:
+                        output_fp.write("INFO: URL:  %s\n" % (job_url, ))
+                        output_fp.write("INFO: Zone: %s\n" % (current_zone_str, ))
+                        output_fp.write("\n")
+                    continue
 
                 # Test if we should process this run against a zone restriction
                 current_zone_str = get_zone(spyglass_link, ci_type_str)
@@ -439,20 +482,15 @@ if __name__ == "__main__":
                 else:
                     if (zone_str is not None) and (current_zone_str != zone_str):
                         if not args.csv:
+                            output_fp.write("INFO: URL:  %s\n" % (job_url, ))
+                            output_fp.write("INFO: Zone: %s\n" % (current_zone_str, ))
                             output_fp.write("\n")
                         continue
-
-                # Test if we should process this run against a date restriction
-                if not include_with_date (after_dt, before_dt, spyglass_link, ci_type_str):
-                    if not args.csv:
-                        output_fp.write("\n")
-                    continue
 
                 processed_any = True
 
                 num_deploys += 1
 
-                job_url = "https://prow.ci.openshift.org" + spyglass_link['SpyglassLink']
                 info_fp.write("INFO: URL:  %s\n" % (job_url, ))
 
                 info_fp.write("INFO: Zone: %s\n" % (current_zone_str, ))
