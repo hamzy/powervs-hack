@@ -255,7 +255,7 @@ resource "ibm_tg_gateway" "tg" {
 
 # https://registry.terraform.io/providers/IBM-Cloud/ibm/latest/docs/data-sources/resource_group
 data "ibm_resource_group" "rg_pvs_ipi_rg" {
-  name = "powervs-ipi-resource-group"
+  name = var.resource_group
 }
 
 # https://registry.terraform.io/providers/IBM-Cloud/ibm/latest/docs/data-sources/resource_instance
