@@ -1,0 +1,48 @@
+{
+  "ignition": {
+    "version": "3.2.0",
+    "config": {
+      "replace": {
+        "source": "${PROTOCOL}://${HOSTNAME}/${BUCKET_NAME}/${OBJECT_NAME}",
+        "httpHeaders": [
+          {
+            "name": "Authorization",
+            "value": "${IAM_TOKEN}"
+          }
+        ]
+      }
+    },
+    "proxy": {},
+    "security": {
+      "tls": {}
+    },
+    "timeouts": {},
+    "version": "3.1.0"
+  },
+  "passwd": {
+    "users": [
+      {
+        "name": "core",
+        "passwordHash": "A5bIi0zLZS.ZQk7hRv7W8qNvlRS1",
+        "sshAuthorizedKeys": [
+          "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCfrxxUx9MKdEWDStyVVkVTnxPQRHjQU7Gnu+USEbGCq3gb1t4Hs863mkJ3cgH9h4TsXxY7SofDu1MNw3QMt+S2BiUN6RlaQbkhJ41bzdCvy4tg3NiJdiUY0EtiLV5rXR+/wQbEIlkThhXCYEXxOcBA+0GMkAGuyAM2zZekpWh9xmkex1KQy0A8FEgS+gC8d0ok3u1ozZ85hlGxrKT2pxWhS9P2KdAx5Vrt5lsCZyif6HucAjp5EYoZbaJLHmOP3F7f+Rbf+yIxXTCZfcOQN/nf6wz5L4VPCvSjmV4GauVLcbOZCADdRDdE71ky8owHSxoxfjr6ukkU8btecF/JLJeZoaQWGCd6XrkvCjFTS6n2PEckR80UF4j7TGthSmZcI1ach5GROyyb9Oajeciwq6zJeNvDJAcvXLi5fQYbvAOhjTEkqYtlLvcyNCwp8vexPA5G8n381t/3F5kxkrrRYcbQf+N21Mo10CecaO86peV+sIpPPsYCgbE9QVG07okY1XrKkfBrtOoMwn12n1DX/UJbYeiqY3sI+QikbDgL+kDRP4tn4VYLs9uNDaKlBNDrRNwniWO8YKOZQGsonG1JeuU2UMbNfDnR7BzVUkAjMKFfZKA/yfOuIC09BoxmkQ7wDMwb10QNZ7/Y5XDRAKN6o0SFqsBq4FnBQ31+wPd3HBSpGw== hamzy@li-3d08e84c-2e1c-11b2-a85c-e2db7bb078fc.ibm.com"
+        ]
+      }
+    ]
+  },
+  "storage": {
+    "files": [
+      {
+        "group": {},
+        "overwrite": true,
+        "path": "/etc/hostname",
+        "user": {},
+        "contents": {
+          "source": "data:text/plain;charset=utf-8;base64,cmRyLWhhbXp5LWJlYmQ0ZmVlLXJoY29zLXJob2NzCg==",
+          "verification": {}
+        },
+        "mode": 420
+      }
+    ]
+  }
+}
