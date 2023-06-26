@@ -41,9 +41,9 @@ variable "resource_group" {
   description = "The name of the Power VS resource group to which the user belongs."
 }
 
-variable "cloud_connection_id" {
+variable "service_instance" {
   type        = string
-  description = "The Power VS Cloud Connection ID."
+  description = "The name of the Power VS service instance to use."
 }
 
 variable "pub_key" {
@@ -60,6 +60,9 @@ locals {
   prefix = "${local.user}-test"
 
   dollar = "$"
+
+  is_centos_version = "ibm-centos-stream-8-amd64-3"
+  pi_centos_version = "CentOS-Stream-8"
 
   instance_count = 7
 
@@ -177,7 +180,7 @@ resource "ibm_is_subnet" "is_subnet1" {
 #
 # https://registry.terraform.io/providers/IBM-Cloud/ibm/latest/docs/resources/is_image
 data "ibm_is_image" "centos" {
-  name = "ibm-centos-stream-8-amd64-3"
+  name = local.is_centos_version
 }
 
 #
@@ -211,7 +214,7 @@ resource "ibm_pi_instance" "pi_instance" {
   pi_key_pair_name     = "${local.user}-key"
   pi_sys_type          = "s922"
   pi_storage_type      = "tier3"
-  pi_cloud_instance_id = var.cloud_connection_id
+  pi_cloud_instance_id = data.ibm_resource_instance.pi_service_instance.guid
   pi_health_status     = "WARNING"
   dynamic "pi_network" {
     for_each = count.index == 0 ? local.both_pi_networks : local.one_pi_network
@@ -223,20 +226,20 @@ resource "ibm_pi_instance" "pi_instance" {
 
 # https://registry.terraform.io/providers/IBM-Cloud/ibm/latest/docs/resources/pi_image
 data "ibm_pi_image" "boot_image" {
-  pi_image_name        = "CentOS-Stream-8"
-  pi_cloud_instance_id = var.cloud_connection_id
+  pi_image_name        = local.pi_centos_version
+  pi_cloud_instance_id = data.ibm_resource_instance.pi_service_instance.guid
 }
 
 # https://registry.terraform.io/providers/IBM-Cloud/ibm/latest/docs/resources/pi_network
 data "ibm_pi_network" "internal_network" {
   pi_network_name      = "rdr-${local.prefix}-net"
-  pi_cloud_instance_id = var.cloud_connection_id
+  pi_cloud_instance_id = data.ibm_resource_instance.pi_service_instance.guid
 }
 
 # https://registry.terraform.io/providers/IBM-Cloud/ibm/latest/docs/resources/pi_network
 data "ibm_pi_network" "public_network" {
   pi_network_name      = "${local.user}-public-network"
-  pi_cloud_instance_id = var.cloud_connection_id
+  pi_cloud_instance_id = data.ibm_resource_instance.pi_service_instance.guid
 }
 
 #
@@ -256,8 +259,8 @@ data "ibm_resource_group" "rg_pvs_ipi_rg" {
 }
 
 # https://registry.terraform.io/providers/IBM-Cloud/ibm/latest/docs/data-sources/resource_instance
-data "ibm_resource_instance" "ri_h_p_d10" {
-  name              = "${local.user}-psvs-dal10"
+data "ibm_resource_instance" "pi_service_instance" {
+  name              = var.service_instance
   service           = "power-iaas"
   resource_group_id = data.ibm_resource_group.rg_pvs_ipi_rg.id
 }
@@ -280,7 +283,7 @@ resource "ibm_tg_connection" "tg_connection1" {
 #  gateway      = ibm_tg_gateway.tg.id
 #  network_type = "power_virtual_server"
 #  name         = "${local.prefix}-tg-connection2"
-#  network_id   = data.ibm_resource_instance.ri_h_p_d10.crn
+#  network_id   = data.ibm_resource_instance.pi_service_instance.crn
 #}
 
 #
@@ -296,5 +299,5 @@ output "sshcommand-ins1" {
 
 # @BUG - CLI work around
 output "tg-con2" {
-  value = "ibmcloud tg connection-create ${ibm_tg_gateway.tg.id} --name ${local.prefix}-tg-connection2 --network-type power_virtual_server --network-id '${data.ibm_resource_instance.ri_h_p_d10.crn}'"
+  value = "ibmcloud tg connection-create ${ibm_tg_gateway.tg.id} --name ${local.prefix}-tg-connection2 --network-type power_virtual_server --network-id '${data.ibm_resource_instance.pi_service_instance.crn}'"
 }
