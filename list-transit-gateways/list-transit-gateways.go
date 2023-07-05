@@ -25,15 +25,17 @@
 // https://raw.githubusercontent.com/IBM/networking-go-sdk/master/dnsrecordsv1/dns_records_v1.go
 
 // How to run:
-// (export IBMCLOUD_API_KEY="blah"; if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1; then ibmcloud login --apikey "${IBMCLOUD_API_KEY}"; fi; go run list-jobs.go -apiKey "${IBMCLOUD_API_KEY}" -search '.*rdr-hamzy-.*' -serviceName powervs-ipi-lon04 -shouldDebug false -shouldDelete false)
+// (export IBMCLOUD_API_KEY="blah"; if ! ibmcloud iam oauth-tokens 1>/dev/null 2>&1; then ibmcloud login --apikey "${IBMCLOUD_API_KEY}"; fi; go run list-transit-gateways.go -apiKey "${IBMCLOUD_API_KEY}" -search '.*rdr-hamzy-.*' -serviceName powervs-ipi-lon04 -shouldDebug false -shouldDelete false)
 
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
-	"github.com/golang-jwt/jwt"
+	"io"
+	gohttp "net/http"
+	"os"
+
 	"github.com/IBM-Cloud/bluemix-go"
 	"github.com/IBM-Cloud/bluemix-go/api/resource/resourcev2/controllerv2"
 	"github.com/IBM-Cloud/bluemix-go/authentication"
@@ -41,47 +43,50 @@ import (
 	"github.com/IBM-Cloud/bluemix-go/rest"
 	bxsession "github.com/IBM-Cloud/bluemix-go/session"
 	"github.com/IBM-Cloud/power-go-client/ibmpisession"
+	"github.com/golang-jwt/jwt"
+	"github.com/sirupsen/logrus"
+	utilerrors "k8s.io/apimachinery/pkg/util/errors"
+)
+
+// Above imports are for the glue code, below is just for destroy code
+//package powervs
+
+import (
+	"context"
+	"math"
+	"strings"
+	"time"
+
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/networking-go-sdk/transitgatewayapisv1"
 	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	"io"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"math"
-	gohttp "net/http"
-	"os"
-	"strings"
-	"time"
 )
 
-var shouldDebug = false
-var shouldDelete = false
-
 const (
-	transitGatewayTypeName = "transitGateway"
+	transitGatewayTypeName           = "transitGateway"
 	transitGatewayConnectionTypeName = "transitGatewayConnection"
 )
 
 // listTransitGateways lists Transit Gateways in the IBM Cloud.
-func (o *ClusterUninstaller) listTransitGateways () (cloudResources, error) {
+func (o *ClusterUninstaller) listTransitGateways() (cloudResources, error) {
 
-	log.Debugf("Listing Transit Gateways (%s)", o.InfraID)
+	o.Logger.Debugf("Listing Transit Gateways (%s)", o.InfraID)
 
 	var (
-		ctx context.Context
-		cancel func()
+		ctx                        context.Context
+		cancel                     func()
 		listTransitGatewaysOptions *transitgatewayapisv1.ListTransitGatewaysOptions
-		gatewayCollection *transitgatewayapisv1.TransitGatewayCollection
-		gateway transitgatewayapisv1.TransitGateway
-		response *core.DetailedResponse
-		err error
-		foundOne = false
-		perPage int64 = 32
-		moreData = true
+		gatewayCollection          *transitgatewayapisv1.TransitGatewayCollection
+		gateway                    transitgatewayapisv1.TransitGateway
+		response                   *core.DetailedResponse
+		err                        error
+		foundOne                         = false
+		perPage                    int64 = 32
+		moreData                         = true
 	)
 
-	ctx, cancel = context.WithTimeout(context.Background(), 5 * time.Minute)
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
 	listTransitGatewaysOptions = o.tgClient.NewListTransitGatewaysOptions()
@@ -175,16 +180,16 @@ func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
 
 		items []cloudResource
 
-		ctx context.Context
+		ctx    context.Context
 		cancel func()
 
 		backoff wait.Backoff = wait.Backoff{Duration: 15 * time.Second,
 			Factor: 1.5,
-			Cap: 10 * time.Minute,
-			Steps: math.MaxInt32}
+			Cap:    10 * time.Minute,
+			Steps:  math.MaxInt32}
 
 		deleteTransitGatewayOptions *transitgatewayapisv1.DeleteTransitGatewayOptions
-		response *core.DetailedResponse
+		response                    *core.DetailedResponse
 	)
 
 	firstPassList, err = o.listTransitConnections(item)
@@ -200,7 +205,7 @@ func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
 	for _, item := range items {
 		select {
 		case <-o.Context.Done():
-			log.Debugf("destroyTransitGateway: case <-o.Context.Done()")
+			o.Logger.Debugf("destroyTransitGateway: case <-o.Context.Done()")
 			return o.Context.Err() // we're cancelled, abort
 		default:
 		}
@@ -210,12 +215,12 @@ func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
 			if err2 == nil {
 				return true, err2
 			} else {
-				o.errorTracker.suppressWarning(item.key, err2, log)
+				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
 				return false, err2
 			}
 		})
 		if err != nil {
-			log.Fatalf("destroyTransitGateway: ExponentialBackoffWithContext (destroy) returns %v", err)
+			o.Logger.Fatalf("destroyTransitGateway: ExponentialBackoffWithContext (destroy) returns %v", err)
 		}
 	}
 
@@ -228,8 +233,8 @@ func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
 
 	backoff = wait.Backoff{Duration: 15 * time.Second,
 		Factor: 1.5,
-		Cap: 10 * time.Minute,
-		Steps: math.MaxInt32}
+		Cap:    10 * time.Minute,
+		Steps:  math.MaxInt32}
 	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		var (
 			secondPassList cloudResources
@@ -246,13 +251,13 @@ func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
 			return true, nil
 		} else {
 			for _, item := range secondPassList {
-				log.Debugf("destroyTransitGateway: found %s in second pass", item.name)
+				o.Logger.Debugf("destroyTransitGateway: found %s in second pass", item.name)
 			}
 			return false, nil
 		}
 	})
 	if err != nil {
-		log.Fatalf("destroyTransitGateway: ExponentialBackoffWithContext (list) returns %v", err)
+		o.Logger.Fatalf("destroyTransitGateway: ExponentialBackoffWithContext (list) returns %v", err)
 	}
 
 	// We can delete the transit gateway now!
@@ -264,7 +269,7 @@ func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
 
 	response, err = o.tgClient.DeleteTransitGatewayWithContext(ctx, deleteTransitGatewayOptions)
 	if err != nil {
-		log.Fatalf("destroyTransitGateway: DeleteTransitGatewayWithContext returns %v with response %v", err, response)
+		o.Logger.Fatalf("destroyTransitGateway: DeleteTransitGatewayWithContext returns %v with response %v", err, response)
 	}
 
 	return nil
@@ -274,12 +279,12 @@ func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
 func (o *ClusterUninstaller) destroyTransitConnection(item cloudResource) error {
 
 	var (
-		ctx context.Context
+		ctx    context.Context
 		cancel func()
 
 		deleteTransitGatewayConnectionOptions *transitgatewayapisv1.DeleteTransitGatewayConnectionOptions
-		response *core.DetailedResponse
-		err error
+		response                              *core.DetailedResponse
+		err                                   error
 	)
 
 	if !shouldDelete {
@@ -295,27 +300,27 @@ func (o *ClusterUninstaller) destroyTransitConnection(item cloudResource) error 
 
 	response, err = o.tgClient.DeleteTransitGatewayConnectionWithContext(ctx, deleteTransitGatewayConnectionOptions)
 	if err != nil {
-		log.Fatalf("destroyTransitConnection: DeleteTransitGatewayConnectionWithContext returns %v with response %v", err, response)
+		o.Logger.Fatalf("destroyTransitConnection: DeleteTransitGatewayConnectionWithContext returns %v with response %v", err, response)
 	}
 
 	return nil
 }
 
 // listTransitGateways lists Transit Connections for a Transit Gateway in the IBM Cloud.
-func (o *ClusterUninstaller) listTransitConnections (item cloudResource) (cloudResources, error) {
+func (o *ClusterUninstaller) listTransitConnections(item cloudResource) (cloudResources, error) {
 
-	log.Debugf("Listing Transit Gateways Connections (%s)", item.name)
+	o.Logger.Debugf("Listing Transit Gateways Connections (%s)", item.name)
 
 	var (
-		ctx context.Context
-		cancel func()
-		listConnectionsOptions *transitgatewayapisv1.ListConnectionsOptions
+		ctx                          context.Context
+		cancel                       func()
+		listConnectionsOptions       *transitgatewayapisv1.ListConnectionsOptions
 		transitConnectionCollections *transitgatewayapisv1.TransitConnectionCollection
-		transitConnection transitgatewayapisv1.TransitConnection
-		response *core.DetailedResponse
-		err error
-		perPage int64 = 32
-		moreData = true
+		transitConnection            transitgatewayapisv1.TransitConnection
+		response                     *core.DetailedResponse
+		err                          error
+		perPage                      int64 = 32
+		moreData                           = true
 	)
 
 	ctx, cancel = o.contextWithTimeout()
@@ -380,13 +385,13 @@ func (o *ClusterUninstaller) destroyTransitGateways() error {
 
 		items []cloudResource
 
-		ctx context.Context
+		ctx    context.Context
 		cancel func()
 
 		backoff wait.Backoff = wait.Backoff{Duration: 15 * time.Second,
 			Factor: 1.5,
-			Cap: 10 * time.Minute,
-			Steps: math.MaxInt32}
+			Cap:    10 * time.Minute,
+			Steps:  math.MaxInt32}
 	)
 
 	firstPassList, err = o.listTransitGateways()
@@ -402,7 +407,7 @@ func (o *ClusterUninstaller) destroyTransitGateways() error {
 	for _, item := range items {
 		select {
 		case <-o.Context.Done():
-			log.Debugf("destroyTransitGateways: case <-o.Context.Done()")
+			o.Logger.Debugf("destroyTransitGateways: case <-o.Context.Done()")
 			return o.Context.Err() // we're cancelled, abort
 		default:
 		}
@@ -412,12 +417,12 @@ func (o *ClusterUninstaller) destroyTransitGateways() error {
 			if err2 == nil {
 				return true, err2
 			} else {
-				o.errorTracker.suppressWarning(item.key, err2, log)
+				o.errorTracker.suppressWarning(item.key, err2, o.Logger)
 				return false, err2
 			}
 		})
 		if err != nil {
-			log.Fatalf("destroyTransitGateways: ExponentialBackoffWithContext (destroy) returns %v", err)
+			o.Logger.Fatalf("destroyTransitGateways: ExponentialBackoffWithContext (destroy) returns %v", err)
 		}
 	}
 
@@ -430,8 +435,8 @@ func (o *ClusterUninstaller) destroyTransitGateways() error {
 
 	backoff = wait.Backoff{Duration: 15 * time.Second,
 		Factor: 1.5,
-		Cap: 10 * time.Minute,
-		Steps: math.MaxInt32}
+		Cap:    10 * time.Minute,
+		Steps:  math.MaxInt32}
 	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		var (
 			secondPassList cloudResources
@@ -448,17 +453,20 @@ func (o *ClusterUninstaller) destroyTransitGateways() error {
 			return true, nil
 		} else {
 			for _, item := range secondPassList {
-				log.Debugf("destroyTransitGateways: found %s in second pass", item.name)
+				o.Logger.Debugf("destroyTransitGateways: found %s in second pass", item.name)
 			}
 			return false, nil
 		}
 	})
 	if err != nil {
-		log.Fatalf("destroyTransitGateways: ExponentialBackoffWithContext (list) returns %v", err)
+		o.Logger.Fatalf("destroyTransitGateways: ExponentialBackoffWithContext (list) returns %v", err)
 	}
 
 	return nil
 }
+
+var shouldDebug = false
+var shouldDelete = false
 
 // ClusterUninstaller holds the various options for the cluster we want to delete.
 type ClusterUninstaller struct {
@@ -474,8 +482,8 @@ type ClusterUninstaller struct {
 	VPCRegion      string
 	Zone           string
 
-	piSession             *ibmpisession.IBMPISession
-	tgClient              *transitgatewayapisv1.TransitGatewayApisV1
+	piSession *ibmpisession.IBMPISession
+	tgClient  *transitgatewayapisv1.TransitGatewayApisV1
 
 	resourceGroupID string
 	cosInstanceID   string
@@ -764,7 +772,7 @@ func (r cloudResources) list() []cloudResource {
 	return values
 }
 
-func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.IBMPISession, string, error) {
+func createPiSession(ptrApiKey *string, ptrServiceName *string) (*ibmpisession.IBMPISession, string, error) {
 
 	var bxSession *bxsession.Session
 	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
@@ -856,13 +864,13 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 
 	}
 
-	region, err:= GetRegion(serviceInstance.RegionID)
+	region, err := GetRegion(serviceInstance.RegionID)
 	if err != nil {
 		return nil, "", fmt.Errorf("Error GetRegion: %v", err)
 	}
 
 	var authenticator core.Authenticator = &core.IamAuthenticator{
-		ApiKey:	*ptrApiKey,
+		ApiKey: *ptrApiKey,
 	}
 
 	err = authenticator.Validate()
@@ -896,9 +904,9 @@ var log *logrus.Logger
 func main() {
 
 	var logMain *logrus.Logger = &logrus.Logger{
-		Out: os.Stderr,
+		Out:       os.Stderr,
 		Formatter: new(logrus.TextFormatter),
-		Level: logrus.DebugLevel,
+		Level:     logrus.DebugLevel,
 	}
 
 	var ptrApiKey *string
@@ -951,21 +959,23 @@ func main() {
 		out = io.Discard
 	}
 	log = &logrus.Logger{
-		Out: out,
+		Out:       out,
 		Formatter: new(logrus.TextFormatter),
-		Level: logrus.DebugLevel,
+		Level:     logrus.DebugLevel,
 	}
 
 	var clusterUninstaller *ClusterUninstaller
 	var err error
 
-	clusterUninstaller, err = New (log,
+	clusterUninstaller, err = New(log,
 		*ptrApiKey,
 		*ptrSearch)
 	if err != nil {
 		logMain.Fatalf("Error New: %v", err)
 	}
-	if shouldDebug { logMain.Printf("clusterUninstaller = %+v\n", clusterUninstaller) }
+	if shouldDebug {
+		logMain.Printf("clusterUninstaller = %+v\n", clusterUninstaller)
+	}
 
 	var piSession *ibmpisession.IBMPISession
 	var serviceGuid string
@@ -974,20 +984,22 @@ func main() {
 	if err != nil {
 		logMain.Fatalf("Error createPiSession: %v\n", err)
 	}
-	if shouldDebug { logMain.Printf("piSession = %v\n", piSession) }
+	if shouldDebug {
+		logMain.Printf("piSession = %v\n", piSession)
+	}
 
 	clusterUninstaller.piSession = piSession
 	clusterUninstaller.ServiceGUID = serviceGuid
 
 	var (
 		authenticator core.Authenticator = &core.IamAuthenticator{
-			ApiKey:	*ptrApiKey,
+			ApiKey: *ptrApiKey,
 		}
 		versionDate string = "2023-07-04"
-		tgClient *transitgatewayapisv1.TransitGatewayApisV1
-		tgOptions *transitgatewayapisv1.TransitGatewayApisV1Options = &transitgatewayapisv1.TransitGatewayApisV1Options{
+		tgClient    *transitgatewayapisv1.TransitGatewayApisV1
+		tgOptions   *transitgatewayapisv1.TransitGatewayApisV1Options = &transitgatewayapisv1.TransitGatewayApisV1Options{
 			Authenticator: authenticator,
-			Version: &versionDate,
+			Version:       &versionDate,
 		}
 	)
 
