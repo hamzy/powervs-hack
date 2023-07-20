@@ -33,8 +33,10 @@
 # 0.9.0 on 2023-04-29
 # 0.9.1 on 2023-05-25
 # 0.9.2 on 2023-06-08
-__version__ = "0.9.2"
-__date__ = "2023-06-08"
+# 0.9.3 on 2023-06-27
+# 0.9.4 on 2023-07-20
+__version__ = "0.9.4"
+__date__ = "2023-07-20"
 __author__ = "Mark Hamzy (mhamzy@redhat.com)"
 
 import argparse
@@ -59,7 +61,14 @@ info_fp = sys.stderr
 def get_url_string(opener, url):
     url_response = opener.open(url)
     url_data = get_data(url_response)
-    return url_data.decode()
+    try:
+        return url_data.decode()
+    except UnicodeDecodeError:
+        # 0x80 is not valid ASCII or UTF-8 so fails.
+        # 0x80 is valid in some characters sets. In windows-1252/cp1252 it's €.
+        for remove in [ b'\x80', b'\x81', b'\x82', b'\x83' ]:
+            url_data = url_data.replace(remove, b' ')
+        return url_data.decode()
 
 def get_data(response):
     global info_fp
@@ -114,9 +123,9 @@ def include_with_date (opener, after_dt, before_dt, spyglass_link, ci_type_str):
     after_bool = started_dt >= after_dt
     before_bool = started_dt <= before_dt
 
-    sys.stderr.write("INFO: Started on %s (%s) (%s)\n" % (started_dt, after_bool, before_bool, ))
-    if info_fp != sys.stderr:
-        info_fp.write("INFO: Started on %s (%s) (%s)\n" % (started_dt, after_bool, before_bool, ))
+#   sys.stderr.write("INFO: Started on %s (%s) (%s)\n" % (started_dt, after_bool, before_bool, ))
+#   if info_fp != sys.stderr:
+#       info_fp.write("INFO: Started on %s (%s) (%s)\n" % (started_dt, after_bool, before_bool, ))
     if (started_dt >= after_dt) and (started_dt <= before_dt):
         return True
     else:
@@ -304,36 +313,28 @@ def process_url(args, ci_stats, url):
 
                 job_url = "https://prow.ci.openshift.org" + spyglass_link['SpyglassLink']
 
-                info_fp.write("INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
-
                 current_zone_str = get_zone(opener, spyglass_link, ci_type_str)
 
                 # Test if we should process this run against a date restriction
                 if not include_with_date (opener, after_dt, before_dt, spyglass_link, ci_type_str):
-                    if not args.csv:
-                        output_fp.write("INFO: URL:  %s\n" % (job_url, ))
-                        output_fp.write("INFO: Zone: %s\n" % (current_zone_str, ))
-                        output_fp.write("\n")
                     continue
 
                 # Test if we should process this run against a zone restriction
                 if current_zone_str is None:
+                    info_fp.write("INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
+                    info_fp.write("INFO: URL:  %s\n" % (job_url, ))
                     info_fp.write("ERROR: Could not find the zone?\n\n")
                     continue
                 else:
                     if (zone_str is not None) and (current_zone_str != zone_str):
-                        if not args.csv:
-                            output_fp.write("INFO: URL:  %s\n" % (job_url, ))
-                            output_fp.write("INFO: Zone: %s\n" % (current_zone_str, ))
-                            output_fp.write("\n")
                         continue
 
                 processed_any = True
 
                 ci_stats['num_deploys'] += 1
 
+                info_fp.write("INFO: 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
                 info_fp.write("INFO: URL:  %s\n" % (job_url, ))
-
                 info_fp.write("INFO: Zone: %s\n" % (current_zone_str, ))
 
                 (build_finished_json, build_summary_str, build_details_str) = gather_build_run(opener, spyglass_link, ci_type_str)
