@@ -100,8 +100,8 @@ fi
 STATUS=$(ibmcloud tg gateways --output JSON | jq -r '.[] | select (.name|test("tg-'${CLUSTER_NAME}'")) | .status')
 while [ "${STATUS}" != "available" ]
 do
-	STATUS=$(ibmcloud tg gateways --output JSON | jq -r '.[] | select (.name|test("tg-'${CLUSTER_NAME}'")) | .status')
 	sleep 15s
+	STATUS=$(ibmcloud tg gateways --output JSON | jq -r '.[] | select (.name|test("tg-'${CLUSTER_NAME}'")) | .status')
 done
 
 TG_CONN_VPC_ID=$(ibmcloud tg connections ${TG_ID} --output json | jq -r '.[] | select (.name|test("tg-'${CLUSTER_NAME}'-conn-vpc")) | .id')
