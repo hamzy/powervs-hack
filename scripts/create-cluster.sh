@@ -408,30 +408,6 @@ stringData:
 type: Opaque
 ___EOF___
 
-cat << ___EOF___ > ${CLUSTER_DIR}/manifests/0000_50_cluster-ingress-operator_00-ingress-credentials-request.yaml
----
-apiVersion: cloudcredential.openshift.io/v1
-kind: CredentialsRequest
-metadata:
-  name: openshift-ingress-powervs
-  namespace: openshift-cloud-credential-operator
-spec:
-  providerSpec:
-    apiVersion: cloudcredential.openshift.io/v1
-    kind: IBMCloudPowerVSProviderSpec
-    policies:
-    - attributes:
-      - name: serviceName
-        value: internet-svcs
-      roles:
-      - crn:v1:bluemix:public:iam::::serviceRole:Manager
-      - crn:v1:bluemix:public:iam::::serviceRole:Reader
-      - crn:v1:bluemix:public:iam::::serviceRole:Writer
-  secretRef:
-    name: cloud-credentials
-    namespace: openshift-ingress-operator
-___EOF___
-
 cat << ___EOF___ > ${CLUSTER_DIR}/manifests/openshift-image-registry-installer-cloud-credentials-credentials.yaml
 apiVersion: v1
 kind: Secret
@@ -445,39 +421,6 @@ stringData:
     IBMCLOUD_APIKEY=${IBMCLOUD_OIRICCC_API_KEY}
   ibmcloud_api_key: ${IBMCLOUD_OIRICCC_API_KEY}
 type: Opaque
-___EOF___
-
-cat << ___EOF___ > ${CLUSTER_DIR}/manifests/0000_50_cluster-storage-operator_03_credentials_request_powervs.yaml
----
-apiVersion: cloudcredential.openshift.io/v1
-kind: CredentialsRequest
-metadata:
-  annotations:
-    include.release.openshift.io/self-managed-high-availability: "true"
-  name: ibm-powervs-block-csi-driver-operator
-  namespace: openshift-cloud-credential-operator
-spec:
-  providerSpec:
-    apiVersion: cloudcredential.openshift.io/v1
-    kind: IBMCloudPowerVSProviderSpec
-    policies:
-    - attributes:
-      - name: serviceName
-        value: power-iaas
-      roles:
-      - crn:v1:bluemix:public:iam::::role:Operator
-      - crn:v1:bluemix:public:iam::::role:Editor
-      - crn:v1:bluemix:public:iam::::role:Viewer
-      - crn:v1:bluemix:public:iam::::serviceRole:Reader
-      - crn:v1:bluemix:public:iam::::serviceRole:Manager
-    - attributes:
-      - name: resourceType
-        value: resource-group
-      roles:
-      - crn:v1:bluemix:public:iam::::role:Viewer
-  secretRef:
-    name: ibm-powervs-cloud-credentials
-    namespace: openshift-cluster-csi-drivers
 ___EOF___
 
 DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
