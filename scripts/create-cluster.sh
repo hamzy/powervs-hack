@@ -70,15 +70,13 @@ set -euo pipefail
 
 # https://github.com/openshift/installer/blob/master/data/data/coreos/rhcos.json#L267
 # The format is the-contents-of-the-bucket-variable / the-contents-of-the-object-variable
-#export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-412-86-202208090152-0-ppc64le-powervs.ova.gz"
-#export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-412-86-202211031740-0-ppc64le-powervs.ova.gz"
-#export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-413-86-202212131234-0-ppc64le-powervs.ova.gz"
+#export OPENSHIFT_INSTALL_OS_IMAGE_OVERRIDE="rhcos-powervs-images-${VPCREGION}/rhcos-413-92-202304131328-0-ppc64le-powervs.ova.gz"
 
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.5-ppc64le"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.0-ec.5-ppc64le"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.0-rc.2-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.47-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.29-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.9-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:powervs-ci-emptydir"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.13.0-0.nightly-ppc64le-2023-03-23-145443"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.14.0-0.nightly-ppc64le-2023-08-10-111232"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -267,13 +265,15 @@ compute:
 # platform:
 #   powervs:
 #     processors: 1
-#     procType: "Dedicated"
+#     procType: "Capped"
+# VERSION 4
 # platform:
 #   powervs:
 #     processors: 1
 #     procType: "Dedicated"
 #     sysType: e980
   replicas: 3
+# replicas: 0
 controlPlane:
   architecture: ppc64le
   hyperthreading: Enabled
@@ -288,12 +288,14 @@ controlPlane:
 # platform:
 #   powervs:
 #     processors: 1
-#     procType: "Dedicated"
+#     procType: "Capped"
+# VERSION 4
 # platform:
 #   powervs:
-#     processors: 1
+#     processors: 6
 #     procType: "Dedicated"
 #     sysType: e980
+# replicas: 1
   replicas: 3
 metadata:
   creationTimestamp: null
