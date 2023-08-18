@@ -1,0 +1,1 @@
+return nil, errors.New("client.ListResourceGroups returns nil")
