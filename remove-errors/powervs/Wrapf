@@ -1,2 +1,4 @@
 return nil, errors.Wrapf(err, "failed to list Cloud ssh keys: %v and the response is: %s", err, detailedResponse)
 return errors.Wrapf(err, "failed to delete sshKey %s", item.name)
+return nil, errors.Wrapf(err, "failed to list Power sshkeys: %v", err)
+return nil, errors.Wrapf(err, "failed to GetQueryParam on start: %s", err)
