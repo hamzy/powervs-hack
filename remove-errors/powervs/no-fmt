@@ -4,3 +4,5 @@ import (
 	"strings"
 	"time"
 )
+
+return nil, errors.New("Call an errors function")
