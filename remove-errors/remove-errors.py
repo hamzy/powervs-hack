@@ -38,69 +38,89 @@ def handle_file(directory, filename):
 def handle_line(line):
     b_Wrapf = line.find('errors.Wrapf') > -1
     if b_Wrapf:
-        # FROM:
-        # return errors.Wrapf(err, "failed to delete publicGateway %s", item.name)
-        # return nil, errors.Wrapf(err, "failed to list Cloud ssh keys: %v and the response is: %s", err, detailedResponse)
-        # TO:
-        # return fmt.Errorf("failed to delete publicGateway %s: %w", item.name, err)
-        # return nil, fmt.Errorf("failed to list Cloud ssh keys: %w and the response is: %s", err, detailedResponse)
-#       print('8<------8<------8<------8<------8<------8<------8<------8<------')
-        b_Err_at_end = line.find(', err)') > -1
-        b_Err_in_middle = line.find(', err,') > -1
-#       print('line = %s' % (line, ))
-#       print('b_Err_at_end = %s, idx = %s' % (b_Err_at_end, line.find(', err)'), ))
-#       print('b_Err_in_middle = %s, idx = %s' % (b_Err_in_middle, line.find(', err,'), ))
-        line = re_wrapf.sub('fmt.Errorf', line)
-#       print(line)
-        line = re_lparen_err_comma.sub('(', line)
-#       print(line)
-        # Rarely, the code already prints out the error at the end.  So ignore this case.
-        if not (b_Err_at_end or b_Err_in_middle):
-            line = re_lparen.sub(', err)', line)
-#           print(line)
-            line = re_quote_comma.sub(': %w",', line)
-#           print(line)
-#       print('8<------8<------8<------8<------8<------8<------8<------8<------')
+        line = handle_Wrapf(line)
 
     b_Wrap = line.find('errors.Wrap') > -1
     if b_Wrap:
-        # FROM:
-        # return nil, errors.Wrap(err, "Failed to list resource instances")
-        # TO:
-        # return nil, fmt.Errorf("Failed to list resource instances: %w", err)
-#       print('8<------8<------8<------8<------8<------8<------8<------8<------')
-        b_Err_at_end = line.find(', err)') > -1
-        b_Err_in_middle = line.find(', err,') > -1
-#       print('line = %s' % (line, ))
-#       print('b_Err_at_end = %s, idx = %s' % (b_Err_at_end, line.find(', err)'), ))
-#       print('b_Err_in_middle = %s, idx = %s' % (b_Err_in_middle, line.find(', err,'), ))
-        line = re_wrapf.sub('fmt.Errorf', line)
-#       print(line)
-        line = re_lparen_err_comma.sub('(', line)
-#       print(line)
-        # Rarely, the code already prints out the error at the end.  So ignore this case.
-        if not (b_Err_at_end or b_Err_in_middle):
-            line = re_lparen.sub(', err)', line)
-#           print(line)
-            line = re_quote_comma.sub(': %w",', line)
-#           print(line)
-#       print('8<------8<------8<------8<------8<------8<------8<------8<------')
+        line = handle_Wrap(line)
 
     b_Errorf = line.find('errors.Errorf') > -1
     if b_Errorf:
-        # FROM:
-        # return errors.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
-        # TO:
-        # return fmt.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
-        line = re_errorf.sub('fmt.Errorf', line)
+        line = handle_Errorf(line)
 
     b_New = line.find('errors.New') > -1
     if b_New:
-        # FROM:
-        # return nil, errors.New("newAuthenticator: apikey is empty")
-        # TO:
-        # return nil, fmt.Errorf("newAuthenticator: apikey is empty")
-        line = re_new.sub('fmt.Errorf', line)
+        line = handle_New(line)
+
+    return line
+
+def handle_Wrapf(line):
+    # FROM:
+    # return errors.Wrapf(err, "failed to delete publicGateway %s", item.name)
+    # return nil, errors.Wrapf(err, "failed to list Cloud ssh keys: %v and the response is: %s", err, detailedResponse)
+    # TO:
+    # return fmt.Errorf("failed to delete publicGateway %s: %w", item.name, err)
+    # return nil, fmt.Errorf("failed to list Cloud ssh keys: %w and the response is: %s", err, detailedResponse)
+#   print('8<------8<------8<------8<------8<------8<------8<------8<------')
+    b_Err_at_end = line.find(', err)') > -1
+    b_Err_in_middle = line.find(', err,') > -1
+#   print('line = %s' % (line, ))
+#   print('b_Err_at_end = %s, idx = %s' % (b_Err_at_end, line.find(', err)'), ))
+#   print('b_Err_in_middle = %s, idx = %s' % (b_Err_in_middle, line.find(', err,'), ))
+    line = re_wrapf.sub('fmt.Errorf', line)
+#   print(line)
+    line = re_lparen_err_comma.sub('(', line)
+#   print(line)
+    # Rarely, the code already prints out the error at the end.  So ignore this case.
+    if not (b_Err_at_end or b_Err_in_middle):
+        line = re_lparen.sub(', err)', line)
+#       print(line)
+        line = re_quote_comma.sub(': %w",', line)
+#       print(line)
+#   print('8<------8<------8<------8<------8<------8<------8<------8<------')
+
+    return line
+
+def handle_Wrap(line):
+    # FROM:
+    # return nil, errors.Wrap(err, "Failed to list resource instances")
+    # TO:
+    # return nil, fmt.Errorf("Failed to list resource instances: %w", err)
+#   print('8<------8<------8<------8<------8<------8<------8<------8<------')
+    b_Err_at_end = line.find(', err)') > -1
+    b_Err_in_middle = line.find(', err,') > -1
+#   print('line = %s' % (line, ))
+#   print('b_Err_at_end = %s, idx = %s' % (b_Err_at_end, line.find(', err)'), ))
+#   print('b_Err_in_middle = %s, idx = %s' % (b_Err_in_middle, line.find(', err,'), ))
+    line = re_wrap.sub('fmt.Errorf', line)
+#   print(line)
+    line = re_lparen_err_comma.sub('(', line)
+#   print(line)
+    # Rarely, the code already prints out the error at the end.  So ignore this case.
+    if not (b_Err_at_end or b_Err_in_middle):
+        line = re_lparen.sub(', err)', line)
+#       print(line)
+        line = re_quote_comma.sub(': %w",', line)
+#       print(line)
+#   print('8<------8<------8<------8<------8<------8<------8<------8<------')
+
+    return line
+
+def handle_Errorf(line):
+    # FROM:
+    # return errors.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
+    # TO:
+    # return fmt.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
+    line = re_errorf.sub('fmt.Errorf', line)
+
+    return line
+
+def handle_New(line):
+    # FROM:
+    # return nil, errors.New("newAuthenticator: apikey is empty")
+    # TO:
+    # return nil, fmt.Errorf("newAuthenticator: apikey is empty")
+    line = re_new.sub('fmt.Errorf', line)
 
     return line
 
