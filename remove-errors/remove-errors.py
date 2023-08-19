@@ -18,38 +18,56 @@ def handle_file(directory, filename):
 
     print(directory + filename)
 
+    # Read in the file
     with open(directory + filename, "r") as fp_in:
         data = fp_in.read()
 
+#   pdb.set_trace()
+
+    b_using_errors  = False
+    b_inside_import = False
+    b_found_fmt     = False
+
+    for line in data.splitlines():
+        # Are we using an errors function?
+        idx = line.find('errors.')
+        if idx > -1:
+            # Is there something after the errors. part?
+            if len(line) - idx > 7:
+                b_using_errors = True
+
+    # Write out the processed file
     with open(directory + filename, "w") as fp_out:
         for line in data.splitlines():
-            idx = line.find('"github.com/pkg/errors"')
-            if idx > -1:
+            # Handle missing "fmt" in import block
+            if re.search(re_begin_import, line):
+                b_inside_import = True
+            if re.search(re_end_import, line) and b_inside_import:
+                if not b_found_fmt and b_using_errors:
+                    fp_out.write('\t"fmt"\n')
+                b_inside_import = False
+            if b_inside_import:
+                if re.search(re_fmt, line):
+                    b_found_fmt = True
+            # Remove the errors package
+            if line.find('"github.com/pkg/errors"') > -1:
                 continue
-            idx = line.find('"errors"')
-            if idx > -1:
+            elif line.find('"errors"') > -1:
                 continue
-            idx = line.find('errors.')
-            if idx > -1:
+            # Are we using an errors function?
+            if line.find('errors.') > -1:
                 line = handle_line(line)
 #               print(line)
             fp_out.write(line+'\n')
 
 def handle_line(line):
-    b_Wrapf = line.find('errors.Wrapf') > -1
-    if b_Wrapf:
+    if re.search(re_wrapf, line):
         line = handle_Wrapf(line)
-
-    b_Wrap = line.find('errors.Wrap') > -1
-    if b_Wrap:
+    elif re.search(re_wrap, line):
         line = handle_Wrap(line)
-
-    b_Errorf = line.find('errors.Errorf') > -1
-    if b_Errorf:
+    elif re.search(re_errorf, line):
         line = handle_Errorf(line)
-
-    b_New = line.find('errors.New') > -1
-    if b_New:
+    elif re.search(re_new, line):
         line = handle_New(line)
 
     return line
@@ -67,7 +85,7 @@ def handle_Wrapf(line):
 #   print('line = %s' % (line, ))
 #   print('b_Err_at_end = %s, idx = %s' % (b_Err_at_end, line.find(', err)'), ))
 #   print('b_Err_in_middle = %s, idx = %s' % (b_Err_in_middle, line.find(', err,'), ))
-    line = re_wrapf.sub('fmt.Errorf', line)
+    line = re_wrapf.sub('fmt.Errorf(', line)
 #   print(line)
     line = re_lparen_err_comma.sub('(', line)
 #   print(line)
@@ -92,7 +110,7 @@ def handle_Wrap(line):
 #   print('line = %s' % (line, ))
 #   print('b_Err_at_end = %s, idx = %s' % (b_Err_at_end, line.find(', err)'), ))
 #   print('b_Err_in_middle = %s, idx = %s' % (b_Err_in_middle, line.find(', err,'), ))
-    line = re_wrap.sub('fmt.Errorf', line)
+    line = re_wrap.sub('fmt.Errorf(', line)
 #   print(line)
     line = re_lparen_err_comma.sub('(', line)
 #   print(line)
@@ -111,7 +129,7 @@ def handle_Errorf(line):
     # return errors.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
     # TO:
     # return fmt.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
-    line = re_errorf.sub('fmt.Errorf', line)
+    line = re_errorf.sub('fmt.Errorf(', line)
 
     return line
 
@@ -120,17 +138,20 @@ def handle_New(line):
     # return nil, errors.New("newAuthenticator: apikey is empty")
     # TO:
     # return nil, fmt.Errorf("newAuthenticator: apikey is empty")
-    line = re_new.sub('fmt.Errorf', line)
+    line = re_new.sub('fmt.Errorf(', line)
 
     return line
 
-re_wrapf            = re.compile('errors.Wrapf')
-re_wrap             = re.compile('errors.Wrap')
+re_begin_import     = re.compile('^import \($')
+re_fmt              = re.compile('"fmt"')
+re_end_import       = re.compile('^\)$')
 re_lparen_err_comma = re.compile('\(err, ')
 re_quote_comma      = re.compile('",')
 re_lparen           = re.compile('\)$')
-re_errorf           = re.compile('errors.Errorf')
-re_new              = re.compile('errors.New')
+re_wrapf            = re.compile('errors.Wrapf\(')
+re_wrap             = re.compile('errors.Wrap\(')
+re_errorf           = re.compile('errors.Errorf\(')
+re_new              = re.compile('errors.New\(')
 
 if __name__ == "__main__":
 
@@ -156,7 +177,7 @@ if __name__ == "__main__":
 #       for file in files:
 #           print(len(path) * '---', file)
 
+        # If we find a powervs directory, then process every file in that directory
         if 'powervs' in path:
-#           pdb.set_trace()
             for filename in files:
                 handle_file(root, filename)
