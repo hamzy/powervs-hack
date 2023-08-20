@@ -57,6 +57,7 @@ def handle_file(directory, filename):
             # Are we using an errors function?
             if line.find('errors.') > -1:
                 line = handle_line(line)
+                line = fixup_err_parameter(line)
 #               print(line)
             fp_out.write(line+'\n')
 
@@ -142,6 +143,55 @@ def handle_New(line):
 
     return line
 
+def fixup_err_parameter(line):
+#   print('FROM: '+line)
+
+    match_split_params = re.match(re_split_params, line)
+#   print('match_split_params = %s' % (match_split_params, ))
+
+    if not match_split_params:
+        return line
+
+    # Split the string into the parts we don't care about and the part we do
+    full_params = match_split_params.group(2)
+    parms = full_params.split(',')
+
+    # Is err a paramter?
+    i_err_parameter = -1
+    for i in range(len(parms)):
+        if 'err' == parms[i].strip():
+            i_err_parameter = i
+
+    if i_err_parameter > -1:
+#       pdb.set_trace()
+
+        string = parms[0]
+
+        # First find the matching %
+        idx = -1
+        for i in range(i_err_parameter):
+            if idx == -1:
+                idx = string.find('%')
+            else:
+                idx = string.find('%', idx+1)
+
+        if idx > -1:
+            # Now replace that paramter with %w
+            begin    = string[:idx]
+            end      = string[idx+2:]
+            string   = begin + '%w' + end
+
+            # Then build the line back up
+            new_line = match_split_params.group(1) + string
+            for parm in parms[1:]:
+                new_line += ',' + parm
+            new_line += match_split_params.group(3)
+            line = new_line
+
+#   print('TO:   '+line)
+
+    return line
+
 re_begin_import     = re.compile('^import \($')
 re_fmt              = re.compile('"fmt"')
 re_end_import       = re.compile('^\)$')
@@ -152,6 +202,7 @@ re_wrapf            = re.compile('errors.Wrapf\(')
 re_wrap             = re.compile('errors.Wrap\(')
 re_errorf           = re.compile('errors.Errorf\(')
 re_new              = re.compile('errors.New\(')
+re_split_params     = re.compile('(^[^(]*\()([^)]*)(\).*$)')
 
 if __name__ == "__main__":
 
