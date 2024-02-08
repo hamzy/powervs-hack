@@ -99,21 +99,26 @@ do
     echo "${LINES_AFTER_NS[$i]}"
 done
 
+(
+	for ((i = 0; i < ${#LINES_BEFORE_NS[@]}; i++))
+	do
+    		echo "${LINES_BEFORE_NS[$i]}"
+	done
+	for ((i = 0; i < ${#NAMESERVERS10[@]}; i++))
+	do
+    		echo "nameserver ${NAMESERVERS10[$i]}"
+	done
+	for ((i = 0; i < ${#NAMESERVERS[@]}; i++))
+	do
+    		echo "nameserver ${NAMESERVERS[$i]}"
+	done
+	for ((i = 0; i < ${#LINES_AFTER_NS[@]}; i++))
+	do
+    		echo "${LINES_AFTER_NS[$i]}"
+	done
+) > /etc/resolv.conf
+
 echo "============ BEGIN: New resolv.conf ============"
-for ((i = 0; i < ${#LINES_BEFORE_NS[@]}; i++))
-do
-    echo "${LINES_BEFORE_NS[$i]}"
-done
-for ((i = 0; i < ${#NAMESERVERS10[@]}; i++))
-do
-    echo "nameserver ${NAMESERVERS10[$i]}"
-done
-for ((i = 0; i < ${#NAMESERVERS[@]}; i++))
-do
-    echo "nameserver ${NAMESERVERS[$i]}"
-done
-for ((i = 0; i < ${#LINES_AFTER_NS[@]}; i++))
-do
-    echo "${LINES_AFTER_NS[$i]}"
-done
+/bin/cp /etc/resolv.conf /etc/resolv.conf.orig
+cat /etc/resolv.conf
 echo "============ END: New resolv.conf ============"
