@@ -16,6 +16,7 @@
 # openshift-install wait-for install-complete
 #
 
+USE_CAPI=true
 TEST_QUOTA_DNS=false
 TEST_QUOTA_CLOUD_CONNECTIONS=false
 TEST_QUOTA_DHCP=false
@@ -75,8 +76,11 @@ set -euo pipefail
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.11.47-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.29-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.9-ppc64le"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/psundara/openshift-release:powervs-ci-emptydir"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.14.0-0.nightly-ppc64le-2023-08-10-111232"
+# registry.ci.openshift.org/ocp-multi/4.16-art-latest-multi:4.16.0-0.nightly-multi-2024-02-22-055830
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly@sha256:929563ce4e99bbb42661b74946ded25d753118c8203cedbc6c7bb48f7f2b5667"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.15.0-0.nightly-ppc64le-2024-02-17-002157"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.16.0-0.nightly-ppc64le-2024-03-11-162525"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/hamzy/openshift-release:powervs-cluster-api"
 
 export PATH=${PATH}:$(pwd)/bin
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
@@ -138,7 +142,7 @@ then
 	#
 	# Quota check cloud connections
 	#
-	CONNECTIONS=$(ibmcloud pi connections --json | jq -r '.cloudConnections|length')
+	CONNECTIONS=$(ibmcloud pi cloud-connection list --json | jq -r '.cloudConnections|length')
 	if (( ${CONNECTIONS} >= 2 ))
 	then
 		echo "Error: Cannot have 2 or more cloud connections.  You currently have ${CONNECTIONS}."
@@ -174,7 +178,7 @@ then
 	#
 	# Quota check for image imports
 	#
-	JOBS=$(ibmcloud pi jobs --operation-action imageImport --json | jq -r '.jobs[] | select (.status.state|test("running")) | .id')
+	JOBS=$(ibmcloud pi job list --operation-action imageImport --json | jq -r '.jobs[] | select (.status.state|test("running")) | .id')
 	if [ -n "${JOBS}" ]
 	then
 		echo "${JOBS}"
@@ -316,9 +320,12 @@ platform:
     powervsResourceGroup: ${RESOURCE_GROUP}
     region: ${POWERVS_REGION}
 #   vpcRegion: ${VPCREGION}
+#   vpcRegion: us-south
     zone: ${POWERVS_ZONE}
-    serviceInstanceID: ${SERVICE_INSTANCE_GUID}
-#   cloudConnectionName: cloud-con-rdr-hamzy-test1-syd04-57kpj
+    serviceInstanceGUID: ${SERVICE_INSTANCE_GUID}
+featureSet: CustomNoUpgrade
+featureGates:
+   - ClusterAPIInstall=true
 #capabilities:
 #  baselineCapabilitySet: None
 #  additionalEnabledCapabilities:
@@ -335,6 +342,11 @@ sshKey: |
   ${SSH_KEY}
 ___EOF___
 
+if ! ${USE_CAPI}
+then
+	sed -i -e '/^featureSet/d' -e'/^featureGates/d' -e '/ClusterAPIInstall/d' ${CLUSTER_DIR}/install-config.yaml
+fi
+
 #
 # We use manual credentials mode
 #
@@ -342,11 +354,17 @@ sed -i '/credentialsMode/d' ${CLUSTER_DIR}/install-config.yaml
 sed -i '/^baseDomain:.*$/a credentialsMode: Manual' ${CLUSTER_DIR}/install-config.yaml
 
 date --utc +"%Y-%m-%dT%H:%M:%S%:z"
-openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
+#openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
 
 date --utc +"%Y-%m-%dT%H:%M:%S%:z"
+if ! ${USE_CAPI}
+then
 openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
+fi
+#exit 0
 
+if ! ${USE_CAPI}
+then
 #
 # Create three cluster operator's configuration files
 #
@@ -424,12 +442,13 @@ stringData:
   ibmcloud_api_key: ${IBMCLOUD_OIRICCC_API_KEY}
 type: Opaque
 ___EOF___
+fi
 
 DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
 echo "${DATE}"
 openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 #echo openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
-#exit 0
+exit 0
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
@@ -441,7 +460,7 @@ RC=$?
 # Maybe the first time took too long and it is possible to wait for a second
 # attempt to complete?
 #
-openshift-install wait-for install-complete --dir ${CLUSTER_DIR} --log-level=debug || true
+#openshift-install wait-for install-complete --dir ${CLUSTER_DIR} --log-level=debug || true
 RC=$?
 
 if [ ${RC} -gt 0 ]
