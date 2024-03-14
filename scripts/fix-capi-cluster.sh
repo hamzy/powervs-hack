@@ -66,8 +66,8 @@ function create_dns_entries()
 	echo "HOSTNAME_INTERNAL=${HOSTNAME_INTERNAL} HOSTNAME_LB_INT=${HOSTNAME_LB_INT}"
 	ibmcloud cis dns-record-create ${ID_DOMAIN} --json '{ "name": "'${HOSTNAME_INTERNAL}'", "type": "CNAME", "content": "'${HOSTNAME_LB_INT}'", "ttl": 60 }'
 
-	echo "${HOSTNAME_LB_INT} ${HOSTNAME_INTERNAL}" | sudo tee -a /etc/hosts
-	echo "${HOSTNAME_LB_EXT} ${HOSTNAME_EXTERNAL}" | sudo tee -a /etc/hosts
+	echo "$(dig +short ${HOSTNAME_LB_INT} | head -n1) ${HOSTNAME_INTERNAL}" | sudo tee -a /etc/hosts
+	echo "$(dig +short ${HOSTNAME_LB_EXT} | head -n1) ${HOSTNAME_EXTERNAL}" | sudo tee -a /etc/hosts
 
 	return 0
 }
