@@ -79,7 +79,8 @@ set -euo pipefail
 # registry.ci.openshift.org/ocp-multi/4.16-art-latest-multi:4.16.0-0.nightly-multi-2024-02-22-055830
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly@sha256:929563ce4e99bbb42661b74946ded25d753118c8203cedbc6c7bb48f7f2b5667"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.15.0-0.nightly-ppc64le-2024-02-17-002157"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.16.0-0.nightly-ppc64le-2024-03-11-162525"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.16.0-0.nightly-ppc64le-2024-03-19-080310"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.16.0-0.nightly-ppc64le-2024-03-23-105659"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/hamzy/openshift-release:powervs-cluster-api"
 
 export PATH=${PATH}:$(pwd)/bin
@@ -319,22 +320,17 @@ platform:
     userID: ${IBMID}
     powervsResourceGroup: ${RESOURCE_GROUP}
     region: ${POWERVS_REGION}
+#   vpcName: rdr-hamzy-test-us-south-vpc
 #   vpcRegion: ${VPCREGION}
-#   vpcRegion: us-south
+#   vpcSubnets:
+#     - subnet1
+#     - subnet2
+#     - subnet3
     zone: ${POWERVS_ZONE}
     serviceInstanceGUID: ${SERVICE_INSTANCE_GUID}
 featureSet: CustomNoUpgrade
 featureGates:
    - ClusterAPIInstall=true
-#capabilities:
-#  baselineCapabilitySet: None
-#  additionalEnabledCapabilities:
-#    - openshift-samples
-#    - baremetal
-#    - marketplace
-#    - Console
-#    - Insights
-#    - NodeTuning
 publish: External
 #publish: Internal
 pullSecret: '${PULL_SECRET}'
@@ -357,14 +353,9 @@ date --utc +"%Y-%m-%dT%H:%M:%S%:z"
 #openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
 
 date --utc +"%Y-%m-%dT%H:%M:%S%:z"
-if ! ${USE_CAPI}
-then
 openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
-fi
 #exit 0
 
-if ! ${USE_CAPI}
-then
 #
 # Create three cluster operator's configuration files
 #
@@ -442,11 +433,10 @@ stringData:
   ibmcloud_api_key: ${IBMCLOUD_OIRICCC_API_KEY}
 type: Opaque
 ___EOF___
-fi
 
 DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
 echo "${DATE}"
-openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
+openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug # &
 #echo openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
 exit 0
 PID_INSTALL=$!
