@@ -43,7 +43,7 @@ then
 
 	while true
 	do
-		export NETWORK_NAME=$(ibmcloud pi instance ${INFRA_ID}-master-0 --json | jq -r '.addresses[].networkName')
+		export NETWORK_NAME=$(ibmcloud pi instance get ${INFRA_ID}-master-0 --json | jq -r '.addresses[].networkName')
 		if [ -n "${NETWORK_NAME}" ]
 		then
 			break
@@ -59,7 +59,7 @@ VPC_INSTANCE_NAME="${INFRA_ID}-vs1"
 VPC_ID=$(ibmcloud is vpcs --output json | jq -r '.[] | select (.name|test("'${INFRA_ID}'")) | .id')
 VPC_SUBNET="vpc-subnet-${INFRA_ID}"
 VPC_SUBNET_ZONE=$(ibmcloud is subnet ${VPC_SUBNET} --output json | jq -r '.zone.name')
-IMAGE_NAME=$(ibmcloud is images --output json | jq -r '.[] | select (.name|test("ibm-centos.*amd64")) | select (.status|test("available")) | .name')
+IMAGE_NAME=$(ibmcloud is images --output json | jq -r '.[] | select (.name|test("ibm-centos.*amd64")) | select (.status|test("available")) | .name' | head -n1)
 RESOURCE_GROUP=$(jq -r '.powervs.powerVSResourceGroup' ${CLUSTER_DIR}/metadata.json)
 
 if ! ibmcloud is key ${USER}-key 1>/dev/null 2>&1
@@ -80,36 +80,56 @@ fi
 
 NET_IFACE_ID=$(ibmcloud is instance ${VPC_INSTANCE_NAME} --output json | jq -r '.primary_network_interface.id')
 
-ibmcloud is floating-ip-reserve ${VPC_INSTANCE_NAME}-floating-ip --nic ${NET_IFACE_ID}
+if ! ibmcloud is floating-ip ${VPC_INSTANCE_NAME}-floating-ip 1>/dev/null 2>&1
+then
+	ibmcloud is floating-ip-reserve ${VPC_INSTANCE_NAME}-floating-ip --nic ${NET_IFACE_ID}
+fi
 
 SECURITY_GROUP_NAME=$(ibmcloud is instance ${VPC_INSTANCE_NAME} --output json | jq -r '.primary_network_interface.security_groups[].name')
 
-ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound tcp --port-min 22 --port-max 22 --remote '0.0.0.0/0'
-ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound icmp --remote '0.0.0.0/0'
-
-if ! ibmcloud pi network ${USER}-public-network
+COUNT_RULES=$(ibmcloud is security-group-rules ${SECURITY_GROUP_NAME} --output JSON | jq -r '.[] | select(.direction|test("inbound")) | select(.port_min==22)')
+if [ "${COUNT_RULES}" == "" ]
 then
-	ibmcloud pi network-create-public ${USER}-public-network --dns-servers "1.1.1.1 9.9.9.9 8.8.8.8"
+	COUNT_RULES=0
+fi
+if (( ${COUNT_RULES} == 0 ))
+then
+	ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound tcp --port-min 22 --port-max 22 --remote '0.0.0.0/0'
 fi
 
-CENTOS_ID=$(ibmcloud pi images --json | jq -r '.images[] | select (.name|test("CentOS-Stream-8")) | .imageID')
+COUNT_RULES=$(ibmcloud is security-group-rules ${SECURITY_GROUP_NAME} --output JSON | jq -r '.[] | select(.direction|test("inbound")) | select(.protocol|test("icmp")) | select(.remote.cidr_block|test("0.0.0.0/0"))')
+if [ "${COUNT_RULES}" == "" ]
+then
+	COUNT_RULES=0
+fi
+if (( ${COUNT_RULES} == 0 ))
+then
+	ibmcloud is security-group-rule-add ${SECURITY_GROUP_NAME} inbound icmp --remote '0.0.0.0/0'
+fi
+
+if ! ibmcloud pi subnet get ${USER}-public-network
+then
+	ibmcloud pi subnet create ${USER}-public-network --net-type public --dns-servers "1.1.1.1 9.9.9.9 8.8.8.8"
+fi
+
+CENTOS_ID=$(ibmcloud pi image list --json | jq -r '.images[] | select (.name|test("CentOS-Stream-8")) | .imageID')
 if [ -z "${CENTOS_ID}" ]
 then
-	ibmcloud pi image-create CentOS-Stream-8
+	ibmcloud pi image create CentOS-Stream-8
 
-	CENTOS_ID=$(ibmcloud pi images --json | jq -r '.images[] | select (.name|test("CentOS-Stream-8")) | .imageID')
+	CENTOS_ID=$(ibmcloud pi image list --json | jq -r '.images[] | select (.name|test("CentOS-Stream-8")) | .imageID')
 
 	STATE="queued"
 	while [ "${STATE}" == "queued" ]
 	do
 		sleep 15s
-		STATE=$(ibmcloud pi image ${CENTOS_ID} --json | jq -r '.state')
+		STATE=$(ibmcloud pi image get ${CENTOS_ID} --json | jq -r '.state')
 	done
 fi
 
-if ! ibmcloud pi instance ${INSTANCE_NAME}
+if ! ibmcloud pi instance get ${INSTANCE_NAME}
 then
-	CMD="ibmcloud pi instance-create ${INSTANCE_NAME} --image CentOS-Stream-8 --memory 8 --key-name ${USER}-key --network ${USER}-public-network"
+	CMD="ibmcloud pi instance create ${INSTANCE_NAME} --image CentOS-Stream-8 --memory 8 --key-name ${USER}-key --subnet ${USER}-public-network --storage-tier tier1"
 	if [ -n "${NETWORK_NAME}" ]
 	then	
 		CMD="${CMD} --network ${NETWORK_NAME}"
@@ -121,7 +141,7 @@ fi
 while true
 do
 	set +e
-	ibmcloud pi instance-get-console ${INSTANCE_NAME}
+	ibmcloud pi instance console get ${INSTANCE_NAME}
 	RC=$?
 	set -e
 	if [ ${RC} -eq 0 ]
@@ -133,7 +153,7 @@ done
 
 while true
 do
-	export IP=$(ibmcloud pi instance ${INSTANCE_NAME} --json | jq -r '.networks[] | select(.networkName|test("'${USER}'-public-network")) | .externalIP')
+	export IP=$(ibmcloud pi instance get ${INSTANCE_NAME} --json | jq -r '.networks[] | select(.networkName|test("'${USER}'-public-network")) | .externalIP')
 	if [ $? -eq 0 ]
 	then
 		break
