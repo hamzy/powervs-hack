@@ -35,7 +35,7 @@ then
 fi
 
 [ -z "${SERVICE_INSTANCE}" ] && exit 1
-SERVICE_ID=$(ibmcloud pi service-list --json | jq -r '.[] | select (.Name|test("^'${SERVICE_INSTANCE}'$")) | .CRN')
+SERVICE_ID=$(ibmcloud pi workspace list --json | jq -r '.Payload.workspaces[] | select (.name|test("^'${SERVICE_INSTANCE}'$")) | .details.crn')
 if [ -z "${SERVICE_ID}" ]
 then
 	echo "Error: ${SERVICE_INSTANCE} does not exist!"
