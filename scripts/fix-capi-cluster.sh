@@ -102,6 +102,8 @@ function create_external_loadbalancer()
 
 	wait_for_lb_ready ${LB_EXT_ID}
 
+if false
+then
 	API_POOL_ID=$(ibmcloud is load-balancer ${LB_EXT_ID} --json | jq -r '.pools[] | select(.name|test("${CLUSTER_NAME}-loadbalancer-pool-6443")) | .id')
 	if [ -z "${API_POOL_ID}" ]
 	then
@@ -144,6 +146,7 @@ function create_external_loadbalancer()
 		ibmcloud is load-balancer-listener-create ${LB_EXT_ID} --port 6443 --protocol tcp --default-pool ${API_POOL_ID}
 		wait_for_lb_ready ${LB_EXT_ID}
 	fi
+fi
 
 	return 0
 }
@@ -375,7 +378,7 @@ init_ibmcloud
 FILE1=$(mktemp)
 trap "/bin/rm -rf ${FILE1}" EXIT
 
-fix_security_group_rules
+#fix_security_group_rules
 
 #create_external_loadbalancer
 
@@ -383,6 +386,6 @@ fix_security_group_rules
 
 #add_ssh_server_pool
 
-add_worker_ssh_key
+#add_worker_ssh_key
 
-create_dns_entries
+#create_dns_entries
