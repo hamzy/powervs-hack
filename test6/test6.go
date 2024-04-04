@@ -759,6 +759,8 @@ func main() {
 		logMain.Fatal("Error createPiSession: %v\n", err)
 	}
 
+	clusterUninstaller.piSession = piSession
+
 	var instanceClient *instance.IBMPIInstanceClient
 
 	instanceClient = instance.NewIBMPIInstanceClient(context.Background(), piSession, serviceGuid)
