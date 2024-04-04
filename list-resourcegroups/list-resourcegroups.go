@@ -15,6 +15,8 @@
 package main
 
 import (
+	survey "github.com/AlecAivazis/survey/v2"
+//	surveyCore "github.com/AlecAivazis/survey/v2/core"
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/platform-services-go-sdk/resourcemanagerv2"
 	"log"
@@ -36,6 +38,38 @@ func listResourceGroups (rSearch *regexp.Regexp, mgmtService *resourcemanagerv2.
 		if rSearch.MatchString(*resourceGroup.Name) {
 		}
 	}
+}
+
+func listResourceGroups2 (rSearch *regexp.Regexp, mgmtService *resourcemanagerv2.ResourceManagerV2) {
+
+	listResourceGroupsOptions := mgmtService.NewListResourceGroupsOptions()
+
+	resourceGroups, detailedResponse, err := mgmtService.ListResourceGroups(listResourceGroupsOptions)
+	if err != nil {
+		log.Fatalf("Failed to list resourceGroups: %v and the response is: %s", err, detailedResponse)
+	}
+
+	var resourceGroupSurvey string
+
+	resourceGroupsSurvey := make([]string, len(resourceGroups.Resources))
+	for i, resourceGroup := range resourceGroups.Resources {
+		resourceGroupsSurvey[i] = *resourceGroup.Name
+	}
+
+	err = survey.Ask([]*survey.Question{
+		{
+			Prompt: &survey.Select{
+			Message: "Resource Group",
+			Help:    "The Power VS resource group to be used for installation.",
+			Default: "",
+			Options: resourceGroupsSurvey,
+			},
+		},
+	}, &resourceGroupSurvey)
+	if err != nil {
+		log.Fatalf("survey.Ask failed with %v", err)
+	}
+	log.Printf("resourceGroupSurvey = %v\n", resourceGroupSurvey)
 }
 
 func main() {
@@ -62,5 +96,5 @@ func main() {
 		log.Fatal("Error creating ResourceManagerV2 Service.")
 	}
 
-	listResourceGroups (rSearch, mgmtService)
+	listResourceGroups2 (rSearch, mgmtService)
 }
