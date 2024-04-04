@@ -3122,7 +3122,8 @@ func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error)
 		foundVpc bool = false
 	)
 
-	ctx, _ = o.contextWithTimeout()
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
 
 	o.Logger.Printf("Listing VPCs in Cloud Connections")
 
@@ -3253,7 +3254,8 @@ func (o *ClusterUninstaller) destroyVPCInCloudConnections() error {
 
 	items := o.insertPendingItems(jobTypeName, firstPassList.list())
 
-	ctx, _ := o.contextWithTimeout()
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
 
 	for _, item := range items {
 		select {
@@ -3324,7 +3326,7 @@ func (o *ClusterUninstaller) destroyVPCInCloudConnections() error {
 
 const networkTypeName = "network"
 
-// listNetworks lists networks in the service instance.
+// listNetworks lists networks in the cloud.
 func (o *ClusterUninstaller) listNetworks() (cloudResources, error) {
 	var (
 		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/networks.go#L20
@@ -3338,9 +3340,12 @@ func (o *ClusterUninstaller) listNetworks() (cloudResources, error) {
 
 	o.Logger.Debugf("Listing Networks")
 
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
+
 	select {
-	case <-o.Context.Done():
-		o.Logger.Debugf("listNetworks: case <-o.Context.Done()")
+	case <-ctx.Done():
+		o.Logger.Debugf("listNetworks: case <-ctx.Done()")
 		return nil, o.Context.Err() // we're cancelled, abort
 	default:
 	}
@@ -3377,17 +3382,14 @@ func (o *ClusterUninstaller) listNetworks() (cloudResources, error) {
 }
 
 func (o *ClusterUninstaller) deleteNetwork(item cloudResource) error {
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
+
 	select {
-	case <-o.Context.Done():
-		o.Logger.Debugf("deleteNetwork: case <-o.Context.Done()")
+	case <-ctx.Done():
+		o.Logger.Debugf("deleteNetwork: case <-ctx.Done()")
 		return o.Context.Err() // we're cancelled, abort
 	default:
-	}
-
-	if !shouldDelete {
-		o.Logger.Debugf("Skipping deleting network %q since shouldDelete is false", item.name)
-		o.deletePendingItems(item.typeName, []cloudResource{item})
-		return nil
 	}
 
 	err := o.networkClient.Delete(item.id)
@@ -3395,7 +3397,7 @@ func (o *ClusterUninstaller) deleteNetwork(item cloudResource) error {
 		return errors.Wrapf(err, "failed to delete network %s", item.name)
 	}
 
-	o.Logger.Debugf("Deleting network %q", item.name)
+	o.Logger.Debugf("Deleting Network %q", item.name)
 	o.deletePendingItems(item.typeName, []cloudResource{item})
 
 	return nil
@@ -3415,12 +3417,13 @@ func (o *ClusterUninstaller) destroyNetworks() error {
 
 	items := o.insertPendingItems(networkTypeName, firstPassList.list())
 
-	ctx, _ := o.contextWithTimeout()
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
 
 	for _, item := range items {
 		select {
-		case <-o.Context.Done():
-			o.Logger.Debugf("destroyNetworks: case <-o.Context.Done()")
+		case <-ctx.Done():
+			o.Logger.Debugf("destroyNetworks: case <-ctx.Done()")
 			return o.Context.Err() // we're cancelled, abort
 		default:
 		}
@@ -3501,7 +3504,8 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 		foundOne  bool    = false
 	)
 
-	ctx, _ = o.contextWithTimeout()
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
 
 	result := []cloudResource{}
 
@@ -3614,7 +3618,8 @@ func (o *ClusterUninstaller) deleteServiceInstance(item cloudResource) error {
 		err           error
 	)
 
-	ctx, _ = o.contextWithTimeout()
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
 
 	select {
 	case <-o.Context.Done():
@@ -3671,7 +3676,8 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 
 	items := o.insertPendingItems(serviceInstanceTypeName, firstPassList.list())
 
-	ctx, _ := o.contextWithTimeout()
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
 
 	for _, item := range items {
 		select {
@@ -3906,7 +3912,9 @@ func (o *ClusterUninstaller) Run() (error) {
 	var ok bool
 	var err error
 
-	ctx, _ = o.contextWithTimeout()
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
+
 	if ctx == nil {
 		return errors.Wrap(err, "powervs.Run: contextWithTimeout returns nil")
 	}
@@ -4039,7 +4047,9 @@ func (o *ClusterUninstaller) executeStageFunction(f struct {
 	var ok bool
 	var err error
 
-	ctx, _ = o.contextWithTimeout()
+	ctx, cancel := o.contextWithTimeout()
+	defer cancel()
+
 	if ctx == nil {
 		return errors.Wrap(err, "executeStageFunction contextWithTimeout returns nil")
 	}
