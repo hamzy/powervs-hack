@@ -1,1 +1,3 @@
 return nil, errors.Wrap(err, "could not retrieve DNS records")
+return nil, nil, errors.Wrap(err, "failed to create provider")
+return errors.Wrap(err, "executeStageFunction contextWithTimeout returns nil")

@@ -27,6 +27,8 @@ def handle_file(directory, filename):
     b_using_errors  = False
     b_inside_import = False
     b_found_fmt     = False
+    b_found_errors  = False
+    b_using_new     = False
 
     for line in data.splitlines():
         # Are we using an errors function?
@@ -35,6 +37,8 @@ def handle_file(directory, filename):
             # Is there something after the errors. part?
             if len(line) - idx > 7:
                 b_using_errors = True
+        if re.search(re_new, line):
+            b_using_new = True
 
     # Write out the processed file
     with open(directory + filename, "w") as fp_out:
@@ -45,15 +49,19 @@ def handle_file(directory, filename):
             if re.search(re_end_import, line) and b_inside_import:
                 if not b_found_fmt and b_using_errors:
                     fp_out.write('\t"fmt"\n')
+                if not b_found_errors and b_using_new:
+                    fp_out.write('\t"errors"\n')
                 b_inside_import = False
             if b_inside_import:
                 if re.search(re_fmt, line):
                     b_found_fmt = True
+                if re.search(re_errors, line):
+                    b_found_errors = True
             # Remove the errors package
             if line.find('"github.com/pkg/errors"') > -1:
                 continue
-            elif line.find('"errors"') > -1:
-                continue
+#           elif line.find('"errors"') > -1:
+#               continue
             # Are we using an errors function?
             if line.find('errors.') > -1:
                 line = handle_line(line)
@@ -68,8 +76,22 @@ def handle_line(line):
         line = handle_Wrap(line)
     elif re.search(re_errorf, line):
         line = handle_Errorf(line)
-    elif re.search(re_new, line):
-        line = handle_New(line)
+#   elif re.search(re_new, line):
+#       line = handle_New(line)
+
+    # Avoid lint error about uppercase error messages
+    idx_message = line.find('("')
+    if idx_message > -1:
+        idx_message += 2
+#       print(line[:idx_message] + '^' + line[idx_message+1:])
+        b_all_upper = False
+        idx_space = line[idx_message:].find(' ')
+        if idx_space > -1:
+#           print(line[idx_message:idx_message+idx_space]+"$$$")
+            b_all_upper = line[idx_message:idx_message+idx_space].isupper()
+        if not b_all_upper:
+            line = line[:idx_message] + line[idx_message].lower() + line[idx_message+1:]
+#           print(line)
 
     return line
 
@@ -94,7 +116,7 @@ def handle_Wrapf(line):
     if not (b_Err_at_end or b_Err_in_middle):
         line = re_lparen.sub(', err)', line)
 #       print(line)
-        line = re_quote_comma.sub(': %w",', line)
+        line = fixup_end_quote(line)
 #       print(line)
 #   print('8<------8<------8<------8<------8<------8<------8<------8<------')
 
@@ -119,7 +141,7 @@ def handle_Wrap(line):
     if not (b_Err_at_end or b_Err_in_middle):
         line = re_lparen.sub(', err)', line)
 #       print(line)
-        line = re_quote_comma.sub(': %w",', line)
+        line = fixup_end_quote(line)
 #       print(line)
 #   print('8<------8<------8<------8<------8<------8<------8<------8<------')
 
@@ -140,6 +162,24 @@ def handle_New(line):
     # TO:
     # return nil, fmt.Errorf("newAuthenticator: apikey is empty")
     line = re_new.sub('fmt.Errorf(', line)
+
+    return line
+
+def fixup_end_quote(line):
+    idx_end_quote = line.rfind('",')
+    if idx_end_quote == -1:
+        return line
+
+#   print('FROM: '+line)
+
+    line1 = line[:idx_end_quote]
+    line2 = line[idx_end_quote:]
+#   print('LINE1: '+line1)
+#   print('LINE2: '+line2)
+    line2 = re_quote_comma.sub(': %w",', line2)
+    line = line1 + line2
+
+#   print('TO:   '+line)
 
     return line
 
@@ -194,6 +234,7 @@ def fixup_err_parameter(line):
 
 re_begin_import     = re.compile('^import \($')
 re_fmt              = re.compile('"fmt"')
+re_errors           = re.compile('"errors"')
 re_end_import       = re.compile('^\)$')
 re_lparen_err_comma = re.compile('\(err, ')
 re_quote_comma      = re.compile('",')
