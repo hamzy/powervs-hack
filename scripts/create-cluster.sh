@@ -247,6 +247,42 @@ SSH_KEY=$(cat ~/.ssh/id_installer_rsa.pub)
 #
 PULL_SECRET=$(cat ~/.pullSecret)
 
+function validate_pull_secret() {
+  set +eux
+  runtime=""
+  which docker 1>/dev/null 2>&1
+  if [[ $? == 0 ]]; then
+     runtime="docker"
+  fi
+  which podman 1>/dev/null 2>&1
+  if [[ $? == 0 && -z ${runtime} ]]; then
+     runtime="podman"
+  fi
+  if [[ -z ${runtime} ]]; then
+     echo "Warning: Neither docker nor podman is installed hence we
+     cannot check whether the pull secret is latest"
+	 return
+  fi
+  if [[ -n {OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE} ]]; then
+    ${runtime} pull ${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE} --authfile=$1 1>/dev/null 2>&1
+  else
+    ${runtime} pull registry.ci.openshift.org/origin/release:4.16 --authfile=$1 1>/dev/null 2>&1
+  fi
+  if [[ $? != 0 ]]; then
+    echo "Error: Pull secret is invalid!"
+    exit 1
+  fi
+
+  # rmi without -f. In case another container uses the image, retain it.
+  if [[ -n {OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE} ]]; then
+    ${runtime} rmi ${OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE} 1>/dev/null 2>&1
+  else
+    ${runtime} rmi registry.ci.openshift.org/origin/release:4.16 1>/dev/null 2>&1
+  fi
+  set -eux
+}
+validate_pull_secret "/root/.pullSecret"
+
 #openshift-install create install-config --dir ${CLUSTER_DIR} --log-level=debug
 #exit 0
 
