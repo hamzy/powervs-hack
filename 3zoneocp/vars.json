@@ -1,0 +1,25 @@
+{
+	"ibmcloud_api_key":	"...",
+	"pi_ssh_key":		"...",
+	"oper_system":		"linux",
+	"architecture":		"amd64",
+	"region":               "us-south",
+	"group":                "...",
+	"vpcs": {
+		"zone1": {
+			"pvs_workspace_name": "rdr-hamzy-3zone-powervs1",
+			"pvs_dc_cidr": "192.168.101.0/24",
+			"vpc_zone_cidr": "10.0.101.0/24"
+		},
+		"zone2": {
+			"pvs_workspace_name": "rdr-hamzy-3zone-powervs2",
+			"pvs_dc_cidr": "192.168.102.0/24",
+			"vpc_zone_cidr": "10.0.102.0/24"
+		},
+		"zone3": {
+			"pvs_workspace_name": "rdr-hamzy-3zone-powervs3",
+			"pvs_dc_cidr": "192.168.103.0/24",
+			"vpc_zone_cidr": "10.0.103.0/24"
+		}
+	}
+}
