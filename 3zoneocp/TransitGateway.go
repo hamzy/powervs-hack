@@ -181,7 +181,7 @@ func (tg *TransitGateway) findTransitGateway() (*transitgatewayapisv1.TransitGat
 
 				getOptions = tg.tgClient.NewGetTransitGatewayOptions(*gateway.ID)
 
-				foundTg, response, err = tg.tgClient.GetTransitGateway(getOptions)
+				foundTg, response, err = tg.tgClient.GetTransitGatewayWithContext(tg.ctx, getOptions)
 				if err != nil {
 					log.Fatalf("Error: GetTransitGateway: response = %v, err = %v", response, err)
 					return nil, err
@@ -422,6 +422,10 @@ func (tg *TransitGateway) AddTransitGatewayConnection(crn string, networkType Tr
 		name                                  string
 	)
 
+	if tg.innerTg == nil {
+		return fmt.Errorf("AddTransitGatewayConnection innerTg is nil")
+	}
+
 	listConnectionsOptions = tg.tgClient.NewListConnectionsOptions()
 	listConnectionsOptions.SetLimit(perPage)
 
@@ -526,6 +530,10 @@ func (tg *TransitGateway) deleteTransitGatewayConnections() error {
 		perPage                               int64 = 32
 		moreData                                    = true
 	)
+
+	if tg.innerTg == nil {
+		return fmt.Errorf("deleteTransitGatewayConnections innerTg is nil")
+	}
 
 	listConnectionsOptions = tg.tgClient.NewListConnectionsOptions()
 	listConnectionsOptions.SetLimit(perPage)

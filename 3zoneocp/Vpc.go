@@ -418,6 +418,10 @@ func (vpc *VPC) setSubnetPublicGateway(zone string) error {
 
 	log.Debugf("setSubnetPublicGateway: zone = %s", zone)
 
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("setSubnetPublicGateway innerVpc is nil")
+	}
+
 	subnetName = fmt.Sprintf("%s-%s-subnet", vpc.options.Name, zone)
 	log.Debugf("setSubnetPublicGateway: subnetName = %s", subnetName)
 
@@ -475,12 +479,16 @@ func (vpc *VPC) findSubnet(name string) (*vpcv1.Subnet, error) {
 		err error
 	)
 
+	if vpc.innerVpc == nil {
+		return nil, fmt.Errorf("findSubnet innerVpc is nil")
+	}
+
 	listOptions = vpc.vpcSvc.NewListSubnetsOptions()
 	listOptions.SetLimit(perPage)
 	listOptions.SetResourceGroupID(vpc.options.GroupID)
 
 	for moreData {
-		subnets, response, err = vpc.vpcSvc.ListSubnets(listOptions)
+		subnets, response, err = vpc.vpcSvc.ListSubnetsWithContext(vpc.ctx, listOptions)
 		if err != nil {
 			log.Fatalf("Error: findSubnet: ListSubnets: response = %v, err = %v", response, err)
 			return nil, err
@@ -533,12 +541,16 @@ func (vpc *VPC) deleteSubnets() error {
 		err error
 	)
 
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("deleteSubnets innerVpc is nil")
+	}
+
 	listOptions = vpc.vpcSvc.NewListSubnetsOptions()
 	listOptions.SetLimit(perPage)
 	listOptions.SetResourceGroupID(vpc.options.GroupID)
 
 	for moreData {
-		subnets, response, err = vpc.vpcSvc.ListSubnets(listOptions)
+		subnets, response, err = vpc.vpcSvc.ListSubnetsWithContext(vpc.ctx, listOptions)
 		if err != nil {
 			log.Fatalf("Error: deleteSubnets: ListSubnets: response = %v, err = %v", response, err)
 			return err
@@ -608,7 +620,7 @@ func (vpc *VPC) findVPC() (*vpcv1.VPC, error) {
 	options.SetLimit(perPage)
 
 	for moreData {
-		vpcs, response, err = vpc.vpcSvc.ListVpcs(options)
+		vpcs, response, err = vpc.vpcSvc.ListVpcsWithContext(vpc.ctx, options)
 		if err != nil {
 			log.Fatalf("Error: findVPC: ListVpcs: response = %v, err = %v", response, err)
 			return nil, err
@@ -676,6 +688,10 @@ func (vpc *VPC) findPublicGateway(name string) (*vpcv1.PublicGateway, error) {
 
 	log.Debugf("findPublicGateway: name = %s", name)
 
+	if vpc.innerVpc == nil {
+		return nil, fmt.Errorf("findPublicGateway innerVpc is nil")
+	}
+
 	listOptions = vpc.vpcSvc.NewListPublicGatewaysOptions()
 	listOptions.SetLimit(perPage)
 	listOptions.SetResourceGroupID(vpc.options.GroupID)
@@ -733,6 +749,10 @@ func (vpc *VPC) deletePublicGateways() error {
 
 		err error
 	)
+
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("deletePublicGateways innerVpc is nil")
+	}
 
 	listOptions = vpc.vpcSvc.NewListPublicGatewaysOptions()
 	listOptions.SetLimit(perPage)
@@ -833,6 +853,13 @@ func (vpc *VPC) waitForSubnetDeleted(id string) error {
 	return nil
 }
 
+func (vpc *VPC) createInstance() error {
+
+	// func (vpc *VpcV1) CreateInstanceWithContext(ctx context.Context, createInstanceOptions *CreateInstanceOptions) (result *Instance, response *core.DetailedResponse, err error) {
+
+	return nil
+}
+
 func (vpc *VPC) deleteVPC() error {
 
 	var (
@@ -859,7 +886,7 @@ func (vpc *VPC) deleteVPC() error {
 
 		options = vpc.vpcSvc.NewDeleteVPCOptions(*vpc.innerVpc.ID)
 
-		response, err = vpc.vpcSvc.DeleteVPC(options)
+		response, err = vpc.vpcSvc.DeleteVPCWithContext(vpc.ctx, options)
 		if err != nil {
 			log.Fatalf("Error: deleteVPC: DeleteVPC: response = %v, err = %v", response, err)
 			return err
