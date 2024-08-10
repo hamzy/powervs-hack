@@ -100,7 +100,8 @@ func main() {
 	}
 	log.Debugf("main: defaults = %+v", defaults)
 
-	zoneMap, err := RSVMapForRegion(defaults.Region)
+	_, err = RSVMapForRegion(defaults.Region)
+//	zoneMap, err := RSVMapForRegion(defaults.Region)
 	if err != nil {
 		log.Fatalf("Error: RSVMapForRegion returns %v", err)
 		panic(err)
@@ -112,11 +113,14 @@ func main() {
 
 	createVPC(mode, defaults)
 
+	createServiceInstance(mode, defaults, "zone1")
+/*
 	for zone := range zoneMap {
 		log.Debugf("main: zone = %s", zone)
 
 		createServiceInstance(mode, defaults, zone)
 	}
+*/
 
 	log.Debugf("main: siMap = %+v", siMap)
 
@@ -160,7 +164,7 @@ func createVPC(mode Mode, defaults Defaults) {
 	}
 
 	for zone := range zoneMap {
-		log.Debugf("main: zone = %s", zone)
+		log.Debugf("createVPC: zone = %s", zone)
 
 		rsv, err = RSVForRegionZone(defaults.Region, zone)
 		log.Debugf("main: rsv = %+v, err = %v", rsv, err)

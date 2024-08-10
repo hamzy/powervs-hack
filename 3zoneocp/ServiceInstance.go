@@ -97,6 +97,12 @@ type ServiceInstance struct {
 	keyClient *instance.IBMPIKeyClient
 
 	innerSshKey *models.SSHKey
+
+	imageClient *instance.IBMPIImageClient
+
+	imageId string
+
+	instanceClient *instance.IBMPIInstanceClient
 }
 
 func initServiceInstance(options ServiceInstanceOptions) (*resourcecontrollerv2.ResourceControllerV2, error) {
@@ -444,6 +450,22 @@ func (si *ServiceInstance) createServiceInstance() error {
 		return fmt.Errorf("Error: createServiceInstance has a nil keyClient!")
 	}
 
+	if si.imageClient == nil {
+		si.imageClient = instance.NewIBMPIImageClient(si.ctx, si.piSession, *si.innerSi.GUID)
+		log.Debugf("createServiceInstance: imageClient = %v", si.imageClient)
+	}
+	if si.imageClient == nil {
+		return fmt.Errorf("Error: createServiceInstance has a nil imageClient!")
+	}
+
+	if si.instanceClient == nil {
+		si.instanceClient = instance.NewIBMPIInstanceClient(si.ctx, si.piSession, *si.innerSi.GUID)
+		log.Debugf("createServiceInstance: instanceClient = %v", si.instanceClient)
+	}
+	if si.instanceClient == nil {
+		return fmt.Errorf("Error: createServiceInstance has a nil instanceClient!")
+	}
+
 	err = si.addNetwork()
 	if err != nil {
 		log.Fatalf("Error: addNetwork returns %v", err)
@@ -453,6 +475,18 @@ func (si *ServiceInstance) createServiceInstance() error {
 	err = si.addSshKey()
 	if err != nil {
 		log.Fatalf("Error: addSshKey returns %v", err)
+		return err
+	}
+
+	err = si.addImage("CentOS-Stream-9")
+	if err != nil {
+		log.Fatalf("Error: addImage returns %v", err)
+		return err
+	}
+
+	err = si.createInstance()
+	if err != nil {
+		log.Fatalf("Error: createInstance returns %v", err)
 		return err
 	}
 
@@ -729,6 +763,131 @@ func (si *ServiceInstance) findSshKey() (*models.SSHKey, error) {
 	}
 
 	return nil, nil
+}
+
+func (si *ServiceInstance) addImage(imageName string) error {
+
+	var (
+		images      *models.Images
+		imageRef    *models.ImageReference
+		imageId     string
+		createImage models.CreateImage
+		image       *models.Image
+		err         error
+	)
+
+	if si.imageClient == nil {
+		return fmt.Errorf("Error: addImage has nil imageClient")
+	}
+
+	// Does it already exist?
+	images, err = si.imageClient.GetAll()
+	if err != nil {
+		log.Fatalf("Error: addImage: GetAll returns %v", err)
+		return err
+	}
+
+	for _, imageRef = range images.Images {
+		if *imageRef.Name != imageName || *imageRef.State != "active" {
+			log.Debugf("addImage: SKIP EXISTING %s %s", *imageRef.Name, *imageRef.State)
+			continue
+		}
+
+		if *imageRef.Name == imageName && *imageRef.State == "active" {
+			log.Debugf("addImage: FOUND EXISTING %s %s", *imageRef.Name, *imageRef.State)
+
+			si.imageId = *imageRef.ImageID
+			log.Debugf("addImage: si.imageId = %s", si.imageId)
+			return nil
+		}
+	}
+
+	// Import it!
+	images, err = si.imageClient.GetAllStockImages(false, false)
+	if err != nil {
+		log.Fatalf("Error: addImage: GetAllStockImages returns %v", err)
+		return err
+	}
+
+	for _, imageRef = range images.Images {
+		if *imageRef.Name != imageName || *imageRef.State != "active" {
+			log.Debugf("addImage: SKIP STOCK %s %s", *imageRef.Name, *imageRef.State)
+			continue
+		}
+
+		if *imageRef.Name == imageName && *imageRef.State == "active" {
+			log.Debugf("addImage: FOUND STOCK %s %s %s", *imageRef.Name, *imageRef.State, *imageRef.ImageID)
+
+			imageId = *imageRef.ImageID
+			break
+		}
+	}
+	log.Debugf("addImage: imageId = %s", imageId)
+
+	createImage = models.CreateImage{
+		ImageID: imageId,
+	}
+
+	image, err = si.imageClient.Create(&createImage)
+	if err != nil {
+		log.Fatalf("Error: addImage: CreateImage returns %v", err)
+		return err
+	}
+	log.Debugf("addImage: image = %+v", image)
+
+	si.imageId = *image.ImageID
+	log.Debugf("addImage: si.imageId = %s", si.imageId)
+
+	return nil
+}
+
+/*
+	var (
+		networks       []models.PVMInstanceAddNetwork
+		createNetworks []*models.PVMInstanceAddNetwork
+	)
+	networks = make([]models.PVMInstanceAddNetwork, 1)
+	networks = append(networks, models.PVMInstanceAddNetwork{
+		NetworkID: ptr.To("@TODO"),
+	})
+	createNetworks = make([]*models.PVMInstanceAddNetwork, 1)
+	for _, n := range networks {
+		createNetworks = append(createNetworks, &n)
+	}
+*/
+
+func (si *ServiceInstance) createInstance() error {
+
+	var (
+		networks       [1]models.PVMInstanceAddNetwork
+		createNetworks [1]*models.PVMInstanceAddNetwork
+		createOptions  models.PVMInstanceCreate
+		instance       *models.PVMInstanceList
+		err            error
+	)
+
+	networks[0].NetworkID = si.innerNetwork.NetworkID
+	createNetworks[0] = &networks[0]
+
+	createOptions = models.PVMInstanceCreate{
+		ImageID:    &si.imageId,
+		Memory:     ptr.To(8.0),
+		Networks:   createNetworks[:],
+		ProcType:   ptr.To("shared"),
+		Processors: ptr.To(1.0),
+		ServerName: ptr.To(fmt.Sprintf("%s-instance", si.options.Name)),
+		// SysType: ptr.To(""),
+	}
+	log.Debugf("createInstance: createOptions = %+v", createOptions)
+
+	instance, err = si.instanceClient.Create(&createOptions)
+	if err != nil {
+		log.Fatalf("Error: createInstance: Create returns %v", err)
+		return err
+	}
+	log.Debugf("createInstance: instance = %+v", instance)
+
+	return nil
 }
 
 type User struct {
