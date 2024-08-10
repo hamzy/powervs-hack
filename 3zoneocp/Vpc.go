@@ -855,7 +855,28 @@ func (vpc *VPC) waitForSubnetDeleted(id string) error {
 
 func (vpc *VPC) createInstance() error {
 
-	// func (vpc *VpcV1) CreateInstanceWithContext(ctx context.Context, createInstanceOptions *CreateInstanceOptions) (result *Instance, response *core.DetailedResponse, err error) {
+	var (
+		// InstancePrototype : InstancePrototype struct
+		// Models which "extend" this model:
+		// - InstancePrototypeInstanceByImage
+		// - InstancePrototypeInstanceByCatalogOffering
+		// - InstancePrototypeInstanceByVolume
+		// - InstancePrototypeInstanceBySourceSnapshot
+		// - InstancePrototypeInstanceBySourceTemplate
+		instancePrototype vpcv1.InstancePrototype
+		createOptions     *vpcv1.CreateInstanceOptions
+		instance          *vpcv1.Instance
+		response          *core.DetailedResponse
+		err               error
+	)
+
+	createOptions = vpc.vpcSvc.NewCreateInstanceOptions(&instancePrototype)
+
+	instance, response, err = vpc.vpcSvc.CreateInstanceWithContext(vpc.ctx, createOptions)
+	if err != nil {
+		log.Fatalf("Error: createInstance: CreateInstanceWithContext: response = %v, err = %v", response, err)
+	}
+	log.Debugf("createInstance: instance = %+v", instance)
 
 	return nil
 }
