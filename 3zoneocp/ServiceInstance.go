@@ -86,6 +86,8 @@ type ServiceInstance struct {
 
 	sshKeyName string
 
+	instanceName string
+
 	resourceGroupID string
 
 	piSession *ibmpisession.IBMPISession
@@ -194,6 +196,8 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 
 		sshKeyName string
 
+		instanceName string
+
 		controllerSvc *resourcecontrollerv2.ResourceControllerV2
 
 		ctx context.Context
@@ -208,6 +212,7 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 	siName = fmt.Sprintf("%s-si", siOptions.Name)
 	networkName = fmt.Sprintf("%s-si-network", siOptions.Name)
 	sshKeyName = fmt.Sprintf("%s-si-sshkey", siOptions.Name)
+	instanceName = fmt.Sprintf("%s-instance", siOptions.Name)
 
 	controllerSvc, err = initServiceInstance(siOptions)
 	log.Debugf("NewServiceInstance: controllerSvc = %v", controllerSvc)
@@ -233,6 +238,7 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 		siName:          siName,
 		networkName:     networkName,
 		sshKeyName:      sshKeyName,
+		instanceName:    instanceName,
 		resourceGroupID: resourceGroupID,
 	}, nil
 }
@@ -850,6 +856,40 @@ func (si *ServiceInstance) addImage(imageName string) error {
 	return nil
 }
 
+func (si *ServiceInstance) findInstance() (*models.PVMInstance, error) {
+
+	var (
+		instances   *models.PVMInstances
+		instanceRef *models.PVMInstanceReference
+		instance    *models.PVMInstance
+		err         error
+	)
+
+	instances, err = si.instanceClient.GetAll()
+	if err != nil {
+		log.Fatalf("Error: findInstance: GetAll returns %v", err)
+		return nil, err
+	}
+
+	for _, instanceRef = range instances.PvmInstances {
+		if si.instanceName == *instanceRef.ServerName {
+			log.Debugf("findInstance: FOUND %s", *instanceRef.ServerName)
+
+			instance, err = si.instanceClient.Get(*instanceRef.PvmInstanceID)
+			if err != nil {
+				log.Fatalf("Error: findInstance: GetAll returns %v", err)
+				return nil, err
+			}
+
+			return instance, nil
+		}
+
+		log.Debugf("findInstance: SKIP %s", *instanceRef.ServerName)
+	}
+
+	return nil, nil
+}
+
 /*
 	var (
 		networks       []models.PVMInstanceAddNetwork
@@ -864,14 +904,14 @@ func (si *ServiceInstance) addImage(imageName string) error {
 		createNetworks = append(createNetworks, &n)
 	}
 */
-
 func (si *ServiceInstance) createInstance() error {
 
 	var (
+		instance       *models.PVMInstance
 		networks       [1]models.PVMInstanceAddNetwork
 		createNetworks [1]*models.PVMInstanceAddNetwork
 		createOptions  models.PVMInstanceCreate
-		instance       *models.PVMInstanceList
+		instanceList   *models.PVMInstanceList
 		err            error
 	)
 
@@ -880,6 +920,16 @@ func (si *ServiceInstance) createInstance() error {
 	}
 	if si.instanceClient == nil {
 		return fmt.Errorf("Error: createInstance has nil instanceClient")
+	}
+
+	instance, err = si.findInstance()
+	if err != nil {
+		log.Fatalf("Error: createInstance: findInstance returns %v", err)
+		return err
+	}
+	log.Debugf("createInstance: instance = %+v", instance)
+	if instance != nil {
+		return nil
 	}
 
 	networks[0].NetworkID = si.innerNetwork.NetworkID
@@ -891,17 +941,17 @@ func (si *ServiceInstance) createInstance() error {
 		Networks:   createNetworks[:],
 		ProcType:   ptr.To("shared"),
 		Processors: ptr.To(1.0),
-		ServerName: ptr.To(fmt.Sprintf("%s-instance", si.options.Name)),
+		ServerName: &si.instanceName,
 		// SysType: ptr.To(""),
 	}
 	log.Debugf("createInstance: createOptions = %+v", createOptions)
 
-	instance, err = si.instanceClient.Create(&createOptions)
+	instanceList, err = si.instanceClient.Create(&createOptions)
 	if err != nil {
 		log.Fatalf("Error: createInstance: Create returns %v", err)
 		return err
 	}
-	log.Debugf("createInstance: instance = %+v", instance)
+	log.Debugf("createInstance: instanceList = %+v", instanceList)
 
 	return nil
 }
