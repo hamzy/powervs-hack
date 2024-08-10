@@ -664,6 +664,9 @@ func (si *ServiceInstance) findNetwork() (*models.Network, error) {
 		err error
 	)
 
+	if si.innerSi == nil {
+		return nil, fmt.Errorf("Error: findNetwork called on nil ServiceInstance")
+	}
 	if si.networkClient == nil {
 		return nil, fmt.Errorf("Error: findNetwork has nil networkClient")
 	}
@@ -738,6 +741,9 @@ func (si *ServiceInstance) findSshKey() (*models.SSHKey, error) {
 		err  error
 	)
 
+	if si.innerSi == nil {
+		return nil, fmt.Errorf("Error: findSshKey called on nil ServiceInstance")
+	}
 	if si.keyClient == nil {
 		return nil, fmt.Errorf("Error: findSshKey has nil keyClient")
 	}
@@ -776,6 +782,9 @@ func (si *ServiceInstance) addImage(imageName string) error {
 		err         error
 	)
 
+	if si.innerSi == nil {
+		return fmt.Errorf("Error: addImage called on nil ServiceInstance")
+	}
 	if si.imageClient == nil {
 		return fmt.Errorf("Error: addImage has nil imageClient")
 	}
@@ -865,6 +874,13 @@ func (si *ServiceInstance) createInstance() error {
 		instance       *models.PVMInstanceList
 		err            error
 	)
+
+	if si.innerSi == nil {
+		return fmt.Errorf("Error: createInstance called on nil ServiceInstance")
+	}
+	if si.instanceClient == nil {
+		return fmt.Errorf("Error: createInstance has nil instanceClient")
+	}
 
 	networks[0].NetworkID = si.innerNetwork.NetworkID
 	createNetworks[0] = &networks[0]
