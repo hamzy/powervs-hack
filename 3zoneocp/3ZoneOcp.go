@@ -100,12 +100,17 @@ func main() {
 	}
 	log.Debugf("main: defaults = %+v", defaults)
 
-	_, err = RSVMapForRegion(defaults.Region)
-//	zoneMap, err := RSVMapForRegion(defaults.Region)
+	zoneMap, err = RSVMapForRegion(defaults.Region)
 	if err != nil {
 		log.Fatalf("Error: RSVMapForRegion returns %v", err)
 		panic(err)
 	}
+
+	// BEGIN HACK
+	delete(zoneMap, "zone2")
+	delete(zoneMap, "zone3")
+	log.Debugf("main: zoneMap = %+v", zoneMap)
+	// END HACK
 
 	siMap = make(map[string]*ServiceInstance)
 
@@ -113,14 +118,11 @@ func main() {
 
 	createVPC(mode, defaults)
 
-	createServiceInstance(mode, defaults, "zone1")
-/*
 	for zone := range zoneMap {
 		log.Debugf("main: zone = %s", zone)
 
 		createServiceInstance(mode, defaults, zone)
 	}
-*/
 
 	log.Debugf("main: siMap = %+v", siMap)
 
@@ -198,6 +200,14 @@ func createVPC(mode Mode, defaults Defaults) {
 			if err != nil {
 				log.Fatalf("Error: addPublicGateway returns %v", err)
 			}
+
+			// BEGIN HACK
+			err = vpc.createInstance(rsv.VPCZoneName)
+			if err != nil {
+				log.Fatalf("Error: vpc.createInstance returns %v", err)
+				panic(err)
+			}
+			// END HACK
 		}
 	}
 }

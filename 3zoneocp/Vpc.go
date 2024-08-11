@@ -853,9 +853,85 @@ func (vpc *VPC) waitForSubnetDeleted(id string) error {
 	return nil
 }
 
-func (vpc *VPC) createInstance() error {
+func (vpc *VPC) findImage(name string) (vpcv1.Image, error) {
 
 	var (
+		pager  *vpcv1.ImagesPager
+		images []vpcv1.Image
+		image  vpcv1.Image
+		err    error
+	)
+
+	pager, err = vpc.vpcSvc.NewImagesPager(&vpcv1.ListImagesOptions{
+		Status:     []string{
+			vpcv1.ListImagesOptionsStatusAvailableConst,
+		},
+		Visibility: ptr.To(vpcv1.ListImagesOptionsVisibilityPublicConst),
+	})
+	if err != nil {
+		log.Fatalf("Error: findImage: NewImagesPager returns %v", err)
+		return vpcv1.Image{}, err
+	}
+
+	images, err = pager.GetAllWithContext(vpc.ctx)
+	if err != nil {
+		return vpcv1.Image{}, err
+	}
+
+	for _, image = range images {
+		if !strings.HasPrefix(*image.Name, name) {
+			log.Debugf("findImage: SKIP %s %s", *image.Name, *image.Status)
+			continue
+		}
+
+		log.Debugf("findImage: FOUND %s %s", *image.Name, *image.Status)
+		return image, nil
+	}
+
+	return vpcv1.Image{}, fmt.Errorf("findImage could not find %s", name)
+}
+
+func (vpc *VPC) findKey(name string) (string, error) {
+
+	var (
+		pager *vpcv1.KeysPager
+		keys  []vpcv1.Key
+		key   vpcv1.Key
+		err   error
+	)
+
+	pager, err = vpc.vpcSvc.NewKeysPager(&vpcv1.ListKeysOptions{})
+	if err != nil {
+		log.Fatalf("Error: findKey: NewKeysPager returns %v", err)
+		return "", err
+	}
+
+	keys, err = pager.GetAllWithContext(vpc.ctx)
+	if err != nil {
+		return "", err
+	}
+
+	for _, key = range keys {
+		if !strings.HasPrefix(*key.Name, name) {
+			log.Debugf("findKey: SKIP %s", *key.Name)
+			continue
+		}
+
+		log.Debugf("findKey: FOUND %s", *key.Name)
+		return *key.ID, nil
+	}
+
+	return "", nil
+}
+
+func (vpc *VPC) createInstance(zone string) error {
+
+	var (
+		instanceName      string
+		image             vpcv1.Image
+		keyId             string
+		subnetName        string
+		subnet            *vpcv1.Subnet
 		// InstancePrototype : InstancePrototype struct
 		// Models which "extend" this model:
 		// - InstancePrototypeInstanceByImage
@@ -863,14 +939,78 @@ func (vpc *VPC) createInstance() error {
 		// - InstancePrototypeInstanceByVolume
 		// - InstancePrototypeInstanceBySourceSnapshot
 		// - InstancePrototypeInstanceBySourceTemplate
-		instancePrototype vpcv1.InstancePrototype
+		// Models which "extend" this model:
+		// - InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkAttachment
+		// - InstancePrototypeInstanceByImageInstanceByImageInstanceByNetworkInterface
+		instancePrototype vpcv1.InstancePrototypeInstanceByImage
 		createOptions     *vpcv1.CreateInstanceOptions
 		instance          *vpcv1.Instance
 		response          *core.DetailedResponse
 		err               error
 	)
 
+	instanceName = fmt.Sprintf("%s-vpc-instance", vpc.options.Name)
+
+	image, err = vpc.findImage("ibm-centos-stream-9-amd64")
+	if err != nil {
+		log.Fatalf("Error: createInstance: findImage returns %v", err)
+		return nil
+	}
+	log.Debugf("createInstance: image = %+v", image)
+
+	keyId, err = vpc.findKey("hamzy")
+	if err != nil {
+		log.Fatalf("Error: createInstance: findKey returns %v", err)
+		return nil
+	}
+
+	subnetName = fmt.Sprintf("%s-%s-subnet", vpc.options.Name, zone)
+
+	subnet, err = vpc.findSubnet(subnetName)
+	if err != nil {
+		log.Fatalf("Error: findSubet returns %v", err)
+		return err
+	}
+	log.Debugf("createInstance: subnet = %+v", subnet)
+
+	instancePrototype = vpcv1.InstancePrototypeInstanceByImage{
+		Image: &vpcv1.ImageIdentityByID{
+			ID: image.ID,
+		},
+		Keys: []vpcv1.KeyIdentityIntf{
+			&vpcv1.KeyIdentityByID{
+				ID: &keyId,
+			},
+		},
+		Name: &instanceName,
+		ResourceGroup: &vpcv1.ResourceGroupIdentityByID{
+			ID: ptr.To(vpc.options.GroupID),
+		},
+		PrimaryNetworkInterface: &vpcv1.NetworkInterfacePrototype{
+			Name: ptr.To("network-interface-name"),
+			Subnet: &vpcv1.SubnetIdentityByID{
+				ID: subnet.ID,
+			},
+			SecurityGroups: []vpcv1.SecurityGroupIdentityIntf{
+				&vpcv1.SecurityGroupIdentityByID{
+					ID: ptr.To("r006-d9d84076-c1e3-4cd9-ab32-39d515634bfe"), // @TODO
+				},
+			},
+		},
+		Profile: &vpcv1.InstanceProfileIdentityByName{
+			Name: ptr.To("cx2-2x4"),
+		},
+		UserData: ptr.To(""), // @TODO
+		VPC:  &vpcv1.VPCIdentityByCRN{
+			CRN: vpc.innerVpc.CRN,
+		},
+		Zone: &vpcv1.ZoneIdentityByName{
+			Name: &zone,
+		},
+	}
+
 	createOptions = vpc.vpcSvc.NewCreateInstanceOptions(&instancePrototype)
+	log.Debugf("createInstance: createOptions = %+v", createOptions)
 
 	instance, response, err = vpc.vpcSvc.CreateInstanceWithContext(vpc.ctx, createOptions)
 	if err != nil {
@@ -878,7 +1018,8 @@ func (vpc *VPC) createInstance() error {
 	}
 	log.Debugf("createInstance: instance = %+v", instance)
 
-	return nil
+	return fmt.Errorf("HAMZY @TODO")
+//	return nil
 }
 
 func (vpc *VPC) deleteVPC() error {
