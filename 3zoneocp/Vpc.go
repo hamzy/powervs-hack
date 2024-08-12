@@ -439,10 +439,11 @@ func (vpc *VPC) setSubnetPublicGateway(zone string) error {
 		log.Fatalf("Error: findSubnet returns %v", err)
 		return err
 	}
-	if subnet != nil {
+	if subnet == nil {
 		log.Fatalf("Error: findSubnet returns nil Subnet")
 		return nil
 	}
+	log.Debugf("setSubnetPublicGateway: subnet = %+v", subnet)
 
 	pg, err = vpc.findPublicGateway(publicGatewayName)
 	if err != nil {
@@ -452,6 +453,12 @@ func (vpc *VPC) setSubnetPublicGateway(zone string) error {
 	if pg == nil {
 		log.Fatalf("Error: findPublicGateway returns nil PublicGateway")
 		return err
+	}
+	log.Debugf("setSubnetPublicGateway: pg = %+v", pg)
+
+	if subnet.PublicGateway != nil {
+		log.Debugf("setSubnetPublicGateway: subnet.PublicGateway is already filled in")
+		return nil
 	}
 
 	pgIdent.ID = pg.ID

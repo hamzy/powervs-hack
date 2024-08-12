@@ -201,6 +201,11 @@ func createVPC(mode Mode, defaults Defaults) {
 				log.Fatalf("Error: addPublicGateway returns %v", err)
 			}
 
+			err = vpc.setSubnetPublicGateway(rsv.VPCZoneName)
+			if err != nil {
+				log.Fatalf("Error: setSubnetPublicGateway returns %v", err)
+			}
+
 			// BEGIN HACK
 			err = vpc.createInstance(rsv.VPCZoneName)
 			if err != nil {
