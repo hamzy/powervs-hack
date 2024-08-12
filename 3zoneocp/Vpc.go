@@ -1074,12 +1074,16 @@ func (vpc *VPC) createInstance(zone string) error {
 		err               error
 	)
 
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("createInstance innerVpc is nil")
+	}
+
 	instanceName = fmt.Sprintf("%s-vpc-instance", vpc.options.Name)
 
 	instanceID, err = vpc.findInstance(instanceName)
 	if err != nil {
 		log.Fatalf("Error: createInstance: findInstance returns %v", err)
-		return nil
+		return err
 	}
 	log.Debugf("createInstance: instanceID = %s", instanceID)
 	if instanceID != "" {
@@ -1089,14 +1093,14 @@ func (vpc *VPC) createInstance(zone string) error {
 	image, err = vpc.findImage("ibm-centos-stream-9-amd64")
 	if err != nil {
 		log.Fatalf("Error: createInstance: findImage returns %v", err)
-		return nil
+		return err
 	}
 	log.Debugf("createInstance: image = %+v", image)
 
 	keyId, err = vpc.findKey("hamzy")
 	if err != nil {
 		log.Fatalf("Error: createInstance: findKey returns %v", err)
-		return nil
+		return err
 	}
 
 	subnetName = fmt.Sprintf("%s-%s-subnet", vpc.options.Name, zone)
@@ -1113,14 +1117,14 @@ func (vpc *VPC) createInstance(zone string) error {
 	securityGroupID, err = vpc.findSecurityGroup(securityGroupName)
 	if err != nil {
 		log.Fatalf("Error: createInstance: findSecurityGroup returns %v", err)
-		return nil
+		return err
 	}
 	log.Debugf("createInstance: securityGroupID = %s", securityGroupID)
 	if securityGroupID != "" {
 		err = vpc.createSecurityGroup(securityGroupName)
 		if err != nil {
 			log.Fatalf("Error: createInstance: createSecurityGroup returns %v", err)
-			return nil
+			return err
 		}
 	}
 
@@ -1173,6 +1177,44 @@ func (vpc *VPC) createInstance(zone string) error {
 	return nil
 }
 
+func (vpc *VPC) deleteInstance() error {
+
+	var (
+		instanceName  string
+		instanceID    string
+		deleteOptions *vpcv1.DeleteInstanceOptions
+		response      *core.DetailedResponse
+		err           error
+	)
+
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("deleteInstance innerVpc is nil")
+	}
+
+	instanceName = fmt.Sprintf("%s-vpc-instance", vpc.options.Name)
+
+	instanceID, err = vpc.findInstance(instanceName)
+	if err != nil {
+		log.Fatalf("Error: deleteInstance: findInstance returns %v", err)
+		return err
+	}
+	log.Debugf("deleteInstance: instanceID = %s", instanceID)
+	if instanceID != "" {
+		return nil
+	}
+
+	deleteOptions = vpc.vpcSvc.NewDeleteInstanceOptions(instanceID)
+	log.Debugf("deleteInstance: deleteOptions = %+v", deleteOptions)
+
+	response, err = vpc.vpcSvc.DeleteInstanceWithContext(vpc.ctx, deleteOptions)
+	if err != nil {
+		log.Fatalf("Error: deleteInstance: DeleteInstanceWithContext: response = %v, err = %v", response, err)
+		return err
+	}
+
+	return nil
+}
+
 func (vpc *VPC) deleteVPC() error {
 
 	var (
@@ -1194,6 +1236,12 @@ func (vpc *VPC) deleteVPC() error {
 		err = vpc.deleteSubnets()
 		if err != nil {
 			log.Fatalf("Error: deleteVPC: deleteSubnets returns %v", err)
+			return err
+		}
+
+		err = vpc.deleteInstance()
+		if err != nil {
+			log.Fatalf("Error: deleteVPC: deleteInstance returns %v", err)
 			return err
 		}
 
