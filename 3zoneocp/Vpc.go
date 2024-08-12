@@ -1144,7 +1144,7 @@ func (vpc *VPC) createInstance(zone string) error {
 			},
 			SecurityGroups: []vpcv1.SecurityGroupIdentityIntf{
 				&vpcv1.SecurityGroupIdentityByID{
-					ID: ptr.To("r006-d9d84076-c1e3-4cd9-ab32-39d515634bfe"), // @TODO
+					ID: ptr.To(securityGroupID),
 				},
 			},
 		},
@@ -1170,8 +1170,7 @@ func (vpc *VPC) createInstance(zone string) error {
 	}
 	log.Debugf("createInstance: instance = %+v", instance)
 
-	return fmt.Errorf("HAMZY @TODO")
-//	return nil
+	return nil
 }
 
 func (vpc *VPC) deleteVPC() error {
