@@ -862,6 +862,8 @@ func (vpc *VPC) findImage(name string) (vpcv1.Image, error) {
 		err    error
 	)
 
+	log.Debugf("findImage: name = %s", name)
+
 	pager, err = vpc.vpcSvc.NewImagesPager(&vpcv1.ListImagesOptions{
 		Status:     []string{
 			vpcv1.ListImagesOptionsStatusAvailableConst,
@@ -900,6 +902,8 @@ func (vpc *VPC) findKey(name string) (string, error) {
 		err   error
 	)
 
+	log.Debugf("findKey: name = %s", name)
+
 	pager, err = vpc.vpcSvc.NewKeysPager(&vpcv1.ListKeysOptions{})
 	if err != nil {
 		log.Fatalf("Error: findKey: NewKeysPager returns %v", err)
@@ -924,10 +928,131 @@ func (vpc *VPC) findKey(name string) (string, error) {
 	return "", nil
 }
 
+func (vpc *VPC) findSecurityGroup(name string) (string, error) {
+
+	var (
+		pager          *vpcv1.SecurityGroupsPager
+		securityGroups []vpcv1.SecurityGroup
+		securityGroup  vpcv1.SecurityGroup
+		err            error
+	)
+
+	log.Debugf("findSecurityGroup: name = %s", name)
+
+	pager, err = vpc.vpcSvc.NewSecurityGroupsPager(&vpcv1.ListSecurityGroupsOptions{})
+	if err != nil {
+		log.Fatalf("Error: findSecurityGroup: NewSecurityGroupsPager returns %v", err)
+		return "", err
+	}
+
+	securityGroups, err = pager.GetAllWithContext(vpc.ctx)
+	if err != nil {
+		return "", err
+	}
+
+	for _, securityGroup = range securityGroups {
+		if !strings.HasPrefix(*securityGroup.Name, name) {
+			log.Debugf("findSecurityGroup: SKIP %s", *securityGroup.Name)
+			continue
+		}
+
+		log.Debugf("findSecurityGroup: FOUND %s", *securityGroup.Name)
+		return *securityGroup.ID, nil
+	}
+
+	return "", nil
+}
+
+func (vpc *VPC) createSecurityGroup(name string) error {
+
+	var (
+		createOptions *vpcv1.CreateSecurityGroupOptions
+		sg            *vpcv1.SecurityGroup
+		response      *core.DetailedResponse
+		err           error
+	)
+
+	createOptions = vpc.vpcSvc.NewCreateSecurityGroupOptions(
+		&vpcv1.VPCIdentityByCRN{
+			CRN: vpc.innerVpc.CRN,
+	})
+	createOptions.SetName(name)
+	createOptions.SetResourceGroup(
+		&vpcv1.ResourceGroupIdentityByID{
+			ID: ptr.To(vpc.options.GroupID),
+	})
+	createOptions.SetRules(
+		[]vpcv1.SecurityGroupRulePrototypeIntf{
+			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("inbound"),
+				Protocol:  ptr.To("tcp"),
+				PortMin:   ptr.To(int64(22)),
+				PortMax:   ptr.To(int64(22)),
+			},
+			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("inbound"),
+				Protocol:  ptr.To("icmp"),
+			},
+	})
+
+	sg, response, err = vpc.vpcSvc.CreateSecurityGroupWithContext(vpc.ctx, createOptions)
+	if err != nil {
+		log.Fatalf("Error: createSecurityGroup: CreateSecurityGroupWithContext: response = %v, err = %v", response, err)
+		return err
+	}
+
+	log.Debugf("createSecurityGroup: sg = %+v", sg)
+
+	return nil
+}
+
+func (vpc *VPC) findInstance(name string) (string, error) {
+
+	var (
+		listOptions *vpcv1.ListInstancesOptions
+		pager       *vpcv1.InstancesPager
+		instances   []vpcv1.Instance
+		instance    vpcv1.Instance
+		err         error
+	)
+
+	log.Debugf("findInstance: name = %s", name)
+
+	listOptions = vpc.vpcSvc.NewListInstancesOptions()
+	listOptions.SetResourceGroupID(vpc.options.GroupID)
+	//listOptions.SetVPCID(*vpc.innerVpc.ID)
+
+	pager, err = vpc.vpcSvc.NewInstancesPager(listOptions)
+	if err != nil {
+		log.Fatalf("Error: findKey: NewInstancesPager returns %v", err)
+		return "", err
+	}
+
+	instances, err = pager.GetAllWithContext(vpc.ctx)
+	if err != nil {
+		return "", err
+	}
+
+	for _, instance = range instances {
+		if !strings.HasPrefix(*instance.Name, name) {
+			log.Debugf("findInstance: SKIP %s %s", *instance.Name, *instance.HealthState)
+			continue
+		}
+
+		log.Debugf("findInstance: FOUND %s %s", *instance.Name, *instance.HealthState)
+		return *instance.ID, nil
+	}
+
+	return "", nil
+}
+
 func (vpc *VPC) createInstance(zone string) error {
 
 	var (
 		instanceName      string
+		instanceID        string
+		securityGroupName string
+		securityGroupID   string
 		image             vpcv1.Image
 		keyId             string
 		subnetName        string
@@ -951,6 +1076,16 @@ func (vpc *VPC) createInstance(zone string) error {
 
 	instanceName = fmt.Sprintf("%s-vpc-instance", vpc.options.Name)
 
+	instanceID, err = vpc.findInstance(instanceName)
+	if err != nil {
+		log.Fatalf("Error: createInstance: findInstance returns %v", err)
+		return nil
+	}
+	log.Debugf("createInstance: instanceID = %s", instanceID)
+	if instanceID != "" {
+		return nil
+	}
+
 	image, err = vpc.findImage("ibm-centos-stream-9-amd64")
 	if err != nil {
 		log.Fatalf("Error: createInstance: findImage returns %v", err)
@@ -972,6 +1107,22 @@ func (vpc *VPC) createInstance(zone string) error {
 		return err
 	}
 	log.Debugf("createInstance: subnet = %+v", subnet)
+
+	securityGroupName = fmt.Sprintf("%s-sg", vpc.options.Name)
+
+	securityGroupID, err = vpc.findSecurityGroup(securityGroupName)
+	if err != nil {
+		log.Fatalf("Error: createInstance: findSecurityGroup returns %v", err)
+		return nil
+	}
+	log.Debugf("createInstance: securityGroupID = %s", securityGroupID)
+	if securityGroupID != "" {
+		err = vpc.createSecurityGroup(securityGroupName)
+		if err != nil {
+			log.Fatalf("Error: createInstance: createSecurityGroup returns %v", err)
+			return nil
+		}
+	}
 
 	instancePrototype = vpcv1.InstancePrototypeInstanceByImage{
 		Image: &vpcv1.ImageIdentityByID{
@@ -1015,6 +1166,7 @@ func (vpc *VPC) createInstance(zone string) error {
 	instance, response, err = vpc.vpcSvc.CreateInstanceWithContext(vpc.ctx, createOptions)
 	if err != nil {
 		log.Fatalf("Error: createInstance: CreateInstanceWithContext: response = %v, err = %v", response, err)
+		return err
 	}
 	log.Debugf("createInstance: instance = %+v", instance)
 
