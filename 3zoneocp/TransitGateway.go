@@ -372,6 +372,10 @@ func (tg *TransitGateway) waitForTransitGatewayConnectionReady(id string) error 
 			log.Fatalf("Error: Wait waitForTransitGatewayConnectionReady: response = %v, err = %v", response, err2)
 			return false, err2
 		}
+		if foundConnection == nil {
+			log.Debugf("waitForTransitGatewayConnectionReady: foundConnection is nil")
+			return true, nil
+		}
 		log.Debugf("waitForTransitGatewayConnectionReady: Status = %s", *foundConnection.Status)
 		switch *foundConnection.Status {
 		case transitgatewayapisv1.TransitGatewayConnectionCust_Status_Attached:

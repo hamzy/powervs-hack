@@ -208,14 +208,6 @@ func createVPC(mode Mode, defaults Defaults) {
 				panic(err)
 			}
 			// END HACK
-		case ModeDelete:
-			// BEGIN HACK
-			err = vpc.deleteInstance(rsv.VPCZoneName)
-			if err != nil {
-				log.Fatalf("Error: vpc.deleteInstance returns %v", err)
-				panic(err)
-			}
-			// END HACK
 		}
 	}
 }
@@ -241,7 +233,7 @@ func createServiceInstance(mode Mode, defaults Defaults, zone string) {
 		Name:    defaults.VPCS[zone]["pvs_workspace_name"],
 		Zone:    rsv.WSZoneName,
 		GroupID: defaults.GroupID,
-		CIDR:    defaults.VPCS[zone]["vpc_zone_cidr"],
+		CIDR:    defaults.VPCS[zone]["pvs_dc_cidr"],
 		SshKey:  defaults.SshKey,
 	}
 

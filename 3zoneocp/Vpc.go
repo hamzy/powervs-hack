@@ -111,7 +111,7 @@ func NewVPC(vpcOptions VPCOptions) (*VPC, error) {
 	ctx = context.Background()
 	log.Debugf("NewVPC: ctx = %v", ctx)
 
-	securityGroupName = fmt.Sprintf("%s-sg", vpc.options.Name)
+	securityGroupName = fmt.Sprintf("%s-sg", vpcOptions.Name)
 
 	return &VPC{
 		options:           vpcOptions,
@@ -837,6 +837,10 @@ func (vpc *VPC) waitForSubnetDeleted(id string) error {
 			log.Fatalf("Error: Wait GetSubnetWithContext: response = %v, err = %v", response, err2)
 			return false, err2
 		}
+		if foundSubnet == nil {
+			log.Debugf("waitForSubnetDeleted: foundSubnet is nil")
+			return true, nil
+		}
 		log.Debugf("waitForSubnetDeleted: Status = %s", *foundSubnet.Status)
 		switch *foundSubnet.Status {
 		case vpcv1.SubnetStatusAvailableConst:
@@ -1012,6 +1016,10 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 				Direction: ptr.To("inbound"),
 				Protocol:  ptr.To("icmp"),
 			},
+			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("outbound"),
+				Protocol:  ptr.To("tcp"),
+			},
 	})
 
 	sg, response, err = vpc.vpcSvc.CreateSecurityGroupWithContext(vpc.ctx, createOptions)
@@ -1053,7 +1061,7 @@ func (vpc *VPC) findInstance(name string) (string, error) {
 
 	pager, err = vpc.vpcSvc.NewInstancesPager(listOptions)
 	if err != nil {
-		log.Fatalf("Error: findKey: NewInstancesPager returns %v", err)
+		log.Fatalf("Error: findInstance: NewInstancesPager returns %v", err)
 		return "", err
 	}
 
@@ -1144,14 +1152,19 @@ func (vpc *VPC) createInstance(zone string) error {
 
 	securityGroupID, err = vpc.findSecurityGroup(vpc.securityGroupName)
 	if err != nil {
-		log.Fatalf("Error: createInstance: findSecurityGroup returns %v", err)
+		log.Fatalf("Error: createInstance: findSecurityGroup(1) returns %v", err)
 		return err
 	}
 	log.Debugf("createInstance: securityGroupID = %s", securityGroupID)
-	if securityGroupID != "" {
+	if securityGroupID == "" {
 		err = vpc.createSecurityGroup(vpc.securityGroupName)
 		if err != nil {
 			log.Fatalf("Error: createInstance: createSecurityGroup returns %v", err)
+			return err
+		}
+		securityGroupID, err = vpc.findSecurityGroup(vpc.securityGroupName)
+		if err != nil {
+			log.Fatalf("Error: createInstance: findSecurityGroup(2) returns %v", err)
 			return err
 		}
 	}
@@ -1205,32 +1218,60 @@ func (vpc *VPC) createInstance(zone string) error {
 	return nil
 }
 
-func (vpc *VPC) deleteInstance(zone string) error {
+func (vpc *VPC) deleteInstances() error {
 
 	var (
-		instanceName  string
-		instanceID    string
+		listOptions *vpcv1.ListInstancesOptions
+		pager       *vpcv1.InstancesPager
+		instances   []vpcv1.Instance
+		instance    vpcv1.Instance
+		err         error
+	)
+
+	log.Debugf("deleteInstances:")
+
+	listOptions = vpc.vpcSvc.NewListInstancesOptions()
+	listOptions.SetResourceGroupID(vpc.options.GroupID)
+	//listOptions.SetVPCID(*vpc.innerVpc.ID)
+
+	pager, err = vpc.vpcSvc.NewInstancesPager(listOptions)
+	if err != nil {
+		log.Fatalf("Error: deleteInstances: NewInstancesPager returns %v", err)
+		return err
+	}
+
+	instances, err = pager.GetAllWithContext(vpc.ctx)
+	if err != nil {
+		return err
+	}
+
+	for _, instance = range instances {
+		if !strings.Contains(*instance.Name, vpc.options.Name) {
+			log.Debugf("deleteInstances: SKIP %s %s", *instance.Name, *instance.HealthState)
+			continue
+		}
+
+		log.Debugf("deleteInstances: FOUND %s %s", *instance.Name, *instance.HealthState)
+
+		vpc.deleteInstance(*instance.ID)
+		vpc.waitForInstanceDeleted(*instance.ID)
+	}
+
+	return nil
+}
+
+func (vpc *VPC) deleteInstance(instanceID string) error {
+
+	var (
 		deleteOptions *vpcv1.DeleteInstanceOptions
 		response      *core.DetailedResponse
 		err           error
 	)
 
-	log.Debugf("deleteInstance: zone = %s", zone)
+	log.Debugf("deleteInstance: instanceID = %s", instanceID)
 
 	if vpc.innerVpc == nil {
 		return fmt.Errorf("deleteInstance innerVpc is nil")
-	}
-
-	instanceName = fmt.Sprintf("%s-%s-instance", vpc.options.Name, zone)
-
-	instanceID, err = vpc.findInstance(instanceName)
-	if err != nil {
-		log.Fatalf("Error: deleteInstance: findInstance returns %v", err)
-		return err
-	}
-	log.Debugf("deleteInstance: instanceID = %s", instanceID)
-	if instanceID != "" {
-		return nil
 	}
 
 	deleteOptions = vpc.vpcSvc.NewDeleteInstanceOptions(instanceID)
@@ -1239,6 +1280,52 @@ func (vpc *VPC) deleteInstance(zone string) error {
 	response, err = vpc.vpcSvc.DeleteInstanceWithContext(vpc.ctx, deleteOptions)
 	if err != nil {
 		log.Fatalf("Error: deleteInstance: DeleteInstanceWithContext: response = %v, err = %v", response, err)
+		return err
+	}
+
+	return nil
+}
+
+func (vpc *VPC) waitForInstanceDeleted(instanceID string) error {
+
+	var (
+		getOptions *vpcv1.GetInstanceOptions
+
+		foundInstance *vpcv1.Instance
+
+		response *core.DetailedResponse
+
+		err error
+	)
+
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("waitForInstanceDeleted innerVpc is nil")
+	}
+
+	getOptions = vpc.vpcSvc.NewGetInstanceOptions(instanceID)
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(vpc.ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(vpc.ctx, backoff, func(context.Context) (bool, error) {
+		var err2 error
+
+		foundInstance, response, err2 = vpc.vpcSvc.GetInstanceWithContext(vpc.ctx, getOptions)
+		if err != nil {
+			log.Fatalf("Error: Wait GetInstanceWithContext: response = %v, err = %v", response, err2)
+			return false, err2
+		}
+		if foundInstance == nil {
+			log.Debugf("waitForInstanceDeleted: foundInstance is nil")
+			return true, nil
+		}
+		log.Debugf("waitForInstanceDeleted: foundInstance = %+v", foundInstance)
+		return false, nil
+	})
+	if err != nil {
+		log.Fatalf("Error: ExponentialBackoffWithContext returns %v", err)
 		return err
 	}
 
@@ -1257,15 +1344,21 @@ func (vpc *VPC) deleteVPC() error {
 	)
 
 	if vpc.innerVpc != nil {
-		err = vpc.deletePublicGateways()
+		err = vpc.deleteInstances()
 		if err != nil {
-			log.Fatalf("Error: deleteVPC: deletePublicGateways returns %v", err)
+			log.Fatalf("Error: deleteVPC: deleteInstances returns %v", err)
 			return err
 		}
 
 		err = vpc.deleteSubnets()
 		if err != nil {
 			log.Fatalf("Error: deleteVPC: deleteSubnets returns %v", err)
+			return err
+		}
+
+		err = vpc.deletePublicGateways()
+		if err != nil {
+			log.Fatalf("Error: deleteVPC: deletePublicGateways returns %v", err)
 			return err
 		}
 
