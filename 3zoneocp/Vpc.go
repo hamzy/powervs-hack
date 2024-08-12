@@ -874,6 +874,10 @@ func (vpc *VPC) findImage(name string) (vpcv1.Image, error) {
 
 	log.Debugf("findImage: name = %s", name)
 
+	if vpc.innerVpc == nil {
+		return vpcv1.Image{}, fmt.Errorf("findImage innerVpc is nil")
+	}
+
 	pager, err = vpc.vpcSvc.NewImagesPager(&vpcv1.ListImagesOptions{
 		Status:     []string{
 			vpcv1.ListImagesOptionsStatusAvailableConst,
@@ -914,6 +918,10 @@ func (vpc *VPC) findKey(name string) (string, error) {
 
 	log.Debugf("findKey: name = %s", name)
 
+	if vpc.innerVpc == nil {
+		return "", fmt.Errorf("findKey innerVpc is nil")
+	}
+
 	pager, err = vpc.vpcSvc.NewKeysPager(&vpcv1.ListKeysOptions{})
 	if err != nil {
 		log.Fatalf("Error: findKey: NewKeysPager returns %v", err)
@@ -948,6 +956,10 @@ func (vpc *VPC) findSecurityGroup(name string) (string, error) {
 	)
 
 	log.Debugf("findSecurityGroup: name = %s", name)
+
+	if vpc.innerVpc == nil {
+		return "", fmt.Errorf("findSecurityGroup innerVpc is nil")
+	}
 
 	pager, err = vpc.vpcSvc.NewSecurityGroupsPager(&vpcv1.ListSecurityGroupsOptions{})
 	if err != nil {
@@ -984,6 +996,10 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 	)
 
 	log.Debugf("createSecurityGroup: name = %s", name)
+
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("createSecurityGroup innerVpc is nil")
+	}
 
 	securityGroupID, err = vpc.findSecurityGroup(name)
 	if err != nil {
@@ -1036,9 +1052,35 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 func (vpc *VPC) deleteSecurityGroup(name string) error {
 
 	var (
+		securityGroupID string
+		deleteOptions   *vpcv1.DeleteSecurityGroupOptions
+		response        *core.DetailedResponse
+		err             error
 	)
 
-	// @TODO
+	log.Debugf("deleteSecurityGroup: name = %s", name)
+
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("deleteSecurityGroup innerVpc is nil")
+	}
+
+	securityGroupID, err = vpc.findSecurityGroup(name)
+	if err != nil {
+		log.Fatalf("Error: deleteSecurityGroup: findSecurityGroup returns %v", err)
+		return err
+	}
+	log.Debugf("deleteSecurityGroup: securityGroupID = %s", securityGroupID)
+	if securityGroupID != "" {
+		return fmt.Errorf("deleteSecurityGroup could not find SG %s", name)
+	}
+
+	deleteOptions = vpc.vpcSvc.NewDeleteSecurityGroupOptions(securityGroupID)
+
+	response, err = vpc.vpcSvc.DeleteSecurityGroupWithContext(vpc.ctx, deleteOptions)
+	if err != nil {
+		log.Fatalf("Error: deleteSecurityGroup: DeleteSecurityGroupWithContext: response = %v, err = %v", response, err)
+		return err
+	}
 
 	return nil
 }
@@ -1054,6 +1096,10 @@ func (vpc *VPC) findInstance(name string) (string, error) {
 	)
 
 	log.Debugf("findInstance: name = %s", name)
+
+	if vpc.innerVpc == nil {
+		return "", fmt.Errorf("findInstance innerVpc is nil")
+	}
 
 	listOptions = vpc.vpcSvc.NewListInstancesOptions()
 	listOptions.SetResourceGroupID(vpc.options.GroupID)
@@ -1230,6 +1276,10 @@ func (vpc *VPC) deleteInstances() error {
 
 	log.Debugf("deleteInstances:")
 
+	if vpc.innerVpc == nil {
+		return fmt.Errorf("deleteInstances innerVpc is nil")
+	}
+
 	listOptions = vpc.vpcSvc.NewListInstancesOptions()
 	listOptions.SetResourceGroupID(vpc.options.GroupID)
 	//listOptions.SetVPCID(*vpc.innerVpc.ID)
@@ -1344,6 +1394,12 @@ func (vpc *VPC) deleteVPC() error {
 	)
 
 	if vpc.innerVpc != nil {
+		err = vpc.deleteSecurityGroup(vpc.securityGroupName)
+		if err != nil {
+			log.Fatalf("Error: deleteVPC: deleteSecurityGroup returns %v", err)
+			return err
+		}
+
 		err = vpc.deleteInstances()
 		if err != nil {
 			log.Fatalf("Error: deleteVPC: deleteInstances returns %v", err)
