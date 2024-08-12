@@ -886,7 +886,7 @@ func (vpc *VPC) findImage(name string) (vpcv1.Image, error) {
 	}
 
 	pager, err = vpc.vpcSvc.NewImagesPager(&vpcv1.ListImagesOptions{
-		Status:     []string{
+		Status: []string{
 			vpcv1.ListImagesOptionsStatusAvailableConst,
 		},
 		Visibility: ptr.To(vpcv1.ListImagesOptionsVisibilityPublicConst),
@@ -1021,12 +1021,12 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 	createOptions = vpc.vpcSvc.NewCreateSecurityGroupOptions(
 		&vpcv1.VPCIdentityByCRN{
 			CRN: vpc.innerVpc.CRN,
-	})
+		})
 	createOptions.SetName(name)
 	createOptions.SetResourceGroup(
 		&vpcv1.ResourceGroupIdentityByID{
 			ID: ptr.To(vpc.options.GroupID),
-	})
+		})
 	createOptions.SetRules(
 		[]vpcv1.SecurityGroupRulePrototypeIntf{
 			&vpcv1.SecurityGroupRulePrototype{
@@ -1043,7 +1043,7 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 				Direction: ptr.To("outbound"),
 				Protocol:  ptr.To("tcp"),
 			},
-	})
+		})
 
 	sg, response, err = vpc.vpcSvc.CreateSecurityGroupWithContext(vpc.ctx, createOptions)
 	if err != nil {
@@ -1139,13 +1139,13 @@ func (vpc *VPC) findInstance(name string) (string, error) {
 func (vpc *VPC) createInstance(zone string) error {
 
 	var (
-		instanceName      string
-		instanceID        string
-		securityGroupID   string
-		image             vpcv1.Image
-		keyId             string
-		subnetName        string
-		subnet            *vpcv1.Subnet
+		instanceName    string
+		instanceID      string
+		securityGroupID string
+		image           vpcv1.Image
+		keyId           string
+		subnetName      string
+		subnet          *vpcv1.Subnet
 		// InstancePrototype : InstancePrototype struct
 		// Models which "extend" this model:
 		// - InstancePrototypeInstanceByImage
@@ -1250,7 +1250,7 @@ func (vpc *VPC) createInstance(zone string) error {
 			Name: ptr.To("cx2-2x4"),
 		},
 		UserData: ptr.To(""), // @TODO
-		VPC:  &vpcv1.VPCIdentityByCRN{
+		VPC: &vpcv1.VPCIdentityByCRN{
 			CRN: vpc.innerVpc.CRN,
 		},
 		Zone: &vpcv1.ZoneIdentityByName{
