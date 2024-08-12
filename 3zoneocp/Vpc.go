@@ -45,6 +45,8 @@ type VPC struct {
 	innerVpc *vpcv1.VPC
 
 	ctx context.Context
+
+	securityGroupName string
 }
 
 type SubnetOptions struct {
@@ -92,9 +94,10 @@ func initVPCService(options VPCOptions) (*vpcv1.VpcV1, error) {
 func NewVPC(vpcOptions VPCOptions) (*VPC, error) {
 
 	var (
-		vpcSvc *vpcv1.VpcV1
-		ctx    context.Context
-		err    error
+		vpcSvc            *vpcv1.VpcV1
+		ctx               context.Context
+		securityGroupName string
+		err               error
 	)
 	log.Debugf("NewVPC: vpcOptions = %+v", vpcOptions)
 
@@ -108,11 +111,14 @@ func NewVPC(vpcOptions VPCOptions) (*VPC, error) {
 	ctx = context.Background()
 	log.Debugf("NewVPC: ctx = %v", ctx)
 
+	securityGroupName = fmt.Sprintf("%s-sg", vpc.options.Name)
+
 	return &VPC{
-		options:  vpcOptions,
-		vpcSvc:   vpcSvc,
-		innerVpc: nil,
-		ctx:      ctx,
+		options:           vpcOptions,
+		vpcSvc:            vpcSvc,
+		innerVpc:          nil,
+		ctx:               ctx,
+		securityGroupName: securityGroupName,
 	}, nil
 }
 
@@ -966,11 +972,24 @@ func (vpc *VPC) findSecurityGroup(name string) (string, error) {
 func (vpc *VPC) createSecurityGroup(name string) error {
 
 	var (
-		createOptions *vpcv1.CreateSecurityGroupOptions
-		sg            *vpcv1.SecurityGroup
-		response      *core.DetailedResponse
-		err           error
+		securityGroupID string
+		createOptions   *vpcv1.CreateSecurityGroupOptions
+		sg              *vpcv1.SecurityGroup
+		response        *core.DetailedResponse
+		err             error
 	)
+
+	log.Debugf("createSecurityGroup: name = %s", name)
+
+	securityGroupID, err = vpc.findSecurityGroup(name)
+	if err != nil {
+		log.Fatalf("Error: createSecurityGroup: findSecurityGroup returns %v", err)
+		return err
+	}
+	log.Debugf("createSecurityGroup: securityGroupID = %s", securityGroupID)
+	if securityGroupID != "" {
+		return nil
+	}
 
 	createOptions = vpc.vpcSvc.NewCreateSecurityGroupOptions(
 		&vpcv1.VPCIdentityByCRN{
@@ -1002,6 +1021,16 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 	}
 
 	log.Debugf("createSecurityGroup: sg = %+v", sg)
+
+	return nil
+}
+
+func (vpc *VPC) deleteSecurityGroup(name string) error {
+
+	var (
+	)
+
+	// @TODO
 
 	return nil
 }
@@ -1051,7 +1080,6 @@ func (vpc *VPC) createInstance(zone string) error {
 	var (
 		instanceName      string
 		instanceID        string
-		securityGroupName string
 		securityGroupID   string
 		image             vpcv1.Image
 		keyId             string
@@ -1074,11 +1102,13 @@ func (vpc *VPC) createInstance(zone string) error {
 		err               error
 	)
 
+	log.Debugf("createInstance: zone = %s", zone)
+
 	if vpc.innerVpc == nil {
 		return fmt.Errorf("createInstance innerVpc is nil")
 	}
 
-	instanceName = fmt.Sprintf("%s-vpc-instance", vpc.options.Name)
+	instanceName = fmt.Sprintf("%s-%s-instance", vpc.options.Name, zone)
 
 	instanceID, err = vpc.findInstance(instanceName)
 	if err != nil {
@@ -1112,16 +1142,14 @@ func (vpc *VPC) createInstance(zone string) error {
 	}
 	log.Debugf("createInstance: subnet = %+v", subnet)
 
-	securityGroupName = fmt.Sprintf("%s-sg", vpc.options.Name)
-
-	securityGroupID, err = vpc.findSecurityGroup(securityGroupName)
+	securityGroupID, err = vpc.findSecurityGroup(vpc.securityGroupName)
 	if err != nil {
 		log.Fatalf("Error: createInstance: findSecurityGroup returns %v", err)
 		return err
 	}
 	log.Debugf("createInstance: securityGroupID = %s", securityGroupID)
 	if securityGroupID != "" {
-		err = vpc.createSecurityGroup(securityGroupName)
+		err = vpc.createSecurityGroup(vpc.securityGroupName)
 		if err != nil {
 			log.Fatalf("Error: createInstance: createSecurityGroup returns %v", err)
 			return err
@@ -1177,7 +1205,7 @@ func (vpc *VPC) createInstance(zone string) error {
 	return nil
 }
 
-func (vpc *VPC) deleteInstance() error {
+func (vpc *VPC) deleteInstance(zone string) error {
 
 	var (
 		instanceName  string
@@ -1187,11 +1215,13 @@ func (vpc *VPC) deleteInstance() error {
 		err           error
 	)
 
+	log.Debugf("deleteInstance: zone = %s", zone)
+
 	if vpc.innerVpc == nil {
 		return fmt.Errorf("deleteInstance innerVpc is nil")
 	}
 
-	instanceName = fmt.Sprintf("%s-vpc-instance", vpc.options.Name)
+	instanceName = fmt.Sprintf("%s-%s-instance", vpc.options.Name, zone)
 
 	instanceID, err = vpc.findInstance(instanceName)
 	if err != nil {
@@ -1236,12 +1266,6 @@ func (vpc *VPC) deleteVPC() error {
 		err = vpc.deleteSubnets()
 		if err != nil {
 			log.Fatalf("Error: deleteVPC: deleteSubnets returns %v", err)
-			return err
-		}
-
-		err = vpc.deleteInstance()
-		if err != nil {
-			log.Fatalf("Error: deleteVPC: deleteInstance returns %v", err)
 			return err
 		}
 

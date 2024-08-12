@@ -208,6 +208,14 @@ func createVPC(mode Mode, defaults Defaults) {
 				panic(err)
 			}
 			// END HACK
+		case ModeDelete:
+			// BEGIN HACK
+			err = vpc.deleteInstance(rsv.VPCZoneName)
+			if err != nil {
+				log.Fatalf("Error: vpc.deleteInstance returns %v", err)
+				panic(err)
+			}
+			// END HACK
 		}
 	}
 }
