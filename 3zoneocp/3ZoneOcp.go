@@ -133,6 +133,24 @@ func main() {
 	case ModeCreate:
 		createTransitGatewayConnections(mode, defaults)
 	}
+
+	var ipAddresses map[string]string
+
+	ipAddresses = make(map[string]string)
+
+	for siKey := range siMap {
+		si := siMap[siKey]
+		ipAddress, err := si.GetInstanceIP()
+		if err != nil {
+			log.Fatalf("Error: si.GetInstanceIP returns %v", err)
+			panic(err)
+		}
+		ipAddresses[siKey] = ipAddress
+	}
+
+	for ipAddrKey := range ipAddresses {
+		fmt.Printf("IP address for %s is %s\n", ipAddrKey, ipAddresses[ipAddrKey])
+	}
 }
 
 func createVPC(mode Mode, defaults Defaults) {

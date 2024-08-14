@@ -1038,6 +1038,40 @@ func (si *ServiceInstance) deleteInstance() error {
 	return nil
 }
 
+func (si *ServiceInstance) GetInstanceIP() (string, error) {
+
+	var (
+		instance *models.PVMInstance
+		network  *models.PVMInstanceNetwork
+		err      error
+	)
+
+	if si.innerSi == nil {
+		return "", fmt.Errorf("Error: GetInstanceIP called on nil ServiceInstance")
+	}
+	if si.instanceClient == nil {
+		return "", fmt.Errorf("Error: GetInstanceIP has nil instanceClient")
+	}
+
+	instance, err = si.findInstance()
+	if err != nil {
+		log.Fatalf("Error: GetInstanceIP: findInstance returns %v", err)
+		return "", err
+	}
+	log.Debugf("GetInstanceIP: instance = %+v", instance)
+	if instance == nil {
+		return "", fmt.Errorf("Error: GetInstanceIP instance is nil")
+	}
+
+	for _, network = range instance.Networks {
+		log.Debugf("GetInstanceIP: IPAddress = %s", network.IPAddress)
+
+		return network.IPAddress, nil
+	}
+
+	return "", fmt.Errorf("Error: GetInstanceIP couldn't find IPAddress")
+}
+
 type User struct {
 	ID         string
 	Email      string
