@@ -1077,11 +1077,12 @@ func (vpc *VPC) deleteSecurityGroup(name string) error {
 		return err
 	}
 	log.Debugf("deleteSecurityGroup: securityGroupID = %s", securityGroupID)
-	if securityGroupID != "" {
+	if securityGroupID == "" {
 		return fmt.Errorf("deleteSecurityGroup could not find SG %s", name)
 	}
 
 	deleteOptions = vpc.vpcSvc.NewDeleteSecurityGroupOptions(securityGroupID)
+	log.Debugf("deleteSecurityGroup: deleteOptions = %+v", deleteOptions)
 
 	response, err = vpc.vpcSvc.DeleteSecurityGroupWithContext(vpc.ctx, deleteOptions)
 	if err != nil {
@@ -1401,12 +1402,6 @@ func (vpc *VPC) deleteVPC() error {
 	)
 
 	if vpc.innerVpc != nil {
-		err = vpc.deleteSecurityGroup(vpc.securityGroupName)
-		if err != nil {
-			log.Fatalf("Error: deleteVPC: deleteSecurityGroup returns %v", err)
-			return err
-		}
-
 		err = vpc.deleteInstances()
 		if err != nil {
 			log.Fatalf("Error: deleteVPC: deleteInstances returns %v", err)
@@ -1422,6 +1417,12 @@ func (vpc *VPC) deleteVPC() error {
 		err = vpc.deletePublicGateways()
 		if err != nil {
 			log.Fatalf("Error: deleteVPC: deletePublicGateways returns %v", err)
+			return err
+		}
+
+		err = vpc.deleteSecurityGroup(vpc.securityGroupName)
+		if err != nil {
+			log.Fatalf("Error: deleteVPC: deleteSecurityGroup returns %v", err)
 			return err
 		}
 

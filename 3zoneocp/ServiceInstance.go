@@ -395,8 +395,6 @@ func (si *ServiceInstance) createServiceInstance() error {
 
 		response *core.DetailedResponse
 
-		piSession *ibmpisession.IBMPISession
-
 		err error
 	)
 
@@ -426,6 +424,47 @@ func (si *ServiceInstance) createServiceInstance() error {
 	if si.innerSi == nil {
 		return fmt.Errorf("Error: createServiceInstance has a nil ServiceInstance!")
 	}
+
+	err = si.createClients()
+	if err != nil {
+			log.Fatalf("Error: createClients returns %v", err)
+		return err
+	}
+
+	err = si.addNetwork()
+	if err != nil {
+		log.Fatalf("Error: addNetwork returns %v", err)
+		return err
+	}
+
+	err = si.addSshKey()
+	if err != nil {
+		log.Fatalf("Error: addSshKey returns %v", err)
+		return err
+	}
+
+	err = si.addImage("CentOS-Stream-9")
+	if err != nil {
+		log.Fatalf("Error: addImage returns %v", err)
+		return err
+	}
+
+	err = si.createInstance()
+	if err != nil {
+		log.Fatalf("Error: createInstance returns %v", err)
+		return err
+	}
+
+	return nil
+}
+
+func (si *ServiceInstance) createClients() error {
+
+	var (
+		piSession *ibmpisession.IBMPISession
+
+		err error
+	)
 
 	if si.piSession == nil {
 		piSession, err = si.createPiSession()
@@ -470,30 +509,6 @@ func (si *ServiceInstance) createServiceInstance() error {
 	}
 	if si.instanceClient == nil {
 		return fmt.Errorf("Error: createServiceInstance has a nil instanceClient!")
-	}
-
-	err = si.addNetwork()
-	if err != nil {
-		log.Fatalf("Error: addNetwork returns %v", err)
-		return err
-	}
-
-	err = si.addSshKey()
-	if err != nil {
-		log.Fatalf("Error: addSshKey returns %v", err)
-		return err
-	}
-
-	err = si.addImage("CentOS-Stream-9")
-	if err != nil {
-		log.Fatalf("Error: addImage returns %v", err)
-		return err
-	}
-
-	err = si.createInstance()
-	if err != nil {
-		log.Fatalf("Error: createInstance returns %v", err)
-		return err
 	}
 
 	return nil
@@ -562,16 +577,28 @@ func (si *ServiceInstance) deleteServiceInstance() error {
 		err error
 	)
 
+	log.Debugf("deleteServiceInstance: si.options.Name = %s", si.options.Name);
+
 	if si.innerSi == nil {
 		log.Debugf("Warning: deleteServiceInstance called on nil ServiceInstance")
 		return nil
 	}
 
-	if si.innerSshKey != nil {
-		if si.keyClient == nil {
-			return fmt.Errorf("Error: deleteServiceInstance called on nil keyClient")
-		}
+	err = si.createClients()
+	if err != nil {
+			log.Fatalf("Error: createClients returns %v", err)
+		return err
+	}
 
+	if si.keyClient == nil {
+		return fmt.Errorf("Error: deleteServiceInstance called on nil keyClient")
+	}
+	si.innerSshKey, err = si.findSshKey()
+	log.Debugf("deleteServiceInstance: innerSshKey = %+v", si.innerSshKey)
+	if err != nil {
+		return fmt.Errorf("Error: findSshKey returns %v", err)
+	}
+	if si.innerSshKey != nil {
 		err = si.keyClient.Delete(*si.innerSshKey.Name)
 		if err != nil {
 			log.Fatalf("Error: si.keyClient.Delete(%s) returns %v", *si.innerSshKey.Name, err)
@@ -580,11 +607,15 @@ func (si *ServiceInstance) deleteServiceInstance() error {
 		si.innerSshKey = nil
 	}
 
+	if si.networkClient == nil {
+		return fmt.Errorf("Error: deleteServiceInstance called on nil networkClient")
+	}
+	si.innerNetwork, err = si.findNetwork()
+	log.Debugf("deleteServiceInstance: innerNetwork = %+v", si.innerNetwork)
+	if err != nil {
+		return fmt.Errorf("Error: findNetwork returns %v", err)
+	}
 	if si.innerNetwork != nil {
-		if si.networkClient == nil {
-			return fmt.Errorf("Error: deleteServiceInstance called on nil networkClient")
-		}
-
 		err = si.networkClient.Delete(*si.innerNetwork.NetworkID)
 		if err != nil {
 			log.Fatalf("Error: si.networkClient.Delete(%s) returns %v", *si.innerNetwork.NetworkID, err)
@@ -593,17 +624,34 @@ func (si *ServiceInstance) deleteServiceInstance() error {
 		si.innerNetwork = nil
 	}
 
-	if si.innerSi != nil {
-		options = si.controllerSvc.NewDeleteResourceInstanceOptions(*si.innerSi.ID)
-
-		response, err = si.controllerSvc.DeleteResourceInstanceWithContext(si.ctx, options)
-		if err != nil {
-			log.Fatalf("Error: DeleteResourceInstanceWithContext: response = %v, err = %v", response, err)
-			return err
-		}
-		si.innerSi = nil
+	if si.imageClient == nil {
+		return fmt.Errorf("Error: deleteServiceInstance called on nil imageClient")
 	}
 
+	if si.instanceClient == nil {
+		return fmt.Errorf("Error: deleteServiceInstance called on nil instanceClient")
+	}
+	err = si.deleteInstance()
+	if err != nil {
+		log.Fatalf("Error: deleteServiceInstance: deleteInstance returns %v", err)
+		return err
+	}
+
+	options = si.controllerSvc.NewDeleteResourceInstanceOptions(*si.innerSi.ID)
+
+	response, err = si.controllerSvc.DeleteResourceInstanceWithContext(si.ctx, options)
+	if err != nil {
+		log.Fatalf("Error: DeleteResourceInstanceWithContext: response = %v, err = %v", response, err)
+		return err
+	}
+
+	err = si.waitForServiceInstanceReady()
+	if err != nil {
+		log.Fatalf("Error: deleteServiceInstance: waitForServiceInstanceReady returns %v", err)
+		return err
+	}
+
+	si.innerSi = nil
 	si.keyClient = nil
 	si.networkClient = nil
 
@@ -648,6 +696,7 @@ func (si *ServiceInstance) addNetwork() error {
 			Type: ptr.To("vlan"),
 		}
 
+		log.Debugf("addNetwork: networkCreate = %+v", networkCreate)
 		si.innerNetwork, err = si.networkClient.Create(networkCreate)
 		if err != nil {
 			return fmt.Errorf("Error: si.networkClient.Create returns %v", err)
@@ -952,6 +1001,39 @@ func (si *ServiceInstance) createInstance() error {
 		return err
 	}
 	log.Debugf("createInstance: instanceList = %+v", instanceList)
+
+	return nil
+}
+
+func (si *ServiceInstance) deleteInstance() error {
+
+	var (
+		instance *models.PVMInstance
+		err      error
+	)
+
+	if si.innerSi == nil {
+		return fmt.Errorf("Error: deleteInstance called on nil ServiceInstance")
+	}
+	if si.instanceClient == nil {
+		return fmt.Errorf("Error: deleteInstance called on nil instanceClient")
+	}
+
+	instance, err = si.findInstance()
+	if err != nil {
+		log.Fatalf("Error: deleteInstance: findInstance returns %v", err)
+		return err
+	}
+	log.Debugf("deleteInstance: instance = %+v", instance)
+	if instance == nil {
+		return nil
+	}
+
+	err = si.instanceClient.Delete(*instance.PvmInstanceID)
+	if err != nil {
+		log.Fatalf("Error: deleteInstance: Delete returns %v", err)
+		return err
+	}
 
 	return nil
 }

@@ -106,11 +106,13 @@ func main() {
 		panic(err)
 	}
 
-	// BEGIN HACK
-	delete(zoneMap, "zone2")
-	delete(zoneMap, "zone3")
+	if false {
+		// BEGIN HACK
+		delete(zoneMap, "zone2")
+		delete(zoneMap, "zone3")
+		// END HACK
+	}
 	log.Debugf("main: zoneMap = %+v", zoneMap)
-	// END HACK
 
 	siMap = make(map[string]*ServiceInstance)
 
@@ -206,13 +208,15 @@ func createVPC(mode Mode, defaults Defaults) {
 				log.Fatalf("Error: setSubnetPublicGateway returns %v", err)
 			}
 
-			// BEGIN HACK
-			err = vpc.createInstance(rsv.VPCZoneName)
-			if err != nil {
-				log.Fatalf("Error: vpc.createInstance returns %v", err)
-				panic(err)
+			if zone == "zone1" {
+				// BEGIN HACK
+				err = vpc.createInstance(rsv.VPCZoneName)
+				if err != nil {
+					log.Fatalf("Error: vpc.createInstance returns %v", err)
+					panic(err)
+				}
+				// END HACK
 			}
-			// END HACK
 		}
 	}
 }
