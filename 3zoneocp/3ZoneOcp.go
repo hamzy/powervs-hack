@@ -38,6 +38,7 @@ var (
 	si                   *ServiceInstance
 	siMap                map[string]*ServiceInstance
 	tg                   *TransitGateway
+	cos                  *CloudObjectStorage
 )
 
 type Mode int
@@ -116,14 +117,16 @@ func main() {
 
 	siMap = make(map[string]*ServiceInstance)
 
-	createTransitGateway(mode, defaults)
+	instantiateCloudObjectStorage(mode, defaults)
 
-	createVPC(mode, defaults)
+	instantiateTransitGateway(mode, defaults)
+
+	instantiateVPC(mode, defaults)
 
 	for zone := range zoneMap {
 		log.Debugf("main: zone = %s", zone)
 
-		createServiceInstance(mode, defaults, zone)
+		instantiateServiceInstance(mode, defaults, zone)
 	}
 
 	log.Debugf("main: siMap = %+v", siMap)
@@ -153,7 +156,7 @@ func main() {
 	}
 }
 
-func createVPC(mode Mode, defaults Defaults) {
+func instantiateVPC(mode Mode, defaults Defaults) {
 
 	var (
 		vpcOptions           VPCOptions
@@ -186,7 +189,7 @@ func createVPC(mode Mode, defaults Defaults) {
 	}
 
 	for zone := range zoneMap {
-		log.Debugf("createVPC: zone = %s", zone)
+		log.Debugf("instantiateVPC: zone = %s", zone)
 
 		rsv, err = RSVForRegionZone(defaults.Region, zone)
 		log.Debugf("main: rsv = %+v, err = %v", rsv, err)
@@ -239,7 +242,7 @@ func createVPC(mode Mode, defaults Defaults) {
 	}
 }
 
-func createServiceInstance(mode Mode, defaults Defaults, zone string) {
+func instantiateServiceInstance(mode Mode, defaults Defaults, zone string) {
 
 	var (
 		siOptions ServiceInstanceOptions
@@ -251,7 +254,7 @@ func createServiceInstance(mode Mode, defaults Defaults, zone string) {
 	log.Debugf("main: zone = %s", zone)
 
 	rsv, err = RSVForRegionZone(defaults.Region, zone)
-	log.Debugf("createServiceInstance: rsv = %+v, err = %v", rsv, err)
+	log.Debugf("instantiateServiceInstance: rsv = %+v, err = %v", rsv, err)
 
 	siOptions = ServiceInstanceOptions{
 		Mode:    mode,
@@ -278,7 +281,7 @@ func createServiceInstance(mode Mode, defaults Defaults, zone string) {
 	siMap[zone] = si
 }
 
-func createTransitGateway(mode Mode, defaults Defaults) {
+func instantiateTransitGateway(mode Mode, defaults Defaults) {
 
 	var (
 		tgOptions            TransitGatewayOptions
@@ -334,5 +337,32 @@ func createTransitGatewayConnections(mode Mode, defaults Defaults) {
 				log.Fatalf("Error: tg.AddTransitGatewayConnection(%s) returns %v", crn, err)
 			}
 		}
+	}
+}
+
+func instantiateCloudObjectStorage(mode Mode, defaults Defaults) {
+
+	var (
+		cosOptions CloudObjectStorageOptions
+		iface      RunnableObject
+		err        error
+	)
+
+	cosOptions = CloudObjectStorageOptions{
+		Mode:    mode,
+		ApiKey:  defaults.ApiKey,
+		Name:    "rdr-hamzy-3zone-cos",
+		GroupID: defaults.GroupID,
+	}
+	cos, err = NewCloudObjectStorage(cosOptions)
+	if err != nil {
+		log.Fatalf("Error: NewCloudObjectStorage returns %v", err)
+	}
+	log.Debugf("main: cos = %+v", cos)
+	iface = cos
+
+	err = iface.Run()
+	if err != nil {
+		log.Fatalf("Error: cos.Run returns %v", err)
 	}
 }
