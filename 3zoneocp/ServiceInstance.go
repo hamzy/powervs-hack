@@ -107,6 +107,15 @@ type ServiceInstance struct {
 	instanceClient *instance.IBMPIInstanceClient
 }
 
+type ImageImportOptions struct {
+	ImageName           string
+	BucketName          string
+	BucketAccess        string
+	BucketImageFileName string
+	BucketRegion        string
+	StorageType         string
+}
+
 func initServiceInstance(options ServiceInstanceOptions) (*resourcecontrollerv2.ResourceControllerV2, error) {
 
 	var (
@@ -402,6 +411,8 @@ func (si *ServiceInstance) createServiceInstance() error {
 	var (
 		options *resourcecontrollerv2.CreateResourceInstanceOptions
 
+		importOptions ImageImportOptions
+
 		response *core.DetailedResponse
 
 		err error
@@ -455,6 +466,21 @@ func (si *ServiceInstance) createServiceInstance() error {
 	err = si.addImage("CentOS-Stream-9")
 	if err != nil {
 		log.Fatalf("Error: addImage returns %v", err)
+		return err
+	}
+
+	importOptions = ImageImportOptions {
+		ImageName:           fmt.Sprintf("%s-rhcos", si.options.Name),
+		BucketName:          fmt.Sprintf("rhcos-powervs-images-%s", si.options.Region),
+		BucketAccess:        "public",
+		BucketImageFileName: "rhcos-417-94-202407010929-0-ppc64le-powervs.ova.gz",	// @TODO
+		BucketRegion:        si.options.Region,
+		StorageType:         "tier3",
+	}
+
+	err = si.addRHCOSImage(importOptions)
+	if err != nil {
+		log.Fatalf("Error: addRHCOSImage returns %v", err)
 		return err
 	}
 
@@ -838,9 +864,7 @@ func (si *ServiceInstance) findSshKey() (*models.SSHKey, error) {
 func (si *ServiceInstance) addImage(imageName string) error {
 
 	var (
-		images      *models.Images
 		imageRef    *models.ImageReference
-		imageId     string
 		createImage models.CreateImage
 		image       *models.Image
 		err         error
@@ -854,51 +878,31 @@ func (si *ServiceInstance) addImage(imageName string) error {
 	}
 
 	// Does it already exist?
-	images, err = si.imageClient.GetAll()
+	imageRef, err = si.findImage(imageName)
 	if err != nil {
-		log.Fatalf("Error: addImage: GetAll returns %v", err)
+		log.Fatalf("Error: addImage: findImage returns %v", err)
 		return err
 	}
-
-	for _, imageRef = range images.Images {
-		if *imageRef.Name != imageName || *imageRef.State != "active" {
-			log.Debugf("addImage: SKIP EXISTING %s %s", *imageRef.Name, *imageRef.State)
-			continue
-		}
-
-		if *imageRef.Name == imageName && *imageRef.State == "active" {
-			log.Debugf("addImage: FOUND EXISTING %s %s", *imageRef.Name, *imageRef.State)
-
-			si.imageId = *imageRef.ImageID
-			log.Debugf("addImage: si.imageId = %s", si.imageId)
-			return nil
-		}
+	if imageRef != nil {
+		si.imageId = *imageRef.ImageID
+		log.Debugf("addImage: imageRef.ImageID = %s", *imageRef.ImageID)
+		return nil
 	}
+
+	// Find the stock image.
+	imageRef, err = si.findStockImage(imageName)
+	if err != nil {
+		log.Fatalf("Error: addImage: findStockImage returns %v", err)
+		return err
+	}
+	if imageRef == nil {
+		return fmt.Errorf("Error: findStockImage(%s) returns no image found", imageName)
+	}
+	log.Debugf("addImage: findStockImage: imageRef.ImageID = %s", *imageRef.ImageID)
 
 	// Import it!
-	images, err = si.imageClient.GetAllStockImages(false, false)
-	if err != nil {
-		log.Fatalf("Error: addImage: GetAllStockImages returns %v", err)
-		return err
-	}
-
-	for _, imageRef = range images.Images {
-		if *imageRef.Name != imageName || *imageRef.State != "active" {
-			log.Debugf("addImage: SKIP STOCK %s %s", *imageRef.Name, *imageRef.State)
-			continue
-		}
-
-		if *imageRef.Name == imageName && *imageRef.State == "active" {
-			log.Debugf("addImage: FOUND STOCK %s %s %s", *imageRef.Name, *imageRef.State, *imageRef.ImageID)
-
-			imageId = *imageRef.ImageID
-			break
-		}
-	}
-	log.Debugf("addImage: imageId = %s", imageId)
-
 	createImage = models.CreateImage{
-		ImageID: imageId,
+		ImageID: *imageRef.ImageID,
 	}
 
 	image, err = si.imageClient.Create(&createImage)
@@ -912,6 +916,111 @@ func (si *ServiceInstance) addImage(imageName string) error {
 	log.Debugf("addImage: si.imageId = %s", si.imageId)
 
 	return nil
+}
+
+func (si *ServiceInstance) addRHCOSImage(importOptions ImageImportOptions) error {
+
+	var (
+		imageRef  *models.ImageReference
+		importJob *models.CreateCosImageImportJob
+		imageJob  *models.JobReference
+		err       error
+	)
+
+	if si.innerSi == nil {
+		return fmt.Errorf("Error: addRHCOSImage called on nil ServiceInstance")
+	}
+	if si.imageClient == nil {
+		return fmt.Errorf("Error: addRHCOSImage has nil imageClient")
+	}
+
+	// Does it already exist?
+	imageRef, err = si.findImage(importOptions.ImageName)
+	if err != nil {
+		log.Fatalf("Error: addRHCOSImage: findImage returns %v", err)
+		return err
+	}
+	if imageRef != nil {
+		log.Debugf("addRHCOSImage: imageRef.ImageID = %s", *imageRef.ImageID)
+		return nil
+	}
+
+	// Import it!
+	importJob = &models.CreateCosImageImportJob{
+		ImageName:     &importOptions.ImageName,
+		BucketName:    &importOptions.BucketName,
+		BucketAccess:  &importOptions.BucketAccess,
+		ImageFilename: &importOptions.BucketImageFileName,
+		Region:        &importOptions.BucketRegion,
+		StorageType:   importOptions.StorageType,		// Weird it's not a pointer
+	}
+
+	imageJob, err = si.imageClient.CreateCosImage(importJob)
+	if err != nil {
+		log.Fatalf("Error: addRHCOSImage: CreateCosImage returns %v", err)
+		return err
+	}
+	log.Debugf("addRHCOSImage: imageJob = %+v", imageJob)
+
+	return nil
+}
+
+func (si *ServiceInstance) findImage(imageName string) (*models.ImageReference, error) {
+
+	var (
+		images   *models.Images
+		imageRef *models.ImageReference
+		err      error
+	)
+
+	images, err = si.imageClient.GetAll()
+	if err != nil {
+		log.Fatalf("Error: findImage: GetAll returns %v", err)
+		return nil, err
+	}
+
+	for _, imageRef = range images.Images {
+		if *imageRef.Name != imageName || *imageRef.State != "active" {
+			log.Debugf("findImage: SKIP EXISTING %s %s", *imageRef.Name, *imageRef.State)
+			continue
+		}
+
+		if *imageRef.Name == imageName && *imageRef.State == "active" {
+			log.Debugf("findImage: FOUND EXISTING %s %s", *imageRef.Name, *imageRef.State)
+			return imageRef, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (si *ServiceInstance) findStockImage(imageName string) (*models.ImageReference, error) {
+
+	var (
+		images   *models.Images
+		imageRef *models.ImageReference
+		err      error
+	)
+
+	images, err = si.imageClient.GetAllStockImages(false, false)
+	if err != nil {
+		log.Fatalf("Error: findStockImage: GetAllStockImages returns %v", err)
+		return nil, err
+	}
+
+	for _, imageRef = range images.Images {
+		if *imageRef.Name != imageName || *imageRef.State != "active" {
+			log.Debugf("findStockImage: SKIP STOCK %s %s", *imageRef.Name, *imageRef.State)
+			continue
+		}
+
+		if *imageRef.Name == imageName && *imageRef.State == "active" {
+			log.Debugf("findStockImage: FOUND STOCK %s %s %s", *imageRef.Name, *imageRef.State, *imageRef.ImageID)
+			return imageRef, nil
+		}
+	}
+
+	return nil, nil
 }
 
 func (si *ServiceInstance) findInstance() (*models.PVMInstance, error) {
@@ -990,6 +1099,7 @@ func (si *ServiceInstance) createInstance() error {
 		return nil
 	}
 
+	// Is there a better way to do this?
 	networks[0].NetworkID = si.innerNetwork.NetworkID
 	createNetworks[0] = &networks[0]
 

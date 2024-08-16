@@ -51,12 +51,12 @@ const (
 func main() {
 
 	var (
-		args                 []string
-		mode                 = ModeCreate
-		filename             = "vars.json"
-		jsonData             []byte
-		defaults             Defaults
-		err                  error
+		args     []string
+		mode     = ModeCreate
+		filename = "vars.json"
+		jsonData []byte
+		defaults Defaults
+		err      error
 	)
 
 	flag.Func("mode", "Either create or delete", func(flagValue string) error {
@@ -107,7 +107,7 @@ func main() {
 		panic(err)
 	}
 
-	if false {
+	if true {
 		// BEGIN HACK
 		delete(zoneMap, "zone2")
 		delete(zoneMap, "zone3")
