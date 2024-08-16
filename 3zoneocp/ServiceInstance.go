@@ -284,6 +284,15 @@ func (si *ServiceInstance) CRN() (string, error) {
 	return *si.innerSi.CRN, nil
 }
 
+func (si *ServiceInstance) Name() (string, error) {
+
+	if si.innerSi == nil {
+		return "", fmt.Errorf("ServiceInstance does not exist to have a Name")
+	}
+
+	return *si.innerSi.Name, nil
+}
+
 func (si *ServiceInstance) findServiceInstance() (*resourcecontrollerv2.ResourceInstance, error) {
 
 	var (

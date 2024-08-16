@@ -149,6 +149,15 @@ func (tg *TransitGateway) CRN() (string, error) {
 	return *tg.innerTg.Crn, nil
 }
 
+func (tg *TransitGateway) Name() (string, error) {
+
+	if tg.innerTg == nil {
+		return "", fmt.Errorf("TransitGateway does not exist to have a Name")
+	}
+
+	return *tg.innerTg.Name, nil
+}
+
 func (tg *TransitGateway) findTransitGateway() (*transitgatewayapisv1.TransitGateway, error) {
 
 	var (

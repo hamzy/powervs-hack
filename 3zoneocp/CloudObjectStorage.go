@@ -113,6 +113,15 @@ func (cos *CloudObjectStorage) CRN() (string, error) {
 	return *cos.innerCos.CRN, nil
 }
 
+func (cos *CloudObjectStorage) Name() (string, error) {
+
+	if cos.innerCos == nil {
+		return "", fmt.Errorf("CloudObjectStorage does not exist to have a Name")
+	}
+
+	return *cos.innerCos.Name, nil
+}
+
 func (cos *CloudObjectStorage) Run() error {
 
 	var (
@@ -355,8 +364,22 @@ func (cos *CloudObjectStorage) createCloudObjectStorage() error {
 func (cos *CloudObjectStorage) deleteCloudObjectStorage() error {
 
 	var (
+		deleteOptions *resourcecontrollerv2.DeleteResourceInstanceOptions
+
+		response *core.DetailedResponse
+
 		err error
 	)
 
-	return err
+	if cos.innerCos != nil {
+		deleteOptions = cos.controllerSvc.NewDeleteResourceInstanceOptions(*cos.innerCos.GUID)
+
+		response, err = cos.controllerSvc.DeleteResourceInstanceWithContext(cos.ctx, deleteOptions)
+		if err != nil {
+			log.Fatalf("Error: DeleteResourceInstanceWithContext: response = %v, err = %v", response, err)
+			return err
+		}
+	}
+
+	return nil
 }

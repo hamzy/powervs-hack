@@ -163,6 +163,15 @@ func (vpc *VPC) CRN() (string, error) {
 	return *vpc.innerVpc.CRN, nil
 }
 
+func (vpc *VPC) Name() (string, error) {
+
+	if vpc.innerVpc == nil {
+		return "", fmt.Errorf("VPC does not exist to have a Name")
+	}
+
+	return *vpc.innerVpc.Name, nil
+}
+
 func (vpc *VPC) createVPC() error {
 
 	var (
