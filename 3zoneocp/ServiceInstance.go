@@ -86,6 +86,8 @@ type ServiceInstance struct {
 
 	sshKeyName string
 
+	dhcpName string
+
 	instanceName string
 
 	resourceGroupID string
@@ -103,6 +105,10 @@ type ServiceInstance struct {
 	imageClient *instance.IBMPIImageClient
 
 	imageId string
+
+	dhcpClient *instance.IBMPIDhcpClient
+
+	dhcpServer *models.DHCPServerDetail
 
 	instanceClient *instance.IBMPIInstanceClient
 }
@@ -205,6 +211,8 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 
 		sshKeyName string
 
+		dhcpName string
+
 		instanceName string
 
 		controllerSvc *resourcecontrollerv2.ResourceControllerV2
@@ -221,6 +229,7 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 	siName = fmt.Sprintf("%s-si", siOptions.Name)
 	networkName = fmt.Sprintf("%s-si-network", siOptions.Name)
 	sshKeyName = fmt.Sprintf("%s-si-sshkey", siOptions.Name)
+	dhcpName = fmt.Sprintf("%s-si-dhcp", siOptions.Name)
 	instanceName = fmt.Sprintf("%s-instance", siOptions.Name)
 
 	controllerSvc, err = initServiceInstance(siOptions)
@@ -247,6 +256,7 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 		siName:          siName,
 		networkName:     networkName,
 		sshKeyName:      sshKeyName,
+		dhcpName:        dhcpName,
 		instanceName:    instanceName,
 		resourceGroupID: resourceGroupID,
 	}, nil
@@ -463,9 +473,9 @@ func (si *ServiceInstance) createServiceInstance() error {
 		return err
 	}
 
-	err = si.addImage("CentOS-Stream-9")
+	err = si.addStockImage("CentOS-Stream-9")
 	if err != nil {
-		log.Fatalf("Error: addImage returns %v", err)
+		log.Fatalf("Error: addStockImage returns %v", err)
 		return err
 	}
 
@@ -481,6 +491,12 @@ func (si *ServiceInstance) createServiceInstance() error {
 	err = si.addRHCOSImage(importOptions)
 	if err != nil {
 		log.Fatalf("Error: addRHCOSImage returns %v", err)
+		return err
+	}
+
+	err = si.addDhcpServer()
+	if err != nil {
+		log.Fatalf("Error: addDhcpServer returns %v", err)
 		return err
 	}
 
@@ -536,6 +552,14 @@ func (si *ServiceInstance) createClients() error {
 	}
 	if si.imageClient == nil {
 		return fmt.Errorf("Error: createServiceInstance has a nil imageClient!")
+	}
+
+	if si.dhcpClient == nil {
+		si.dhcpClient = instance.NewIBMPIDhcpClient(si.ctx, si.piSession, *si.innerSi.GUID)
+		log.Debugf("createServiceInstance: dhcpClient = %v", si.dhcpClient)
+	}
+	if si.dhcpClient == nil {
+		return fmt.Errorf("Error: createServiceInstance has a nil dhcpClient!")
 	}
 
 	if si.instanceClient == nil {
@@ -861,7 +885,7 @@ func (si *ServiceInstance) findSshKey() (*models.SSHKey, error) {
 	return nil, nil
 }
 
-func (si *ServiceInstance) addImage(imageName string) error {
+func (si *ServiceInstance) addStockImage(imageName string) error {
 
 	var (
 		imageRef    *models.ImageReference
@@ -871,34 +895,34 @@ func (si *ServiceInstance) addImage(imageName string) error {
 	)
 
 	if si.innerSi == nil {
-		return fmt.Errorf("Error: addImage called on nil ServiceInstance")
+		return fmt.Errorf("Error: addStockImage called on nil ServiceInstance")
 	}
 	if si.imageClient == nil {
-		return fmt.Errorf("Error: addImage has nil imageClient")
+		return fmt.Errorf("Error: addStockImage has nil imageClient")
 	}
 
 	// Does it already exist?
 	imageRef, err = si.findImage(imageName)
 	if err != nil {
-		log.Fatalf("Error: addImage: findImage returns %v", err)
+		log.Fatalf("Error: addStockImage: findImage returns %v", err)
 		return err
 	}
 	if imageRef != nil {
 		si.imageId = *imageRef.ImageID
-		log.Debugf("addImage: imageRef.ImageID = %s", *imageRef.ImageID)
+		log.Debugf("addStockImage: imageRef.ImageID = %s", *imageRef.ImageID)
 		return nil
 	}
 
 	// Find the stock image.
 	imageRef, err = si.findStockImage(imageName)
 	if err != nil {
-		log.Fatalf("Error: addImage: findStockImage returns %v", err)
+		log.Fatalf("Error: addStockImage: findStockImage returns %v", err)
 		return err
 	}
 	if imageRef == nil {
 		return fmt.Errorf("Error: findStockImage(%s) returns no image found", imageName)
 	}
-	log.Debugf("addImage: findStockImage: imageRef.ImageID = %s", *imageRef.ImageID)
+	log.Debugf("addStockImage: findStockImage: imageRef.ImageID = %s", *imageRef.ImageID)
 
 	// Import it!
 	createImage = models.CreateImage{
@@ -907,13 +931,13 @@ func (si *ServiceInstance) addImage(imageName string) error {
 
 	image, err = si.imageClient.Create(&createImage)
 	if err != nil {
-		log.Fatalf("Error: addImage: CreateImage returns %v", err)
+		log.Fatalf("Error: addStockImage: CreateImage returns %v", err)
 		return err
 	}
-	log.Debugf("addImage: image = %+v", image)
+	log.Debugf("addStockImage: image = %+v", image)
 
 	si.imageId = *image.ImageID
-	log.Debugf("addImage: si.imageId = %s", si.imageId)
+	log.Debugf("addStockImage: si.imageId = %s", si.imageId)
 
 	return nil
 }
@@ -1017,6 +1041,98 @@ func (si *ServiceInstance) findStockImage(imageName string) (*models.ImageRefere
 		if *imageRef.Name == imageName && *imageRef.State == "active" {
 			log.Debugf("findStockImage: FOUND STOCK %s %s %s", *imageRef.Name, *imageRef.State, *imageRef.ImageID)
 			return imageRef, nil
+		}
+	}
+
+	return nil, nil
+}
+
+func (si *ServiceInstance) addDhcpServer() error {
+
+	var (
+		createOptions *models.DHCPServerCreate
+		dhcpServer    *models.DHCPServer
+		err           error
+	)
+
+	if si.innerSi == nil {
+		return fmt.Errorf("Error: addDhcpServer called on nil ServiceInstance")
+	}
+	if si.dhcpServer == nil {
+		return fmt.Errorf("Error: addDhcpServer called on nil networkClient")
+	}
+
+	if si.dhcpServer == nil {
+		si.dhcpServer, err = si.findDhcpServer()
+		log.Debugf("addDhcpServer: dhcpServer = %+v", si.dhcpServer)
+		if err != nil {
+			return fmt.Errorf("Error: findDhcpServer returns %v", err)
+		}
+	}
+
+	if si.dhcpServer == nil {
+		createOptions = &models.DHCPServerCreate{
+//			Cidr:        ptr.To(""),
+			Name:        &si.dhcpName,
+//			SnatEnabled: ptr.To(false),
+		}
+		log.Debugf("addDhcpServer: createOptions = %+v", createOptions)
+
+		dhcpServer, err = si.dhcpClient.Create(createOptions)
+		if err != nil {
+			return fmt.Errorf("Error: si.dhcpClient.Create returns %v", err)
+		}
+
+		// NOTE: Create returns a *models.DHCPServer but we store a *models.DHCPServerDetail
+		log.Debugf("addDhcpServer: dhcpServer = %+v", dhcpServer)
+
+		si.dhcpServer, err = si.dhcpClient.Get(*dhcpServer.ID)
+		if err != nil {
+			return fmt.Errorf("Error: si.dhcpClient.Get returns %v", err)
+		}
+		log.Debugf("addDhcpServer: si.dhcpServer = %+v", si.dhcpServer)
+	}
+
+	return nil
+}
+
+func (si *ServiceInstance) findDhcpServer() (*models.DHCPServerDetail, error) {
+
+	var (
+		dhcpServers      models.DHCPServers
+		dhcpServer       *models.DHCPServer
+		dhcpServerDetail *models.DHCPServerDetail
+		err              error
+	)
+
+	dhcpServers, err = si.dhcpClient.GetAll()
+	if err != nil {
+		return nil, fmt.Errorf("Error: si.dhcpClient.GetAll returns %v", err)
+	}
+
+	for _, dhcpServer = range dhcpServers {
+		if dhcpServer.ID == nil {
+			log.Debugf("findDhcpServer: nil ID")
+			continue
+		}
+		if strings.Contains(*dhcpServer.ID, si.siName) {
+			if dhcpServer.Network == nil {
+				log.Debugf("findDhcpServer: FOUND %s %s", *dhcpServer.ID, *dhcpServer.Network.Name)
+			} else {
+				log.Debugf("findDhcpServer: FOUND %s", *dhcpServer.ID)
+			}
+
+			dhcpServerDetail, err = si.dhcpClient.Get(*dhcpServer.ID)
+			if err != nil {
+				return nil, fmt.Errorf("Error: si.dhcpClient.Get returns %v", err)
+			}
+
+			return dhcpServerDetail, nil
+		}
+		if dhcpServer.Network == nil {
+			log.Debugf("findDhcpServer: SKIP %s %s", *dhcpServer.ID, *dhcpServer.Network.Name)
+		} else {
+			log.Debugf("findDhcpServer: SKIP %s", *dhcpServer.ID)
 		}
 	}
 
