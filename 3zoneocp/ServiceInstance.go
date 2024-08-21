@@ -461,10 +461,19 @@ func (si *ServiceInstance) createServiceInstance() error {
 		return err
 	}
 
-	err = si.addNetwork()
-	if err != nil {
-		log.Fatalf("Error: addNetwork returns %v", err)
-		return err
+	// @HACK
+	if false {
+		err = si.addNetwork()
+		if err != nil {
+			log.Fatalf("Error: addNetwork returns %v", err)
+			return err
+		}
+	} else {
+		err = si.addDhcpServer()
+		if err != nil {
+			log.Fatalf("Error: addDhcpServer returns %v", err)
+			return err
+		}
 	}
 
 	err = si.addSshKey()
@@ -491,12 +500,6 @@ func (si *ServiceInstance) createServiceInstance() error {
 	err = si.addRHCOSImage(importOptions)
 	if err != nil {
 		log.Fatalf("Error: addRHCOSImage returns %v", err)
-		return err
-	}
-
-	err = si.addDhcpServer()
-	if err != nil {
-		log.Fatalf("Error: addDhcpServer returns %v", err)
 		return err
 	}
 
@@ -965,7 +968,7 @@ func (si *ServiceInstance) addRHCOSImage(importOptions ImageImportOptions) error
 		return err
 	}
 	if imageRef != nil {
-		log.Debugf("addRHCOSImage: imageRef.ImageID = %s", *imageRef.ImageID)
+		log.Debugf("addRHCOSImage: FOUND EXISTING %s", *imageRef.ImageID)
 		return nil
 	}
 
@@ -1058,8 +1061,8 @@ func (si *ServiceInstance) addDhcpServer() error {
 	if si.innerSi == nil {
 		return fmt.Errorf("Error: addDhcpServer called on nil ServiceInstance")
 	}
-	if si.dhcpServer == nil {
-		return fmt.Errorf("Error: addDhcpServer called on nil networkClient")
+	if si.dhcpClient == nil {
+		return fmt.Errorf("Error: addDhcpServer called on nil dhcpClient")
 	}
 
 	if si.dhcpServer == nil {
@@ -1072,9 +1075,10 @@ func (si *ServiceInstance) addDhcpServer() error {
 
 	if si.dhcpServer == nil {
 		createOptions = &models.DHCPServerCreate{
-//			Cidr:        ptr.To(""),
-			Name:        &si.dhcpName,
-//			SnatEnabled: ptr.To(false),
+			Cidr:              &si.options.CIDR,
+//			CloudConnectionID: si.innerSi.GUID,
+			Name:              &si.dhcpName,
+			SnatEnabled:       ptr.To(false),
 		}
 		log.Debugf("addDhcpServer: createOptions = %+v", createOptions)
 
@@ -1091,6 +1095,11 @@ func (si *ServiceInstance) addDhcpServer() error {
 			return fmt.Errorf("Error: si.dhcpClient.Get returns %v", err)
 		}
 		log.Debugf("addDhcpServer: si.dhcpServer = %+v", si.dhcpServer)
+
+		err = si.waitForDhcpServer(*dhcpServer.ID)
+		if err != nil {
+			return fmt.Errorf("Error: waitForDhcpServer returns %v", err)
+		}
 	}
 
 	return nil
@@ -1112,15 +1121,15 @@ func (si *ServiceInstance) findDhcpServer() (*models.DHCPServerDetail, error) {
 
 	for _, dhcpServer = range dhcpServers {
 		if dhcpServer.ID == nil {
-			log.Debugf("findDhcpServer: nil ID")
+			log.Debugf("findDhcpServer: SKIP nil(ID)")
 			continue
 		}
-		if strings.Contains(*dhcpServer.ID, si.siName) {
-			if dhcpServer.Network == nil {
-				log.Debugf("findDhcpServer: FOUND %s %s", *dhcpServer.ID, *dhcpServer.Network.Name)
-			} else {
-				log.Debugf("findDhcpServer: FOUND %s", *dhcpServer.ID)
-			}
+		if dhcpServer.Network == nil {
+			log.Debugf("findDhcpServer: SKIP %s nil(Network)", *dhcpServer.ID)
+			continue
+		}
+		if strings.Contains(*dhcpServer.Network.Name, si.siName) {
+			log.Debugf("findDhcpServer: FOUND %s %s", *dhcpServer.ID, *dhcpServer.Network.Name)
 
 			dhcpServerDetail, err = si.dhcpClient.Get(*dhcpServer.ID)
 			if err != nil {
@@ -1129,14 +1138,55 @@ func (si *ServiceInstance) findDhcpServer() (*models.DHCPServerDetail, error) {
 
 			return dhcpServerDetail, nil
 		}
-		if dhcpServer.Network == nil {
-			log.Debugf("findDhcpServer: SKIP %s %s", *dhcpServer.ID, *dhcpServer.Network.Name)
-		} else {
-			log.Debugf("findDhcpServer: SKIP %s", *dhcpServer.ID)
-		}
+		log.Debugf("findDhcpServer: SKIP %s %s", *dhcpServer.ID, *dhcpServer.Network.Name)
 	}
 
 	return nil, nil
+}
+
+func (si *ServiceInstance) waitForDhcpServer(id string) error {
+
+	var (
+		err error
+	)
+
+	if si.innerSi == nil {
+		return fmt.Errorf("waitForDhcpServer innerSi is nil")
+	}
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(si.ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(si.ctx, backoff, func(context.Context) (bool, error) {
+		var (
+			detail *models.DHCPServerDetail
+
+			err2 error
+		)
+
+		detail, err2 = si.dhcpClient.Get(id)
+		if err2 != nil {
+			log.Fatalf("Error: Wait dhcpClient.Get: returns = %v", err2)
+			return false, err2
+		}
+		log.Debugf("waitForDhcpServer: Status = %s", *detail.Status)
+		switch ServiceInstanceState(*detail.Status) {
+		case "ACTIVE":
+			return true, nil
+		case "BUILD":
+			return false, nil
+		default:
+			return true, fmt.Errorf("waitForDhcpServer: unknown state: %s", *detail.Status)
+		}
+	})
+	if err != nil {
+		log.Fatalf("Error: waitForDhcpServer: ExponentialBackoffWithContext returns %v", err)
+		return err
+	}
+
+	return nil
 }
 
 func (si *ServiceInstance) findInstance() (*models.PVMInstance, error) {
@@ -1216,7 +1266,13 @@ func (si *ServiceInstance) createInstance() error {
 	}
 
 	// Is there a better way to do this?
-	networks[0].NetworkID = si.innerNetwork.NetworkID
+
+	// @HACK
+	if false {
+		networks[0].NetworkID = si.innerNetwork.NetworkID
+	} else {
+		networks[0].NetworkID = si.dhcpServer.Network.ID
+	}
 	createNetworks[0] = &networks[0]
 
 	createOptions = models.PVMInstanceCreate{
@@ -1236,6 +1292,59 @@ func (si *ServiceInstance) createInstance() error {
 		return err
 	}
 	log.Debugf("createInstance: instanceList = %+v", instanceList)
+
+	return nil
+}
+
+func (si *ServiceInstance) waitForInstanceReady() error {
+
+	var (
+		getOptions *resourcecontrollerv2.GetResourceInstanceOptions
+
+		foundSi *resourcecontrollerv2.ResourceInstance
+
+		response *core.DetailedResponse
+
+		err error
+	)
+
+	if si.innerSi == nil {
+		return fmt.Errorf("waitForInstanceReady innerSi is nil")
+	}
+
+	getOptions = si.controllerSvc.NewGetResourceInstanceOptions(*si.innerSi.ID)
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(si.ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(si.ctx, backoff, func(context.Context) (bool, error) {
+		var err2 error
+
+		foundSi, response, err2 = si.controllerSvc.GetResourceInstanceWithContext(si.ctx, getOptions)
+		if err != nil {
+			log.Fatalf("Error: Wait GetResourceInstanceWithContext: response = %v, err = %v", response, err2)
+			return false, err2
+		}
+		log.Debugf("waitForInstanceReady: State = %s", *foundSi.State)
+		switch ServiceInstanceState(*foundSi.State) {
+		case ServiceInstanceStateActive:
+			return true, nil
+		case ServiceInstanceStateProvisioning:
+			return false, nil
+		case ServiceInstanceStateFailed:
+			return true, fmt.Errorf("waitForInstanceReady: failed state")
+		case ServiceInstanceStateRemoved:
+			return true, fmt.Errorf("waitForInstanceReady: removed state")
+		default:
+			return true, fmt.Errorf("waitForInstanceReady: unknown state: %s", *foundSi.State)
+		}
+	})
+	if err != nil {
+		log.Fatalf("Error: ExponentialBackoffWithContext returns %v", err)
+		return err
+	}
 
 	return nil
 }
