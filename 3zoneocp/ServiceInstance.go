@@ -16,6 +16,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"math"
 	gohttp "net/http"
@@ -1198,6 +1199,54 @@ func (si *ServiceInstance) waitForDhcpServer(id string) error {
 	return nil
 }
 
+// # for the password_hash line
+// $ podman run -ti --rm quay.io/coreos/mkpasswd --method=yescrypt
+// # Generate the ignition file
+// $ (FILE1=$(mktemp); FILE2=$(mktemp); trap "/bin/rm -rf ${FILE1} ${FILE2}" EXIT; cat << '___EOF___' > ${FILE1}; podman run --interactive --rm quay.io/coreos/butane:release --pretty --strict < ${FILE1} > ${FILE2}; cat ${FILE2})
+// variant: fcos
+// version: 1.5.0
+// passwd:
+// users:
+// - name: core
+// password_hash: ...
+// ssh_authorized_keys:
+// - ssh-rsa ...
+// ___EOF___
+func (si *ServiceInstance) ignitionUserData() string {
+	return `{
+  "ignition": {
+    "version": "3.4.0"
+  },
+  "passwd": {
+    "users": [
+      {
+        "name": "core",
+        "passwordHash": "$y$j9T$nh8y1vKCnaxrUGNupnaQQ0$iGsZmNX1g.szjZ4qU.zFOW1i0Kfb8mK9uzcJ2d4PVAB",
+        "sshAuthorizedKeys": [
+          "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCfrxxUx9MKdEWDStyVVkVTnxPQRHjQU7Gnu+USEbGCq3gb1t4Hs863mkJ3cgH9h4TsXxY7SofDu1MNw3QMt+S2BiUN6RlaQbkhJ41bzdCvy4tg3NiJdiUY0EtiLV5rXR+/wQbEIlkThhXCYEXxOcBA+0GMkAGuyAM2zZekpWh9xmkex1KQy0A8FEgS+gC8d0ok3u1ozZ85hlGxrKT2pxWhS9P2KdAx5Vrt5lsCZyif6HucAjp5EYoZbaJLHmOP3F7f+Rbf+yIxXTCZfcOQN/nf6wz5L4VPCvSjmV4GauVLcbOZCADdRDdE71ky8owHSxoxfjr6ukkU8btecF/JLJeZoaQWGCd6XrkvCjFTS6n2PEckR80UF4j7TGthSmZcI1ach5GROyyb9Oajeciwq6zJeNvDJAcvXLi5fQYbvAOhjTEkqYtlLvcyNCwp8vexPA5G8n381t/3F5kxkrrRYcbQf+N21Mo10CecaO86peV+sIpPPsYCgbE9QVG07okY1XrKkfBrtOoMwn12n1DX/UJbYeiqY3sI+QikbDgL+kDRP4tn4VYLs9uNDaKlBNDrRNwniWO8YKOZQGsonG1JeuU2UMbNfDnR7BzVUkAjMKFfZKA/yfOuIC09BoxmkQ7wDMwb10QNZ7/Y5XDRAKN6o0SFqsBq4FnBQ31+wPd3HBSpGw== hamzy@li-3d08e84c-2e1c-11b2-a85c-e2db7bb078fc.ibm.com"
+        ]
+      }
+    ]
+  }
+}`
+}
+
+func (si *ServiceInstance) cloudinitUserData() string {
+	return `#cloud-config
+users:
+  - default
+  - name: core
+    passwd: "$y$j9T$nh8y1vKCnaxrUGNupnaQQ0$iGsZmNX1g.szjZ4qU.zFOW1i0Kfb8mK9uzcJ2d4PVAB"
+    shell: /bin/bash
+    lock-passwd: false
+    ssh_pwauth: True
+    chpasswd: { expire: False }
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: users, admin
+    ssh_authorized_keys:
+     - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCfrxxUx9MKdEWDStyVVkVTnxPQRHjQU7Gnu+USEbGCq3gb1t4Hs863mkJ3cgH9h4TsXxY7SofDu1MNw3QMt+S2BiUN6RlaQbkhJ41bzdCvy4tg3NiJdiUY0EtiLV5rXR+/wQbEIlkThhXCYEXxOcBA+0GMkAGuyAM2zZekpWh9xmkex1KQy0A8FEgS+gC8d0ok3u1ozZ85hlGxrKT2pxWhS9P2KdAx5Vrt5lsCZyif6HucAjp5EYoZbaJLHmOP3F7f+Rbf+yIxXTCZfcOQN/nf6wz5L4VPCvSjmV4GauVLcbOZCADdRDdE71ky8owHSxoxfjr6ukkU8btecF/JLJeZoaQWGCd6XrkvCjFTS6n2PEckR80UF4j7TGthSmZcI1ach5GROyyb9Oajeciwq6zJeNvDJAcvXLi5fQYbvAOhjTEkqYtlLvcyNCwp8vexPA5G8n381t/3F5kxkrrRYcbQf+N21Mo10CecaO86peV+sIpPPsYCgbE9QVG07okY1XrKkfBrtOoMwn12n1DX/UJbYeiqY3sI+QikbDgL+kDRP4tn4VYLs9uNDaKlBNDrRNwniWO8YKOZQGsonG1JeuU2UMbNfDnR7BzVUkAjMKFfZKA/yfOuIC09BoxmkQ7wDMwb10QNZ7/Y5XDRAKN6o0SFqsBq4FnBQ31+wPd3HBSpGw== hamzy@li-3d08e84c-2e1c-11b2-a85c-e2db7bb078fc.ibm.com"`
+}
+
 func (si *ServiceInstance) findInstance() (*models.PVMInstance, error) {
 
 	var (
@@ -1252,6 +1301,7 @@ func (si *ServiceInstance) createInstance() error {
 		instance       *models.PVMInstance
 		networks       [1]models.PVMInstanceAddNetwork
 		createNetworks [1]*models.PVMInstanceAddNetwork
+		userData       string
 		createOptions  models.PVMInstanceCreate
 		instanceList   *models.PVMInstanceList
 		err            error
@@ -1284,6 +1334,8 @@ func (si *ServiceInstance) createInstance() error {
 	}
 	createNetworks[0] = &networks[0]
 
+	userData = base64.StdEncoding.EncodeToString([]byte(si.cloudinitUserData()))
+
 	createOptions = models.PVMInstanceCreate{
 		ImageID:    &si.imageId,
 		Memory:     ptr.To(8.0),
@@ -1292,6 +1344,7 @@ func (si *ServiceInstance) createInstance() error {
 		Processors: ptr.To(1.0),
 		ServerName: &si.instanceName,
 		// SysType: ptr.To(""),
+		UserData:   userData,
 	}
 	log.Debugf("createInstance: createOptions = %+v", createOptions)
 
