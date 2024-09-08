@@ -143,12 +143,14 @@ func main() {
 
 	for siKey := range siMap {
 		si := siMap[siKey]
-		ipAddress, err := si.GetInstanceIP()
-		if err != nil {
-			log.Fatalf("Error: si.GetInstanceIP returns %v", err)
-			panic(err)
+		if si.Valid() {
+			ipAddress, err := si.GetInstanceIP()
+			if err != nil {
+				log.Fatalf("Error: si.GetInstanceIP returns %v", err)
+				panic(err)
+			}
+			ipAddresses[siKey] = ipAddress
 		}
-		ipAddresses[siKey] = ipAddress
 	}
 
 	for ipAddrKey := range ipAddresses {

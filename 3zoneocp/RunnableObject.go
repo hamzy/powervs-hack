@@ -18,4 +18,5 @@ type RunnableObject interface {
 	Run() error
 	CRN() (string, error)
 	Name() (string, error)
+	Valid() bool
 }

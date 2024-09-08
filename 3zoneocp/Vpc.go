@@ -172,6 +172,14 @@ func (vpc *VPC) Name() (string, error) {
 	return *vpc.innerVpc.Name, nil
 }
 
+func (vpc *VPC) Valid() bool {
+
+	if vpc.innerVpc == nil {
+		return false
+	}
+	return true
+}
+
 func (vpc *VPC) createVPC() error {
 
 	var (

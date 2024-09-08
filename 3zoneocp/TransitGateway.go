@@ -158,6 +158,14 @@ func (tg *TransitGateway) Name() (string, error) {
 	return *tg.innerTg.Name, nil
 }
 
+func (tg *TransitGateway) Valid() bool {
+
+	if tg.innerTg == nil {
+		return false
+	}
+	return true
+}
+
 func (tg *TransitGateway) findTransitGateway() (*transitgatewayapisv1.TransitGateway, error) {
 
 	var (

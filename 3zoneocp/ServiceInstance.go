@@ -312,6 +312,14 @@ func (si *ServiceInstance) Name() (string, error) {
 	return *si.innerSi.Name, nil
 }
 
+func (si *ServiceInstance) Valid() bool {
+
+	if si.innerSi == nil {
+		return false
+	}
+	return true
+}
+
 func (si *ServiceInstance) findServiceInstance() (*resourcecontrollerv2.ResourceInstance, error) {
 
 	var (
@@ -642,7 +650,6 @@ func (si *ServiceInstance) deleteServiceInstance() error {
 	log.Debugf("deleteServiceInstance: si.options.Name = %s", si.options.Name);
 
 	if si.innerSi == nil {
-		log.Debugf("Warning: deleteServiceInstance called on nil ServiceInstance")
 		return nil
 	}
 
@@ -787,6 +794,8 @@ func (si *ServiceInstance) findNetwork() (*models.Network, error) {
 	if si.networkClient == nil {
 		return nil, fmt.Errorf("Error: findNetwork has nil networkClient")
 	}
+
+	log.Debugf("findNetwork: si.networkName = %s", si.networkName)
 
 	networks, err = si.networkClient.GetAll()
 	if err != nil {

@@ -122,6 +122,14 @@ func (cos *CloudObjectStorage) Name() (string, error) {
 	return *cos.innerCos.Name, nil
 }
 
+func (cos *CloudObjectStorage) Valid() bool {
+
+	if cos.innerCos == nil {
+		return false
+	}
+	return true
+}
+
 func (cos *CloudObjectStorage) Run() error {
 
 	var (
