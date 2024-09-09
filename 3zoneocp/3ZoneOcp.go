@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"text/template"
 
 	"github.com/sirupsen/logrus"
 )
@@ -107,12 +108,72 @@ func main() {
 		panic(err)
 	}
 
-	if true {
-		// BEGIN HACK
-		delete(zoneMap, "zone2")
-		delete(zoneMap, "zone3")
-		// END HACK
+	setup1zone(mode, defaults)
+}
+
+func setup1zone(mode Mode, defaults Defaults) {
+
+	var (
+		err error
+	)
+
+	// 3 zones are predefined.  Delete two of them.
+	delete(zoneMap, "zone2")
+	delete(zoneMap, "zone3")
+
+	log.Debugf("main: zoneMap = %+v", zoneMap)
+
+	err = createInstallConfig(defaults)
+	if err != nil {
+		log.Fatalf("Error: createInstallConfig returns %v", err)
+		panic(err)
 	}
+
+	siMap = make(map[string]*ServiceInstance)
+
+	instantiateCloudObjectStorage(mode, defaults)
+
+	instantiateTransitGateway(mode, defaults)
+
+	instantiateVPC(mode, defaults)
+
+	for zone := range zoneMap {
+		log.Debugf("main: zone = %s", zone)
+
+		instantiateServiceInstance(mode, defaults, zone)
+	}
+
+	log.Debugf("main: siMap = %+v", siMap)
+
+	// @TBD - Somewhat hacky
+	switch mode {
+	case ModeCreate:
+		createTransitGatewayConnections(mode, defaults)
+	}
+
+	var ipAddresses map[string]string
+
+	ipAddresses = make(map[string]string)
+
+	for siKey := range siMap {
+		si := siMap[siKey]
+		if si.Valid() {
+			ipAddress, err := si.GetInstanceIP()
+			if err != nil {
+				log.Fatalf("Error: si.GetInstanceIP returns %v", err)
+				panic(err)
+			}
+			ipAddresses[siKey] = ipAddress
+		}
+	}
+
+	for ipAddrKey := range ipAddresses {
+		fmt.Printf("IP address for %s is %s\n", ipAddrKey, ipAddresses[ipAddrKey])
+	}
+}
+
+func setup3zone(mode Mode, defaults Defaults) {
+
 	log.Debugf("main: zoneMap = %+v", zoneMap)
 
 	siMap = make(map[string]*ServiceInstance)
@@ -367,4 +428,158 @@ func instantiateCloudObjectStorage(mode Mode, defaults Defaults) {
 	if err != nil {
 		log.Fatalf("Error: cos.Run returns %v", err)
 	}
+}
+
+func Exists(filename string) (bool, error) {
+
+	var (
+		err error
+	)
+
+	_, err = os.Stat(filename)
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+
+	return err == nil, err
+}
+
+type InstallConfig struct {
+	BaseDomain          string
+	ClusterName         string
+	Email               string
+	PullSecret          string
+	PowerVSRegion       string
+	ResourceGroup       string
+	ServiceInstanceGUID string
+	SshKey              string
+	VpcName             string
+	Zone                string
+}
+
+func createInstallConfig(defaults Defaults) error {
+
+	var (
+		homeDirectory string
+
+		filePullSecrets string
+
+		pullSecrets []byte
+
+		ic InstallConfig
+
+		tmpl *template.Template
+
+		f *os.File
+
+		err error
+	)
+
+	homeDirectory, err = os.UserHomeDir()
+	if err != nil {
+		log.Fatalf("Error: os.UserHomeDir returns %v", err)
+		return err
+	}
+
+	filePullSecrets = homeDirectory + "/.pullSecretCompact"
+	if ok, err := Exists(filePullSecrets); ok {
+		pullSecrets, err = os.ReadFile(filePullSecrets)
+		if err != nil {
+			log.Fatalf("Error: os.ReadFile(%s) returns %v", filePullSecrets, err)
+			return err
+		}
+	} else {
+		log.Fatalf("Error: File %s does not exist", filePullSecrets)
+		return fmt.Errorf("Error: File %s does not exist", filePullSecrets)
+	}
+
+	if ok, err := Exists("install-config.yaml"); ok {
+		return err
+	}
+
+	ic = InstallConfig{
+		BaseDomain:          defaults.BaseDomain,
+		ClusterName:         defaults.ClusterName,
+		Email:               defaults.Email,
+		PullSecret:          string(pullSecrets),
+		PowerVSRegion:       defaults.PowerVSRegion,
+		ResourceGroup:       defaults.ResourceGroup,
+		ServiceInstanceGUID: defaults.ServiceInstanceGUID,
+		SshKey:              defaults.SshKey,
+		VpcName:             defaults.VpcName,
+		Zone:                defaults.Zone,
+	}
+
+	// https://pkg.go.dev/text/template#Template
+	tmpl, err = template.New("test").Parse(`apiVersion: v1
+baseDomain: "{{.BaseDomain}}"
+compute:
+- architecture: ppc64le
+  hyperthreading: Enabled
+  name: worker
+  platform: {}
+  replicas: 3
+controlPlane:
+  architecture: ppc64le
+  hyperthreading: Enabled
+  name: master
+  platform: {}
+  replicas: 3
+metadata:
+  creationTimestamp: null
+  name: "{{.ClusterName}}"
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: 192.168.220.0/24
+  networkType: OVNKubernetes
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  powervs:
+    userID: {{.Email}}
+    powervsResourceGroup: {{.ResourceGroup}}
+    region: {{.PowerVSRegion}}
+    vpcName: {{.VpcName}}
+    zone: {{.Zone}}
+    serviceInstanceGUID: {{.ServiceInstanceGUID}}
+featureSet: CustomNoUpgrade
+featureGates:
+   - ClusterAPIInstall=true
+publish: External
+pullSecret: '{{.PullSecret}}'
+sshKey: |
+  {{.SshKey}}`)
+	if err != nil {
+		log.Fatalf("Error: template.New.Parse returns %v", err)
+		return err
+	}
+
+	f, err = os.Create("install-config.yaml")
+	if err != nil {
+		log.Fatalf("Error: os.Create returns %v", err)
+		return err
+	}
+
+	err = tmpl.Execute(os.Stdout, ic)
+	if err != nil {
+		log.Fatalf("Error: tmpl.Execute(1) returns %v", err)
+		return err
+	}
+
+	err = tmpl.Execute(f, ic)
+	if err != nil {
+		log.Fatalf("Error: tmpl.Execute(2) returns %v", err)
+		return err
+	}
+
+	err = f.Close()
+	if err != nil {
+		log.Fatalf("Error: f.Close returns %v", err)
+		return err
+	}
+
+	return err
 }
