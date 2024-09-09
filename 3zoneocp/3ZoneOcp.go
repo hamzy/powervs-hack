@@ -18,13 +18,16 @@
 package main
 
 import (
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"text/template"
 
+	"github.com/IBM-Cloud/power-go-client/power/models"
 	"github.com/sirupsen/logrus"
+	"k8s.io/utils/ptr"
 )
 
 var (
@@ -108,10 +111,22 @@ func main() {
 		panic(err)
 	}
 
-	setup1zone(mode, defaults)
+	if true {
+		err = setup1zone(mode, defaults)
+		if err != nil {
+			log.Fatalf("Error: setup1zone returns %v", err)
+			panic(err)
+		}
+	} else {
+		err = setup3zone(mode, defaults)
+		if err != nil {
+			log.Fatalf("Error: setup3zone returns %v", err)
+			panic(err)
+		}
+	}
 }
 
-func setup1zone(mode Mode, defaults Defaults) {
+func setup1zone(mode Mode, defaults Defaults) error {
 
 	var (
 		err error
@@ -121,62 +136,154 @@ func setup1zone(mode Mode, defaults Defaults) {
 	delete(zoneMap, "zone2")
 	delete(zoneMap, "zone3")
 
-	log.Debugf("main: zoneMap = %+v", zoneMap)
+	log.Debugf("main: zoneMap = %+v, len(zoneMap) = %d", zoneMap, len(zoneMap))
+	if len(zoneMap) != 1 {
+		log.Fatalf("Error: setup1zone len(zoneMap) != 1")
+		err = fmt.Errorf("Error: setup1zone len(zoneMap) != 1")
+		return err
+	}
+
+	instantiateCloudObjectStorage(mode, defaults)
+
+	instantiateTransitGateway(mode, defaults)
+
+	instantiateVPC(mode, defaults)
+
+	siMap = make(map[string]*ServiceInstance)
+	log.Debugf("main: siMap = %+v", siMap)
+
+	for zone := range zoneMap {
+		log.Debugf("main: zone = %s", zone)
+
+		instantiateServiceInstance(mode, defaults, zone)
+	}
+
+	if len(siMap) != 1 {
+		log.Fatalf("Error: setup1zone len(siMap) != 1")
+		err = fmt.Errorf("Error: setup1zone len(siMap) != 1")
+		return err
+	}
+
+	// @TBD - Somewhat hacky
+	switch mode {
+	case ModeCreate:
+		createTransitGatewayConnections(mode, defaults)
+	}
+
+	var ipAddresses map[string]string
+
+	ipAddresses = make(map[string]string)
+
+	for siKey := range siMap {
+		si := siMap[siKey]
+		if !si.Valid() {
+			continue
+		}
+
+		err = createTestPVM(mode, defaults, si)
+		if err != nil {
+			log.Fatalf("Error: createTestPVM returns %v", err)
+			return err
+		}
+
+		ipAddress, err := si.GetInstanceIP()
+		if err != nil {
+			log.Fatalf("Error: si.GetInstanceIP returns %v", err)
+			return err
+		}
+		ipAddresses[siKey] = ipAddress
+	}
+
+	for ipAddrKey := range ipAddresses {
+		fmt.Printf("IP address for %s is %s\n", ipAddrKey, ipAddresses[ipAddrKey])
+	}
 
 	err = createInstallConfig(defaults)
 	if err != nil {
 		log.Fatalf("Error: createInstallConfig returns %v", err)
-		panic(err)
+		return err
 	}
 
-	siMap = make(map[string]*ServiceInstance)
-
-	instantiateCloudObjectStorage(mode, defaults)
-
-	instantiateTransitGateway(mode, defaults)
-
-	instantiateVPC(mode, defaults)
-
-	for zone := range zoneMap {
-		log.Debugf("main: zone = %s", zone)
-
-		instantiateServiceInstance(mode, defaults, zone)
-	}
-
-	log.Debugf("main: siMap = %+v", siMap)
-
-	// @TBD - Somewhat hacky
-	switch mode {
-	case ModeCreate:
-		createTransitGatewayConnections(mode, defaults)
-	}
-
-	var ipAddresses map[string]string
-
-	ipAddresses = make(map[string]string)
-
-	for siKey := range siMap {
-		si := siMap[siKey]
-		if si.Valid() {
-			ipAddress, err := si.GetInstanceIP()
-			if err != nil {
-				log.Fatalf("Error: si.GetInstanceIP returns %v", err)
-				panic(err)
-			}
-			ipAddresses[siKey] = ipAddress
-		}
-	}
-
-	for ipAddrKey := range ipAddresses {
-		fmt.Printf("IP address for %s is %s\n", ipAddrKey, ipAddresses[ipAddrKey])
-	}
+	return nil
 }
 
-func setup3zone(mode Mode, defaults Defaults) {
+func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
+
+	var (
+		siName          string
+		pvmInstanceName string
+		networks        [1]models.PVMInstanceAddNetwork
+		createNetworks  [1]*models.PVMInstanceAddNetwork
+		imageId         string
+		userData        string
+		createOptions   models.PVMInstanceCreate
+		instance        *models.PVMInstance
+		err             error
+	)
+
+	siName, err = si.Name()
+	if err != nil {
+		log.Fatalf("Error: si.Name returns %v", err)
+		return err
+	}
+
+	pvmInstanceName = fmt.Sprintf("%s-instance", siName)
+	log.Debugf("createTestPVM: pvmInstanceName = %s", pvmInstanceName)
+
+	instance, err = si.findPVMInstance(pvmInstanceName)
+	if err != nil {
+		log.Fatalf("Error: createPVMInstance: findPVMInstance returns %v", err)
+		return err
+	}
+	log.Debugf("createTestPVM: instance = %+v", instance)
+	if instance != nil {
+		return nil
+	}
+
+	// Is there a better way to do this?
+	// @HACK
+	if false {
+		networks[0].NetworkID = si.innerNetwork.NetworkID
+	} else {
+		networks[0].NetworkID = si.dhcpServer.Network.ID
+	}
+	createNetworks[0] = &networks[0]
+
+	if false {
+		imageId = si.stockImageId
+		userData = base64.StdEncoding.EncodeToString([]byte(si.cloudinitUserData()))
+	} else {
+		imageId = si.rhcosImageId
+		userData = base64.StdEncoding.EncodeToString([]byte(si.ignitionUserData()))
+	}
+
+	createOptions = models.PVMInstanceCreate{
+		ImageID:    &imageId,
+		Memory:     ptr.To(8.0),
+		Networks:   createNetworks[:],
+		ProcType:   ptr.To("shared"),
+		Processors: ptr.To(1.0),
+		ServerName: &si.pvmInstanceName,
+		// SysType: ptr.To(""),
+		UserData:   userData,
+	}
+	log.Debugf("createTestPVM: createOptions = %+v", createOptions)
+
+	err = si.createPVMInstance(createOptions)
+	if err != nil {
+		log.Fatalf("Error: createPVMInstance returns %v", err)
+		return err
+	}
+
+	return err
+}
+
+func setup3zone(mode Mode, defaults Defaults) error {
 
 	log.Debugf("main: zoneMap = %+v", zoneMap)
 
 	siMap = make(map[string]*ServiceInstance)
+	log.Debugf("main: siMap = %+v", siMap)
 
 	instantiateCloudObjectStorage(mode, defaults)
 
@@ -190,8 +297,6 @@ func setup3zone(mode Mode, defaults Defaults) {
 		instantiateServiceInstance(mode, defaults, zone)
 	}
 
-	log.Debugf("main: siMap = %+v", siMap)
-
 	// @TBD - Somewhat hacky
 	switch mode {
 	case ModeCreate:
@@ -204,19 +309,23 @@ func setup3zone(mode Mode, defaults Defaults) {
 
 	for siKey := range siMap {
 		si := siMap[siKey]
-		if si.Valid() {
-			ipAddress, err := si.GetInstanceIP()
-			if err != nil {
-				log.Fatalf("Error: si.GetInstanceIP returns %v", err)
-				panic(err)
-			}
-			ipAddresses[siKey] = ipAddress
+		if !si.Valid() {
+			continue
 		}
+
+		ipAddress, err := si.GetInstanceIP()
+		if err != nil {
+			log.Fatalf("Error: si.GetInstanceIP returns %v", err)
+			return err
+		}
+		ipAddresses[siKey] = ipAddress
 	}
 
 	for ipAddrKey := range ipAddresses {
 		fmt.Printf("IP address for %s is %s\n", ipAddrKey, ipAddresses[ipAddrKey])
 	}
+
+	return nil
 }
 
 func instantiateVPC(mode Mode, defaults Defaults) {

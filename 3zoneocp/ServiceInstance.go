@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"math"
 	gohttp "net/http"
@@ -89,7 +88,7 @@ type ServiceInstance struct {
 
 	dhcpName string
 
-	instanceName string
+	pvmInstanceName string
 
 	resourceGroupID string
 
@@ -218,7 +217,7 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 
 		dhcpName string
 
-		instanceName string
+		pvmInstanceName string
 
 		controllerSvc *resourcecontrollerv2.ResourceControllerV2
 
@@ -235,7 +234,7 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 	networkName = fmt.Sprintf("%s-si-network", siOptions.Name)
 	sshKeyName = fmt.Sprintf("%s-si-sshkey", siOptions.Name)
 	dhcpName = fmt.Sprintf("%s-si-dhcp", siOptions.Name)
-	instanceName = fmt.Sprintf("%s-instance", siOptions.Name)
+	pvmInstanceName = fmt.Sprintf("%s-si-instance", siOptions.Name)
 
 	controllerSvc, err = initServiceInstance(siOptions)
 	log.Debugf("NewServiceInstance: controllerSvc = %v", controllerSvc)
@@ -262,7 +261,7 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 		networkName:     networkName,
 		sshKeyName:      sshKeyName,
 		dhcpName:        dhcpName,
-		instanceName:    instanceName,
+		pvmInstanceName: pvmInstanceName,
 		resourceGroupID: resourceGroupID,
 	}, nil
 }
@@ -513,12 +512,6 @@ func (si *ServiceInstance) createServiceInstance() error {
 	err = si.addRHCOSImage(importOptions)
 	if err != nil {
 		log.Fatalf("Error: addRHCOSImage returns %v", err)
-		return err
-	}
-
-	err = si.createPVMInstance()
-	if err != nil {
-		log.Fatalf("Error: createPVMInstance returns %v", err)
 		return err
 	}
 
@@ -1323,7 +1316,7 @@ users:
      - ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCfrxxUx9MKdEWDStyVVkVTnxPQRHjQU7Gnu+USEbGCq3gb1t4Hs863mkJ3cgH9h4TsXxY7SofDu1MNw3QMt+S2BiUN6RlaQbkhJ41bzdCvy4tg3NiJdiUY0EtiLV5rXR+/wQbEIlkThhXCYEXxOcBA+0GMkAGuyAM2zZekpWh9xmkex1KQy0A8FEgS+gC8d0ok3u1ozZ85hlGxrKT2pxWhS9P2KdAx5Vrt5lsCZyif6HucAjp5EYoZbaJLHmOP3F7f+Rbf+yIxXTCZfcOQN/nf6wz5L4VPCvSjmV4GauVLcbOZCADdRDdE71ky8owHSxoxfjr6ukkU8btecF/JLJeZoaQWGCd6XrkvCjFTS6n2PEckR80UF4j7TGthSmZcI1ach5GROyyb9Oajeciwq6zJeNvDJAcvXLi5fQYbvAOhjTEkqYtlLvcyNCwp8vexPA5G8n381t/3F5kxkrrRYcbQf+N21Mo10CecaO86peV+sIpPPsYCgbE9QVG07okY1XrKkfBrtOoMwn12n1DX/UJbYeiqY3sI+QikbDgL+kDRP4tn4VYLs9uNDaKlBNDrRNwniWO8YKOZQGsonG1JeuU2UMbNfDnR7BzVUkAjMKFfZKA/yfOuIC09BoxmkQ7wDMwb10QNZ7/Y5XDRAKN6o0SFqsBq4FnBQ31+wPd3HBSpGw== hamzy@li-3d08e84c-2e1c-11b2-a85c-e2db7bb078fc.ibm.com"`
 }
 
-func (si *ServiceInstance) findInstance() (*models.PVMInstance, error) {
+func (si *ServiceInstance) findPVMInstance(pvmInstanceName string) (*models.PVMInstance, error) {
 
 	var (
 		instances   *models.PVMInstances
@@ -1334,24 +1327,24 @@ func (si *ServiceInstance) findInstance() (*models.PVMInstance, error) {
 
 	instances, err = si.instanceClient.GetAll()
 	if err != nil {
-		log.Fatalf("Error: findInstance: GetAll returns %v", err)
+		log.Fatalf("Error: findPVMInstance: GetAll returns %v", err)
 		return nil, err
 	}
 
 	for _, instanceRef = range instances.PvmInstances {
-		if si.instanceName == *instanceRef.ServerName {
-			log.Debugf("findInstance: FOUND %s", *instanceRef.ServerName)
+		if pvmInstanceName == *instanceRef.ServerName {
+			log.Debugf("findPVMInstance: FOUND %s", *instanceRef.ServerName)
 
 			instance, err = si.instanceClient.Get(*instanceRef.PvmInstanceID)
 			if err != nil {
-				log.Fatalf("Error: findInstance: GetAll returns %v", err)
+				log.Fatalf("Error: findPVMInstance: GetAll returns %v", err)
 				return nil, err
 			}
 
 			return instance, nil
 		}
 
-		log.Debugf("findInstance: SKIP %s", *instanceRef.ServerName)
+		log.Debugf("findPVMInstance: SKIP %s", *instanceRef.ServerName)
 	}
 
 	return nil, nil
@@ -1371,17 +1364,11 @@ func (si *ServiceInstance) findInstance() (*models.PVMInstance, error) {
 		createNetworks = append(createNetworks, &n)
 	}
 */
-func (si *ServiceInstance) createPVMInstance() error {
+func (si *ServiceInstance) createPVMInstance(createOptions models.PVMInstanceCreate) error {
 
 	var (
-		instance       *models.PVMInstance
-		networks       [1]models.PVMInstanceAddNetwork
-		createNetworks [1]*models.PVMInstanceAddNetwork
-		imageId        string
-		userData       string
-		createOptions  models.PVMInstanceCreate
-		instanceList   *models.PVMInstanceList
-		err            error
+		instanceList *models.PVMInstanceList
+		err          error
 	)
 
 	if si.innerSi == nil {
@@ -1391,44 +1378,6 @@ func (si *ServiceInstance) createPVMInstance() error {
 		return fmt.Errorf("Error: createPVMInstance has nil instanceClient")
 	}
 
-	instance, err = si.findInstance()
-	if err != nil {
-		log.Fatalf("Error: createPVMInstance: findInstance returns %v", err)
-		return err
-	}
-	log.Debugf("createPVMInstance: instance = %+v", instance)
-	if instance != nil {
-		return nil
-	}
-
-	// Is there a better way to do this?
-
-	// @HACK
-	if false {
-		networks[0].NetworkID = si.innerNetwork.NetworkID
-	} else {
-		networks[0].NetworkID = si.dhcpServer.Network.ID
-	}
-	createNetworks[0] = &networks[0]
-
-	if false {
-		imageId = si.stockImageId
-		userData = base64.StdEncoding.EncodeToString([]byte(si.cloudinitUserData()))
-	} else {
-		imageId = si.rhcosImageId
-		userData = base64.StdEncoding.EncodeToString([]byte(si.ignitionUserData()))
-	}
-
-	createOptions = models.PVMInstanceCreate{
-		ImageID:    &imageId,
-		Memory:     ptr.To(8.0),
-		Networks:   createNetworks[:],
-		ProcType:   ptr.To("shared"),
-		Processors: ptr.To(1.0),
-		ServerName: &si.instanceName,
-		// SysType: ptr.To(""),
-		UserData:   userData,
-	}
 	log.Debugf("createPVMInstance: createOptions = %+v", createOptions)
 
 	instanceList, err = si.instanceClient.Create(&createOptions)
@@ -1512,9 +1461,9 @@ func (si *ServiceInstance) deleteInstance() error {
 		return fmt.Errorf("Error: deleteInstance called on nil instanceClient")
 	}
 
-	instance, err = si.findInstance()
+	instance, err = si.findPVMInstance(si.pvmInstanceName)
 	if err != nil {
-		log.Fatalf("Error: deleteInstance: findInstance returns %v", err)
+		log.Fatalf("Error: deleteInstance: findPVMInstance returns %v", err)
 		return err
 	}
 	log.Debugf("deleteInstance: instance = %+v", instance)
@@ -1546,9 +1495,9 @@ func (si *ServiceInstance) GetInstanceIP() (string, error) {
 		return "", fmt.Errorf("Error: GetInstanceIP has nil instanceClient")
 	}
 
-	instance, err = si.findInstance()
+	instance, err = si.findPVMInstance(si.pvmInstanceName)
 	if err != nil {
-		log.Fatalf("Error: GetInstanceIP: findInstance returns %v", err)
+		log.Fatalf("Error: GetInstanceIP: findPVMInstance returns %v", err)
 		return "", err
 	}
 	log.Debugf("GetInstanceIP: instance = %+v", instance)
