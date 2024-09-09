@@ -324,6 +324,40 @@ func (si *ServiceInstance) Valid() bool {
 	return true
 }
 
+func (si *ServiceInstance) GetStockImageId() string {
+
+	return si.stockImageId
+}
+
+func (si *ServiceInstance) GetRhcosImageId() string {
+
+	return si.rhcosImageId
+}
+
+func (si *ServiceInstance) GetNetworkID() (*string, error) {
+
+	if si.innerSi == nil {
+		return ptr.To(""), fmt.Errorf("GetNetworkID innerSi is nil")
+	}
+	if si.innerNetwork == nil {
+		return ptr.To(""), fmt.Errorf("GetNetworkID innerNetwork is nil")
+	}
+
+	return si.innerNetwork.NetworkID, nil
+}
+
+func (si *ServiceInstance) GetDhcpServerID() (*string, error) {
+
+	if si.innerSi == nil {
+		return ptr.To(""), fmt.Errorf("GetDhcpServerID innerSi is nil")
+	}
+	if si.dhcpServer == nil {
+		return ptr.To(""), fmt.Errorf("GetDhcpServerID dhcpServer is nil")
+	}
+
+	return si.dhcpServer.Network.ID, nil
+}
+
 func (si *ServiceInstance) findServiceInstance() (*resourcecontrollerv2.ResourceInstance, error) {
 
 	var (
@@ -1281,7 +1315,7 @@ func (si *ServiceInstance) waitForDhcpServer(id string) error {
 // ssh_authorized_keys:
 // - ssh-rsa ...
 // ___EOF___
-func (si *ServiceInstance) ignitionUserData() string {
+func (si *ServiceInstance) testIgnitionUserData() string {
 	return `{
   "ignition": {
     "version": "3.4.0"
@@ -1300,7 +1334,7 @@ func (si *ServiceInstance) ignitionUserData() string {
 }`
 }
 
-func (si *ServiceInstance) cloudinitUserData() string {
+func (si *ServiceInstance) testCloudinitUserData() string {
 	return `#cloud-config
 users:
   - default

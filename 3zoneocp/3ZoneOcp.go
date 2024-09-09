@@ -232,7 +232,7 @@ func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
 
 	instance, err = si.findPVMInstance(pvmInstanceName)
 	if err != nil {
-		log.Fatalf("Error: createPVMInstance: findPVMInstance returns %v", err)
+		log.Fatalf("Error: createTestPVM: findPVMInstance returns %v", err)
 		return err
 	}
 	log.Debugf("createTestPVM: instance = %+v", instance)
@@ -243,18 +243,26 @@ func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
 	// Is there a better way to do this?
 	// @HACK
 	if false {
-		networks[0].NetworkID = si.innerNetwork.NetworkID
+		networks[0].NetworkID, err = si.GetNetworkID()
+		if err != nil {
+			log.Fatalf("Error: createTestPVM: si.GetNetworkID returns %v", err)
+			return err
+		}
 	} else {
-		networks[0].NetworkID = si.dhcpServer.Network.ID
+		networks[0].NetworkID, err = si.GetDhcpServerID()
+		if err != nil {
+			log.Fatalf("Error: createTestPVM: si.GetDhcpServerID returns %v", err)
+			return err
+		}
 	}
 	createNetworks[0] = &networks[0]
 
 	if false {
-		imageId = si.stockImageId
-		userData = base64.StdEncoding.EncodeToString([]byte(si.cloudinitUserData()))
+		imageId = si.GetStockImageId()
+		userData = base64.StdEncoding.EncodeToString([]byte(si.testCloudinitUserData()))
 	} else {
-		imageId = si.rhcosImageId
-		userData = base64.StdEncoding.EncodeToString([]byte(si.ignitionUserData()))
+		imageId = si.GetRhcosImageId()
+		userData = base64.StdEncoding.EncodeToString([]byte(si.testIgnitionUserData()))
 	}
 
 	createOptions = models.PVMInstanceCreate{
@@ -263,7 +271,7 @@ func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
 		Networks:   createNetworks[:],
 		ProcType:   ptr.To("shared"),
 		Processors: ptr.To(1.0),
-		ServerName: &si.pvmInstanceName,
+		ServerName: &pvmInstanceName,
 		// SysType: ptr.To(""),
 		UserData:   userData,
 	}
