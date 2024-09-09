@@ -364,9 +364,26 @@ func (cos *CloudObjectStorage) createCloudObjectStorage() error {
 			return err
 		}
 		log.Debugf("createCloudObjectStorage: cos.innerCos = %+v", cos.innerCos)
+
+		err = cos.waitForCloudObjectStorage()
+		if err != nil {
+			log.Fatalf("Error: waitForCloudObjectStorage returns %v", err)
+			return err
+		}
 	}
 
 	return nil
+}
+
+func (cos *CloudObjectStorage) waitForCloudObjectStorage() error {
+
+	var (
+		err error
+	)
+
+	// @TBD
+
+	return err
 }
 
 func (cos *CloudObjectStorage) deleteCloudObjectStorage() error {

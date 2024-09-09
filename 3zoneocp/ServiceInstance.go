@@ -105,13 +105,17 @@ type ServiceInstance struct {
 
 	imageClient *instance.IBMPIImageClient
 
-	imageId string
+	stockImageId string
+
+	rhcosImageId string
 
 	dhcpClient *instance.IBMPIDhcpClient
 
 	dhcpServer *models.DHCPServerDetail
 
 	instanceClient *instance.IBMPIInstanceClient
+
+	jobClient *instance.IBMPIJobClient
 }
 
 type ImageImportOptions struct {
@@ -512,9 +516,9 @@ func (si *ServiceInstance) createServiceInstance() error {
 		return err
 	}
 
-	err = si.createInstance()
+	err = si.createPVMInstance()
 	if err != nil {
-		log.Fatalf("Error: createInstance returns %v", err)
+		log.Fatalf("Error: createPVMInstance returns %v", err)
 		return err
 	}
 
@@ -580,6 +584,14 @@ func (si *ServiceInstance) createClients() error {
 	}
 	if si.instanceClient == nil {
 		return fmt.Errorf("Error: createServiceInstance has a nil instanceClient!")
+	}
+
+	if si.jobClient == nil {
+		si.jobClient = instance.NewIBMPIJobClient(si.ctx, si.piSession, *si.innerSi.GUID)
+		log.Debugf("createServiceInstance: jobClient = %v", si.jobClient)
+	}
+	if si.jobClient == nil {
+		return fmt.Errorf("Error: createServiceInstance has a nil jobClient!")
 	}
 
 	return nil
@@ -921,7 +933,7 @@ func (si *ServiceInstance) addStockImage(imageName string) error {
 		return err
 	}
 	if imageRef != nil {
-		si.imageId = *imageRef.ImageID
+		si.stockImageId = *imageRef.ImageID
 		log.Debugf("addStockImage: imageRef.ImageID = %s", *imageRef.ImageID)
 		return nil
 	}
@@ -949,8 +961,8 @@ func (si *ServiceInstance) addStockImage(imageName string) error {
 	}
 	log.Debugf("addStockImage: image = %+v", image)
 
-	si.imageId = *image.ImageID
-	log.Debugf("addStockImage: si.imageId = %s", si.imageId)
+	si.stockImageId = *image.ImageID
+	log.Debugf("addStockImage: si.stockImageId = %s", si.stockImageId)
 
 	return nil
 }
@@ -974,10 +986,11 @@ func (si *ServiceInstance) addRHCOSImage(importOptions ImageImportOptions) error
 	// Does it already exist?
 	imageRef, err = si.findImage(importOptions.ImageName)
 	if err != nil {
-		log.Fatalf("Error: addRHCOSImage: findImage returns %v", err)
+		log.Fatalf("Error: addRHCOSImage: findImage(1) returns %v", err)
 		return err
 	}
 	if imageRef != nil {
+		si.rhcosImageId = *imageRef.ImageID
 		log.Debugf("addRHCOSImage: FOUND EXISTING %s", *imageRef.ImageID)
 		return nil
 	}
@@ -998,6 +1011,69 @@ func (si *ServiceInstance) addRHCOSImage(importOptions ImageImportOptions) error
 		return err
 	}
 	log.Debugf("addRHCOSImage: imageJob = %+v", imageJob)
+
+	err = si.waitForCosImage(imageJob)
+
+	// Should now exist
+	imageRef, err = si.findImage(importOptions.ImageName)
+	if err != nil {
+		log.Fatalf("Error: addRHCOSImage: findImage(2) returns %v", err)
+		return err
+	}
+	if imageRef != nil {
+		si.rhcosImageId = *imageRef.ImageID
+		log.Debugf("addRHCOSImage: FOUND EXISTING %s", *imageRef.ImageID)
+		return nil
+	}
+
+	return fmt.Errorf("Error: Should have found RHCOS image by now")
+}
+
+func (si *ServiceInstance) waitForCosImage(imageJob *models.JobReference) error {
+
+	var (
+		err error
+	)
+
+	if si.innerSi == nil {
+		return fmt.Errorf("waitForCosImage innerSi is nil")
+	}
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(si.ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(si.ctx, backoff, func(context.Context) (bool, error) {
+		var (
+			job *models.Job
+
+			err2 error
+		)
+
+		job, err2 = si.jobClient.Get(*imageJob.ID)
+		if err2 != nil {
+			log.Fatalf("Error: Wait jobClient.Get: returns = %v", err2)
+			return false, err2
+		}
+		log.Debugf("waitForCosImage: Status.State = %s", *job.Status.State)
+		switch *job.Status.State {
+		case "completed":
+			return true, nil
+		case "queued":
+			return false, nil
+		case "running":
+			return false, nil
+		case "error":
+			return true, fmt.Errorf("waitForCosImage: error state")
+		default:
+			return true, fmt.Errorf("waitForCosImage: unknown state: %s", *job.Status.State)
+		}
+	})
+	if err != nil {
+		log.Fatalf("Error: waitForCosImage: ExponentialBackoffWithContext returns %v", err)
+		return err
+	}
 
 	return nil
 }
@@ -1182,7 +1258,7 @@ func (si *ServiceInstance) waitForDhcpServer(id string) error {
 			return false, err2
 		}
 		log.Debugf("waitForDhcpServer: Status = %s", *detail.Status)
-		switch ServiceInstanceState(*detail.Status) {
+		switch *detail.Status {
 		case "ACTIVE":
 			return true, nil
 		case "BUILD":
@@ -1295,12 +1371,13 @@ func (si *ServiceInstance) findInstance() (*models.PVMInstance, error) {
 		createNetworks = append(createNetworks, &n)
 	}
 */
-func (si *ServiceInstance) createInstance() error {
+func (si *ServiceInstance) createPVMInstance() error {
 
 	var (
 		instance       *models.PVMInstance
 		networks       [1]models.PVMInstanceAddNetwork
 		createNetworks [1]*models.PVMInstanceAddNetwork
+		imageId        string
 		userData       string
 		createOptions  models.PVMInstanceCreate
 		instanceList   *models.PVMInstanceList
@@ -1308,18 +1385,18 @@ func (si *ServiceInstance) createInstance() error {
 	)
 
 	if si.innerSi == nil {
-		return fmt.Errorf("Error: createInstance called on nil ServiceInstance")
+		return fmt.Errorf("Error: createPVMInstance called on nil ServiceInstance")
 	}
 	if si.instanceClient == nil {
-		return fmt.Errorf("Error: createInstance has nil instanceClient")
+		return fmt.Errorf("Error: createPVMInstance has nil instanceClient")
 	}
 
 	instance, err = si.findInstance()
 	if err != nil {
-		log.Fatalf("Error: createInstance: findInstance returns %v", err)
+		log.Fatalf("Error: createPVMInstance: findInstance returns %v", err)
 		return err
 	}
-	log.Debugf("createInstance: instance = %+v", instance)
+	log.Debugf("createPVMInstance: instance = %+v", instance)
 	if instance != nil {
 		return nil
 	}
@@ -1334,10 +1411,16 @@ func (si *ServiceInstance) createInstance() error {
 	}
 	createNetworks[0] = &networks[0]
 
-	userData = base64.StdEncoding.EncodeToString([]byte(si.cloudinitUserData()))
+	if false {
+		imageId = si.stockImageId
+		userData = base64.StdEncoding.EncodeToString([]byte(si.cloudinitUserData()))
+	} else {
+		imageId = si.rhcosImageId
+		userData = base64.StdEncoding.EncodeToString([]byte(si.ignitionUserData()))
+	}
 
 	createOptions = models.PVMInstanceCreate{
-		ImageID:    &si.imageId,
+		ImageID:    &imageId,
 		Memory:     ptr.To(8.0),
 		Networks:   createNetworks[:],
 		ProcType:   ptr.To("shared"),
@@ -1346,35 +1429,44 @@ func (si *ServiceInstance) createInstance() error {
 		// SysType: ptr.To(""),
 		UserData:   userData,
 	}
-	log.Debugf("createInstance: createOptions = %+v", createOptions)
+	log.Debugf("createPVMInstance: createOptions = %+v", createOptions)
 
 	instanceList, err = si.instanceClient.Create(&createOptions)
 	if err != nil {
-		log.Fatalf("Error: createInstance: Create returns %v", err)
+		log.Fatalf("Error: createPVMInstance: Create returns %v", err)
 		return err
 	}
-	log.Debugf("createInstance: instanceList = %+v", instanceList)
+	log.Debugf("createPVMInstance: instanceList = %+v", instanceList)
+
+	if instanceList == nil {
+		log.Fatalf("Error: createPVMInstance: instanceList is nil")
+		return fmt.Errorf("Error: createPVMInstance instanceList is nil")
+	}
+
+	for _, instance := range *instanceList {
+		log.Debugf("createPVMInstance: instance= %+v", instance)
+
+		err = si.waitForPVMInstanceReady(*instance.PvmInstanceID)
+		if err != nil {
+			log.Fatalf("Error: createPVMInstance: waitForPVMInstanceReady returns %v", err)
+			return err
+		}
+	}
 
 	return nil
 }
 
-func (si *ServiceInstance) waitForInstanceReady() error {
+func (si *ServiceInstance) waitForPVMInstanceReady(pvmInstanceId string) error {
 
 	var (
-		getOptions *resourcecontrollerv2.GetResourceInstanceOptions
-
-		foundSi *resourcecontrollerv2.ResourceInstance
-
-		response *core.DetailedResponse
+		instance *models.PVMInstance
 
 		err error
 	)
 
 	if si.innerSi == nil {
-		return fmt.Errorf("waitForInstanceReady innerSi is nil")
+		return fmt.Errorf("waitForPVMInstanceReady innerSi is nil")
 	}
-
-	getOptions = si.controllerSvc.NewGetResourceInstanceOptions(*si.innerSi.ID)
 
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
@@ -1382,25 +1474,20 @@ func (si *ServiceInstance) waitForInstanceReady() error {
 		Cap:      leftInContext(si.ctx),
 		Steps:    math.MaxInt32}
 	err = wait.ExponentialBackoffWithContext(si.ctx, backoff, func(context.Context) (bool, error) {
-		var err2 error
 
-		foundSi, response, err2 = si.controllerSvc.GetResourceInstanceWithContext(si.ctx, getOptions)
+		instance, err = si.instanceClient.Get(pvmInstanceId)
 		if err != nil {
-			log.Fatalf("Error: Wait GetResourceInstanceWithContext: response = %v, err = %v", response, err2)
-			return false, err2
+			log.Fatalf("Error: Wait instanceClient.Get: err = %v", err)
+			return false, err
 		}
-		log.Debugf("waitForInstanceReady: State = %s", *foundSi.State)
-		switch ServiceInstanceState(*foundSi.State) {
-		case ServiceInstanceStateActive:
+		log.Debugf("waitForPVMInstanceReady: Status = %s", *instance.Status)
+		switch *instance.Status {
+		case "ACTIVE":
 			return true, nil
-		case ServiceInstanceStateProvisioning:
+		case "BUILD":
 			return false, nil
-		case ServiceInstanceStateFailed:
-			return true, fmt.Errorf("waitForInstanceReady: failed state")
-		case ServiceInstanceStateRemoved:
-			return true, fmt.Errorf("waitForInstanceReady: removed state")
 		default:
-			return true, fmt.Errorf("waitForInstanceReady: unknown state: %s", *foundSi.State)
+			return true, fmt.Errorf("waitForPVMInstanceReady: unknown state: %s", *instance.Status)
 		}
 	})
 	if err != nil {
