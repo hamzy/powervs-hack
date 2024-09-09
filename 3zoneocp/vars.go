@@ -21,12 +21,21 @@ import (
 
 // https://www.digitalocean.com/community/tutorials/how-to-use-json-in-go
 type JSON_Defaults struct {
-	ApiKey       string `json:"ibmcloud_api_key"`
-	SshKey       string `json:"pi_ssh_key"`
-	OperSystem   string `json:"oper_system"`
-	Architecture string `json:"architecture"`
-	Region       string `json:"region"`
-	GroupID      string `json:"group"`
+	ApiKey              string `json:"ibmcloud_api_key"`
+	SshKey              string `json:"pi_ssh_key"`
+	OperSystem          string `json:"oper_system"`
+	Architecture        string `json:"architecture"`
+	Region              string `json:"region"`
+	GroupID             string `json:"group"`
+
+	BaseDomain          string `json:"BaseDomain"`
+	ClusterName         string `json:"ClusterName"`
+	Email               string `json:"Email"`
+	PowerVSRegion       string `json:"PowerVSRegion"`
+	ResourceGroup       string `json:"ResourceGroup"`
+	ServiceInstanceGUID string `json:"ServiceInstanceGUID"`
+	VpcName             string `json:"VpcName"`
+	Zone                string `json:"Zone"`
 
 	//	VPCS            map[string]string	`json:"vpcs"`
 
@@ -51,13 +60,21 @@ type JSON_Defaults struct {
 }
 
 type Defaults struct {
-	ApiKey       string
-	SshKey       string
-	OperSystem   string
-	Architecture string
-	Region       string
-	GroupID      string
-	VPCS         map[string]map[string]string
+	ApiKey              string
+	SshKey              string
+	OperSystem          string
+	Architecture        string
+	Region              string
+	GroupID             string
+	BaseDomain          string
+	ClusterName         string
+	Email               string
+	PowerVSRegion       string
+	ResourceGroup       string
+	ServiceInstanceGUID string
+	VpcName             string
+	Zone                string
+	VPCS                map[string]map[string]string
 }
 
 func read_defaults(jsonData []byte) (Defaults, error) {
@@ -79,6 +96,14 @@ func read_defaults(jsonData []byte) (Defaults, error) {
 	defaults.Architecture = json_defaults.Architecture
 	defaults.Region = json_defaults.Region
 	defaults.GroupID = json_defaults.GroupID
+	defaults.BaseDomain = json_defaults.BaseDomain
+	defaults.ClusterName = json_defaults.ClusterName
+	defaults.Email = json_defaults.Email
+	defaults.PowerVSRegion = json_defaults.PowerVSRegion
+	defaults.ResourceGroup = json_defaults.ResourceGroup
+	defaults.ServiceInstanceGUID = json_defaults.ServiceInstanceGUID
+	defaults.VpcName = json_defaults.VpcName
+	defaults.Zone = json_defaults.Zone
 	defaults.VPCS = make(map[string]map[string]string)
 	defaults.VPCS["zone1"] = make(map[string]string)
 	defaults.VPCS["zone2"] = make(map[string]string)
