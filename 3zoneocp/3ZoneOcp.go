@@ -19,10 +19,13 @@ package main
 
 import (
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"text/template"
 
 	"github.com/IBM-Cloud/power-go-client/power/models"
@@ -129,7 +132,12 @@ func main() {
 func setup1zone(mode Mode, defaults Defaults) error {
 
 	var (
-		err error
+		exPath            string
+		bBootstrapIgn     []byte
+		bootstrapUserData string
+		bucket            string
+		key               string
+		err               error
 	)
 
 	// 3 zones are predefined.  Delete two of them.
@@ -144,6 +152,9 @@ func setup1zone(mode Mode, defaults Defaults) error {
 	}
 
 	instantiateCloudObjectStorage(mode, defaults)
+	if false {
+		panic(fmt.Errorf("HAMZY"))
+	}
 
 	instantiateTransitGateway(mode, defaults)
 
@@ -198,11 +209,40 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		fmt.Printf("IP address for %s is %s\n", ipAddrKey, ipAddresses[ipAddrKey])
 	}
 
-	err = createInstallConfig(defaults)
+	err = createIgnitionFiles(defaults)
 	if err != nil {
-		log.Fatalf("Error: createInstallConfig returns %v", err)
+		log.Fatalf("Error: createIgnitionFiles returns %v", err)
 		return err
 	}
+
+	exPath, err = executablePath()
+	if err != nil {
+		log.Fatalf("Error: executablePath returns %v", err)
+		return err
+	}
+
+	exPath = exPath + "/tmp"
+
+	bBootstrapIgn, err = os.ReadFile(exPath + "/bootstrap.ign")
+	if err != nil {
+		log.Fatalf("Error: os.ReadFile bootstrap.ign returns %v", err)
+		return err
+	}
+	log.Debugf("setup1zone: bBootstrapIgn = %s", string(bBootstrapIgn))
+
+	bootstrapUserData = base64.StdEncoding.EncodeToString(bBootstrapIgn)
+	log.Debugf("setup1zone: bootstrapUserData = %s", bootstrapUserData)
+
+	// @TODO
+	bucket = "bootstrap.ign"
+	key = "node-bootstrap"
+	err = cos.CreateBucketFile(bucket, key, bootstrapUserData)
+	if err != nil {
+		log.Fatalf("Error: cos.CreateBucketFile returns %v", err)
+		return err
+	}
+
+	err = createBoostrapPVM(mode, defaults, si, bootstrapUserData)
 
 	return nil
 }
@@ -280,6 +320,78 @@ func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
 	err = si.createPVMInstance(createOptions)
 	if err != nil {
 		log.Fatalf("Error: createPVMInstance returns %v", err)
+		return err
+	}
+
+	return err
+}
+
+func createBoostrapPVM(mode Mode, defaults Defaults, si *ServiceInstance, bootstrapUserData string) error {
+
+	var (
+		siName          string
+		pvmInstanceName string
+		networks        [1]models.PVMInstanceAddNetwork
+		createNetworks  [1]*models.PVMInstanceAddNetwork
+		imageId         string
+		createOptions   models.PVMInstanceCreate
+		instance        *models.PVMInstance
+		err             error
+	)
+
+	siName, err = si.Name()
+	if err != nil {
+		log.Fatalf("Error: si.Name returns %v", err)
+		return err
+	}
+
+	pvmInstanceName = fmt.Sprintf("%s-bootstrap", siName)
+	log.Debugf("createBoostrapPVM: pvmInstanceName = %s", pvmInstanceName)
+
+	instance, err = si.findPVMInstance(pvmInstanceName)
+	if err != nil {
+		log.Fatalf("Error: createBoostrapPVM: findPVMInstance returns %v", err)
+		return err
+	}
+	log.Debugf("createBoostrapPVM: instance = %+v", instance)
+	if instance != nil {
+		return nil
+	}
+
+	// Is there a better way to do this?
+	// @HACK
+	if false {
+		networks[0].NetworkID, err = si.GetNetworkID()
+		if err != nil {
+			log.Fatalf("Error: createBoostrapPVM: si.GetNetworkID returns %v", err)
+			return err
+		}
+	} else {
+		networks[0].NetworkID, err = si.GetDhcpServerID()
+		if err != nil {
+			log.Fatalf("Error: createBoostrapPVM: si.GetDhcpServerID returns %v", err)
+			return err
+		}
+	}
+	createNetworks[0] = &networks[0]
+
+	imageId = si.GetRhcosImageId()
+
+	createOptions = models.PVMInstanceCreate{
+		ImageID:    &imageId,
+		Memory:     ptr.To(8.0),
+		Networks:   createNetworks[:],
+		ProcType:   ptr.To("shared"),
+		Processors: ptr.To(1.0),
+		ServerName: &pvmInstanceName,
+		// SysType: ptr.To(""),
+		UserData:   bootstrapUserData,
+	}
+	log.Debugf("createBoostrapPVM: createOptions = %+v", createOptions)
+
+	err = si.createPVMInstance(createOptions)
+	if err != nil {
+		log.Fatalf("Error: createBoostrapPVM returns %v", err)
 		return err
 	}
 
@@ -533,6 +645,7 @@ func instantiateCloudObjectStorage(mode Mode, defaults Defaults) {
 		ApiKey:  defaults.ApiKey,
 		Name:    "rdr-hamzy-3zone-cos",
 		GroupID: defaults.GroupID,
+		Region:  defaults.Region,
 	}
 	cos, err = NewCloudObjectStorage(cosOptions)
 	if err != nil {
@@ -574,7 +687,7 @@ type InstallConfig struct {
 	Zone                string
 }
 
-func createInstallConfig(defaults Defaults) error {
+func createInstallConfig(defaults Defaults, directory string) error {
 
 	var (
 		homeDirectory string
@@ -610,7 +723,7 @@ func createInstallConfig(defaults Defaults) error {
 		return fmt.Errorf("Error: File %s does not exist", filePullSecrets)
 	}
 
-	if ok, err := Exists("install-config.yaml"); ok {
+	if ok, err := Exists(directory + "/install-config.yaml"); ok {
 		return err
 	}
 
@@ -674,7 +787,7 @@ sshKey: |
 		return err
 	}
 
-	f, err = os.Create("install-config.yaml")
+	f, err = os.Create(directory + "/install-config.yaml")
 	if err != nil {
 		log.Fatalf("Error: os.Create returns %v", err)
 		return err
@@ -695,6 +808,107 @@ sshKey: |
 	err = f.Close()
 	if err != nil {
 		log.Fatalf("Error: f.Close returns %v", err)
+		return err
+	}
+
+	return err
+}
+
+func executablePath() (string, error) {
+
+	var (
+		exPath string
+		err    error
+	)
+
+	ex, err := os.Executable()
+	if err != nil {
+		log.Fatalf("Error: executablePath os.Executable returns %v", err)
+		return "", err
+	}
+	exPath = filepath.Dir(ex)
+	log.Debugf("executablePath: exPath = %s", exPath)
+
+	return exPath, err
+}
+
+func createIgnitionFiles(defaults Defaults) error {
+
+	var (
+		ignitionFiles []string = []string {
+			"master.ign",
+			"worker.ign",
+			"bootstrap.ign",
+		}
+		missingOne = false
+		ok          bool
+		exPath      string
+		oiDirectory string
+		cmd         *exec.Cmd
+		err         error
+	)
+
+	ex, err := os.Executable()
+	if err != nil {
+		log.Fatalf("Error: createIgnitionFiles os.Executable returns %v", err)
+		return err
+	}
+	exPath = filepath.Dir(ex)
+	log.Debugf("createIgnitionFiles: exPath = %s", exPath)
+
+	for _, filename := range ignitionFiles {
+		if ok, err = Exists(filename); ok {
+			log.Debugf("createIgnitionFiles: FOUND %s", filename)
+			continue
+		}
+		if err != nil {
+			log.Fatalf("Error: createIgnitionFiles Exists returns %v", err)
+			return err
+		}
+		log.Debugf("createIgnitionFiles: MISSING %s", filename)
+		missingOne = true
+	}
+
+	if !missingOne {
+		return nil
+	}
+
+	// Does the openshift-install directory exist?
+	oiDirectory = exPath + "/tmp"
+	log.Debugf("createIgnitionFiles: oiDirectory = %s", oiDirectory)
+
+	if _, err := os.Stat(oiDirectory); err == nil {
+		// oiDirectory exists
+	} else if errors.Is(err, os.ErrNotExist) {
+		// oiDirectory does *not* exist
+		err = os.Mkdir(oiDirectory, os.ModePerm)
+		if err != nil {
+			log.Fatalf("Error: createIgnitionFiles os.Mkdir returns %v", err)
+			return err
+		}
+	} else {
+		log.Fatalf("Error: createIgnitionFiles os.Stat(%s) returns %v", oiDirectory, err)
+		return err
+	}
+
+	// Does the install-config.yaml file exist?
+	err = createInstallConfig(defaults, oiDirectory)
+	if err != nil {
+		log.Fatalf("Error: createIgnitionFiles createInstallConfig returns %v", err)
+		return err
+	}
+
+	// Run openshift-install
+	cmd = exec.Command("openshift-install", "create", "ignition-configs", "--dir", oiDirectory)
+
+	log.Debugf("createIgnitionFiles: cmd = %+v", cmd)
+
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	err = cmd.Run()
+	if err != nil {
+		log.Fatalf("Error: createIgnitionFiles cmd.Run returns %v", err)
 		return err
 	}
 

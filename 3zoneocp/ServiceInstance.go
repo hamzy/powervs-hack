@@ -503,7 +503,7 @@ func (si *ServiceInstance) createServiceInstance() error {
 
 	err = si.createClients()
 	if err != nil {
-			log.Fatalf("Error: createClients returns %v", err)
+		log.Fatalf("Error: createClients returns %v", err)
 		return err
 	}
 

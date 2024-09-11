@@ -20,10 +20,14 @@ import (
 	"regexp"
 	"strings"
 
-//	"gopkg.in/yaml.v2"
 	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/ibm-cos-sdk-go/aws"
+	"github.com/IBM/ibm-cos-sdk-go/aws/awserr"
+	"github.com/IBM/ibm-cos-sdk-go/aws/credentials/ibmiam"
+	"github.com/IBM/ibm-cos-sdk-go/aws/session"
+	"github.com/IBM/ibm-cos-sdk-go/service/s3"
+	"github.com/IBM/ibm-cos-sdk-go/service/s3/s3manager"
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
-//	"k8s.io/utils/ptr"
 )
 
 const (
@@ -41,6 +45,7 @@ type CloudObjectStorageOptions struct {
 	ApiKey  string
 	Name    string
 	GroupID string
+	Region  string
 }
 
 type CloudObjectStorage struct {
@@ -49,6 +54,10 @@ type CloudObjectStorage struct {
 	controllerSvc *resourcecontrollerv2.ResourceControllerV2
 
 	innerCos *resourcecontrollerv2.ResourceInstance
+
+	awsSession *session.Session
+
+	s3Client *s3.S3
 
 	ctx context.Context
 }
@@ -372,7 +381,273 @@ func (cos *CloudObjectStorage) createCloudObjectStorage() error {
 		}
 	}
 
+	err = cos.createClients()
+	if err != nil {
+		log.Fatalf("Error: createClients returns %v", err)
+		return err
+	}
+
 	return nil
+}
+
+func (cos *CloudObjectStorage) createClients() error {
+
+	var (
+		serviceEndpoint string
+		options         session.Options
+		err             error
+	)
+
+	serviceEndpoint = fmt.Sprintf("s3.%s.cloud-object-storage.appdomain.cloud", cos.options.Region)
+
+	options.Config = *aws.NewConfig().
+		WithRegion(cos.options.Region).
+		WithEndpoint(serviceEndpoint).
+		WithCredentials(ibmiam.NewStaticCredentials(
+			aws.NewConfig(),
+			"https://iam.cloud.ibm.com/identity/token",
+			cos.options.ApiKey,
+			*cos.innerCos.GUID,
+		)).
+		WithS3ForcePathStyle(true)
+
+	// https://github.com/IBM/ibm-cos-sdk-go/blob/master/aws/session/session.go#L268
+	cos.awsSession, err = session.NewSessionWithOptions(options)
+	if err != nil {
+		log.Fatalf("Error: NewSessionWithOptions returns %v", err)
+		return err
+	}
+	log.Debugf("createClients: cos.awsSession = %+v", cos.awsSession)
+	if cos.awsSession == nil {
+		log.Fatalf("Error: cos.awsSession is nil")
+		return fmt.Errorf("Error: cos.awsSession is nil")
+	}
+
+	cos.s3Client = s3.New(cos.awsSession)
+	log.Debugf("createClients: cos.s3Client = %+v", cos.s3Client)
+	if cos.s3Client == nil {
+		log.Fatalf("Error: cos.s3Client is nil")
+		return fmt.Errorf("Error: cos.s3Client is nil")
+	}
+
+	return err
+}
+
+func isBucketNotFound(err interface{}) bool {
+
+	log.Debugf("isBucketNotFound: err = %v", err)
+	log.Debugf("isBucketNotFound: err.(type) = %T", err)
+
+	// vet: ./CloudObjectStorage.go:443:14: use of .(type) outside type switch
+	// if _, ok := err.(type); !ok {
+
+	switch err.(type) {
+	case s3.RequestFailure:
+		log.Debugf("isBucketNotFound: err.(type) s3.RequestFailure")
+		if reqerr, ok := err.(s3.RequestFailure); ok {
+			log.Debugf("isBucketNotFound: reqerr.Code() = %v", reqerr.Code())
+			switch reqerr.Code() {
+			case s3.ErrCodeNoSuchBucket:
+				return true
+			case "NotFound":
+				return true
+			case "Forbidden":
+				return true
+			}
+			log.Debugf("isBucketNotFound: continuing")
+		} else {
+			log.Debugf("isBucketNotFound: s3.RequestFailure !ok")
+		}
+	case awserr.Error:
+		log.Debugf("isBucketNotFound: err.(type) awserr.Error")
+		if reqerr, ok := err.(awserr.Error); ok {
+			log.Debugf("isBucketNotFound: reqerr.Code() = %v", reqerr.Code())
+			switch reqerr.Code() {
+			case s3.ErrCodeNoSuchBucket:
+				return true
+			case "NotFound":
+				return true
+			case "Forbidden":
+				return true
+			}
+			log.Debugf("isBucketNotFound: continuing")
+		} else {
+			log.Debugf("isBucketNotFound: s3.RequestFailure !ok")
+		}
+	}
+
+	// @TODO investigate
+	switch s3Err := err.(type) {
+	case awserr.Error:
+		if s3Err.Code() == "NoSuchBucket" {
+			return true
+		}
+		origErr := s3Err.OrigErr()
+		if origErr != nil {
+			return isBucketNotFound(origErr)
+		}
+	case s3manager.Error:
+		if s3Err.OrigErr != nil {
+			return isBucketNotFound(s3Err.OrigErr)
+		}
+	case s3manager.Errors:
+		if len(s3Err) == 1 {
+			return isBucketNotFound(s3Err[0])
+		}
+	// Weird: This does not match?!
+	// case s3.RequestFailure:
+	}
+
+	return false
+}
+
+func (cos *CloudObjectStorage) testS3() error {
+
+	var (
+		bucket             = "bootstrap.ign"
+		key                = "node-bootstrap"
+		msg                = "Hello world."
+		headBucketInput    *s3.HeadBucketInput
+		headBucketOutput   *s3.HeadBucketOutput
+		createBucketInput  *s3.CreateBucketInput
+		createBucketOutput *s3.CreateBucketOutput
+		headObjectInput    *s3.HeadObjectInput
+		headObjectOutput   *s3.HeadObjectOutput
+		putObjectInput     *s3.PutObjectInput
+		putObjectOutput    *s3.PutObjectOutput
+		output             *s3.ListBucketsOutput
+		err                error
+	)
+
+	headBucketInput = &s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	}
+	headBucketOutput, err = cos.s3Client.HeadBucketWithContext(cos.ctx, headBucketInput)
+	if isBucketNotFound(err) {
+		log.Debugf("createClients: isBucketNotFound returns true")
+
+		createBucketInput = &s3.CreateBucketInput{
+			Bucket: aws.String(bucket),
+		}
+		createBucketOutput, err = cos.s3Client.CreateBucketWithContext(cos.ctx, createBucketInput)
+		if err != nil {
+			log.Fatalf("Error: CreateBucketWithContext returns %v", err)
+			return err
+		}
+		log.Debugf("createClients: createBucketOutput = %+v", *createBucketOutput)
+	} else 	if err != nil {
+		log.Fatalf("Error: HeadBucketWithContext returns %v", err)
+		return err
+	}
+	log.Debugf("createClients: headBucketOutput = %+v", *headBucketOutput)
+
+	headObjectInput = &s3.HeadObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	}
+	headObjectOutput, err = cos.s3Client.HeadObjectWithContext(cos.ctx, headObjectInput)
+	if isBucketNotFound(err) {
+		log.Debugf("createClients: isBucketNotFound returns true")
+	}
+	if err != nil {
+		log.Fatalf("Error: HeadObjectWithContext returns %v", err)
+		return err
+	}
+	log.Debugf("createClients: headObjectOutput = %+v", *headObjectOutput)
+
+	// putObjectInput = new(s3.PutObjectInput).SetBucket(bucket).SetKey(key).SetBody(strings.NewReader(msg))
+	putObjectInput = &s3.PutObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+		Body:   strings.NewReader(msg),
+	}
+
+	putObjectOutput, err = cos.s3Client.PutObjectWithContext(cos.ctx, putObjectInput)
+	if err != nil {
+		log.Fatalf("Error: PutObjectWithContext returns %v", err)
+		return err
+	}
+	log.Debugf("createClients: putObjectOutput = %+v", *putObjectOutput)
+
+	output, err = cos.s3Client.ListBucketsWithContext(cos.ctx, &s3.ListBucketsInput{})
+	if err != nil {
+		log.Fatalf("Error: ListBucketsWithContext returns %v", err)
+		return err
+	}
+	log.Debugf("createClients: output = %+v", *output)
+
+	return err
+}
+
+func (cos *CloudObjectStorage) CreateBucketFile(bucket string, key string, contents string) error {
+
+	var (
+		headBucketInput    *s3.HeadBucketInput
+		headBucketOutput   *s3.HeadBucketOutput
+		createBucketInput  *s3.CreateBucketInput
+		createBucketOutput *s3.CreateBucketOutput
+		headObjectInput    *s3.HeadObjectInput
+		headObjectOutput   *s3.HeadObjectOutput
+		putObjectInput     *s3.PutObjectInput
+		putObjectOutput    *s3.PutObjectOutput
+		err                error
+	)
+
+	// Does the bucket (directory) exist?
+	headBucketInput = &s3.HeadBucketInput{
+		Bucket: aws.String(bucket),
+	}
+	headBucketOutput, err = cos.s3Client.HeadBucketWithContext(cos.ctx, headBucketInput)
+	if isBucketNotFound(err) {
+		// No.  Create the bucket.
+		log.Debugf("CreateBucketFile: isBucketNotFound returns true")
+
+		createBucketInput = &s3.CreateBucketInput{
+			Bucket: aws.String(bucket),
+		}
+		createBucketOutput, err = cos.s3Client.CreateBucketWithContext(cos.ctx, createBucketInput)
+		if err != nil {
+			log.Fatalf("Error: CreateBucketFile returns %v", err)
+			return err
+		}
+		log.Debugf("CreateBucketFile: createBucketOutput = %+v", *createBucketOutput)
+	} else 	if err != nil {
+		log.Fatalf("Error: HeadBucketWithContext returns %v", err)
+		return err
+	}
+	log.Debugf("CreateBucketFile: headBucketOutput = %+v", *headBucketOutput)
+
+	// Does the file (key) exist?
+	headObjectInput = &s3.HeadObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+	}
+	headObjectOutput, err = cos.s3Client.HeadObjectWithContext(cos.ctx, headObjectInput)
+	if !isBucketNotFound(err) {
+		log.Debugf("CreateBucketFile: isBucketNotFound returns false")
+		// It is not an error to overwrite it.
+	}
+	if err != nil {
+		log.Fatalf("Error: HeadObjectWithContext returns %v", err)
+		return err
+	}
+	log.Debugf("CreateBucketFile: headObjectOutput = %+v", *headObjectOutput)
+
+	// Upload the content to the bucket/key.
+	putObjectInput = &s3.PutObjectInput{
+		Bucket: &bucket,
+		Key:    &key,
+		Body:   strings.NewReader(contents),
+	}
+
+	putObjectOutput, err = cos.s3Client.PutObjectWithContext(cos.ctx, putObjectInput)
+	if err != nil {
+		log.Fatalf("Error: PutObjectWithContext returns %v", err)
+		return err
+	}
+	log.Debugf("CreateBucketFile: putObjectOutput = %+v", *putObjectOutput)
+
+	return err
 }
 
 func (cos *CloudObjectStorage) waitForCloudObjectStorage() error {
