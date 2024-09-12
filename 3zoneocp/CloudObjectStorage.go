@@ -17,6 +17,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -60,6 +61,8 @@ type CloudObjectStorage struct {
 	s3Client *s3.S3
 
 	ctx context.Context
+
+	serviceEndpoint string
 }
 
 func initCloudObjectStorageService(options CloudObjectStorageOptions) (*resourcecontrollerv2.ResourceControllerV2, error) {
@@ -89,9 +92,10 @@ func initCloudObjectStorageService(options CloudObjectStorageOptions) (*resource
 func NewCloudObjectStorage(cosOptions CloudObjectStorageOptions) (*CloudObjectStorage, error) {
 
 	var (
-		controllerSvc *resourcecontrollerv2.ResourceControllerV2
-		ctx           context.Context
-		err           error
+		controllerSvc   *resourcecontrollerv2.ResourceControllerV2
+		ctx             context.Context
+		serviceEndpoint string
+		err             error
 	)
 	log.Debugf("NewCloudObjectStorage: cosOptions = %+v", cosOptions)
 
@@ -105,11 +109,14 @@ func NewCloudObjectStorage(cosOptions CloudObjectStorageOptions) (*CloudObjectSt
 	ctx = context.Background()
 	log.Debugf("NewCloudObjectStorage: ctx = %v", ctx)
 
+	serviceEndpoint = fmt.Sprintf("s3.%s.cloud-object-storage.appdomain.cloud", cosOptions.Region)
+
 	return &CloudObjectStorage{
-		options:       cosOptions,
-		controllerSvc: controllerSvc,
-		innerCos:      nil,
-		ctx:           ctx,
+		options:         cosOptions,
+		controllerSvc:   controllerSvc,
+		innerCos:        nil,
+		ctx:             ctx,
+		serviceEndpoint: serviceEndpoint,
 	}, nil
 }
 
@@ -393,16 +400,17 @@ func (cos *CloudObjectStorage) createCloudObjectStorage() error {
 func (cos *CloudObjectStorage) createClients() error {
 
 	var (
-		serviceEndpoint string
-		options         session.Options
-		err             error
+		options session.Options
+		err     error
 	)
 
-	serviceEndpoint = fmt.Sprintf("s3.%s.cloud-object-storage.appdomain.cloud", cos.options.Region)
+	if cos.innerCos == nil {
+		return fmt.Errorf("Error: createClients called on nil CloudObjectStorage")
+	}
 
 	options.Config = *aws.NewConfig().
 		WithRegion(cos.options.Region).
-		WithEndpoint(serviceEndpoint).
+		WithEndpoint(cos.serviceEndpoint).
 		WithCredentials(ibmiam.NewStaticCredentials(
 			aws.NewConfig(),
 			"https://iam.cloud.ibm.com/identity/token",
@@ -524,7 +532,7 @@ func (cos *CloudObjectStorage) testS3() error {
 	}
 	headBucketOutput, err = cos.s3Client.HeadBucketWithContext(cos.ctx, headBucketInput)
 	if isBucketNotFound(err) {
-		log.Debugf("createClients: isBucketNotFound returns true")
+		log.Debugf("testS3: isBucketNotFound returns true")
 
 		createBucketInput = &s3.CreateBucketInput{
 			Bucket: aws.String(bucket),
@@ -534,12 +542,12 @@ func (cos *CloudObjectStorage) testS3() error {
 			log.Fatalf("Error: CreateBucketWithContext returns %v", err)
 			return err
 		}
-		log.Debugf("createClients: createBucketOutput = %+v", *createBucketOutput)
+		log.Debugf("testS3: createBucketOutput = %+v", *createBucketOutput)
 	} else 	if err != nil {
 		log.Fatalf("Error: HeadBucketWithContext returns %v", err)
 		return err
 	}
-	log.Debugf("createClients: headBucketOutput = %+v", *headBucketOutput)
+	log.Debugf("testS3: headBucketOutput = %+v", *headBucketOutput)
 
 	headObjectInput = &s3.HeadObjectInput{
 		Bucket: &bucket,
@@ -547,13 +555,13 @@ func (cos *CloudObjectStorage) testS3() error {
 	}
 	headObjectOutput, err = cos.s3Client.HeadObjectWithContext(cos.ctx, headObjectInput)
 	if isBucketNotFound(err) {
-		log.Debugf("createClients: isBucketNotFound returns true")
+		log.Debugf("testS3: isBucketNotFound returns true")
 	}
 	if err != nil {
 		log.Fatalf("Error: HeadObjectWithContext returns %v", err)
 		return err
 	}
-	log.Debugf("createClients: headObjectOutput = %+v", *headObjectOutput)
+	log.Debugf("testS3: headObjectOutput = %+v", *headObjectOutput)
 
 	// putObjectInput = new(s3.PutObjectInput).SetBucket(bucket).SetKey(key).SetBody(strings.NewReader(msg))
 	putObjectInput = &s3.PutObjectInput{
@@ -567,16 +575,32 @@ func (cos *CloudObjectStorage) testS3() error {
 		log.Fatalf("Error: PutObjectWithContext returns %v", err)
 		return err
 	}
-	log.Debugf("createClients: putObjectOutput = %+v", *putObjectOutput)
+	log.Debugf("testS3: putObjectOutput = %+v", *putObjectOutput)
 
 	output, err = cos.s3Client.ListBucketsWithContext(cos.ctx, &s3.ListBucketsInput{})
 	if err != nil {
 		log.Fatalf("Error: ListBucketsWithContext returns %v", err)
 		return err
 	}
-	log.Debugf("createClients: output = %+v", *output)
+	log.Debugf("testS3: output = %+v", *output)
+
+	objectURL := &url.URL{
+		Scheme: "https",
+		Host:   cos.serviceEndpoint,
+		Path:   fmt.Sprintf("%s/%s", bucket, key),
+	}
+	log.Debugf("testS3: objectURL = %v", objectURL)
 
 	return err
+}
+
+func (cos *CloudObjectStorage) BucketKeyURL(bucket string, key string) url.URL {
+
+	return url.URL{
+		Scheme: "https",
+		Host:   cos.serviceEndpoint,
+		Path:   fmt.Sprintf("%s/%s", bucket, key),
+	}
 }
 
 func (cos *CloudObjectStorage) CreateBucketFile(bucket string, key string, contents string) error {
@@ -592,6 +616,13 @@ func (cos *CloudObjectStorage) CreateBucketFile(bucket string, key string, conte
 		putObjectOutput    *s3.PutObjectOutput
 		err                error
 	)
+
+	if cos.innerCos == nil {
+		return fmt.Errorf("Error: CreateBucketFile called on nil CloudObjectStorage")
+	}
+
+	// https://github.com/IBM/ibm-cos-sdk-go/blob/master/doc.go
+	// https://github.com/IBM/ibm-cos-sdk-go/blob/master/service/s3/api.go
 
 	// Does the bucket (directory) exist?
 	headBucketInput = &s3.HeadBucketInput{
