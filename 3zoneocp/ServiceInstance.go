@@ -1203,16 +1203,16 @@ func (si *ServiceInstance) addDhcpServer() error {
 		// NOTE: Create returns a *models.DHCPServer but we store a *models.DHCPServerDetail
 		log.Debugf("addDhcpServer: dhcpServer = %+v", dhcpServer)
 
+		err = si.waitForDhcpServer(*dhcpServer.ID)
+		if err != nil {
+			return fmt.Errorf("Error: waitForDhcpServer returns %v", err)
+		}
+
 		si.dhcpServer, err = si.dhcpClient.Get(*dhcpServer.ID)
 		if err != nil {
 			return fmt.Errorf("Error: si.dhcpClient.Get returns %v", err)
 		}
 		log.Debugf("addDhcpServer: si.dhcpServer = %+v", si.dhcpServer)
-
-		err = si.waitForDhcpServer(*dhcpServer.ID)
-		if err != nil {
-			return fmt.Errorf("Error: waitForDhcpServer returns %v", err)
-		}
 	}
 
 	return nil
@@ -1461,6 +1461,9 @@ func (si *ServiceInstance) waitForPVMInstanceReady(pvmInstanceId string) error {
 		instance, err = si.instanceClient.Get(pvmInstanceId)
 		if err != nil {
 			log.Fatalf("Error: Wait instanceClient.Get: err = %v", err)
+			if strings.Contains(err.Error(), "unable to get attached volumes") {
+				return false, nil
+			}
 			return false, err
 		}
 		log.Debugf("waitForPVMInstanceReady: Status = %s", *instance.Status)

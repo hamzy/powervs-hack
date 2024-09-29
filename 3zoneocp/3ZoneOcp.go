@@ -209,40 +209,56 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		fmt.Printf("IP address for %s is %s\n", ipAddrKey, ipAddresses[ipAddrKey])
 	}
 
-	err = createIgnitionFiles(defaults)
-	if err != nil {
-		log.Fatalf("Error: createIgnitionFiles returns %v", err)
-		return err
+	switch mode {
+	case ModeCreate:
+		err = createIgnitionFiles(defaults)
+		if err != nil {
+			log.Fatalf("Error: createIgnitionFiles returns %v", err)
+			return err
+		}
+
+		exPath, err = executablePath()
+		if err != nil {
+			log.Fatalf("Error: executablePath returns %v", err)
+			return err
+		}
+
+		exPath = exPath + "/tmp"
+
+		bBootstrapIgn, err = os.ReadFile(exPath + "/bootstrap.ign")
+		if err != nil {
+			log.Fatalf("Error: os.ReadFile bootstrap.ign returns %v", err)
+			return err
+		}
+		log.Debugf("setup1zone: bBootstrapIgn = %s", string(bBootstrapIgn))
+
+		bootstrapUserData = base64.StdEncoding.EncodeToString(bBootstrapIgn)
+		log.Debugf("setup1zone: bootstrapUserData = %s", bootstrapUserData)
+
+		// @TODO
+		bucket = "3zone-bootstrap.ign"
+		key = "node-bootstrap"
+		err = cos.CreateBucketFile(bucket, key, bootstrapUserData)
+		if err != nil {
+			log.Fatalf("Error: cos.CreateBucketFile returns %v", err)
+			return err
+		}
+
+		bBootstrapIgn, err = cos.BucketKeyIgnition(bucket, key)
+		if err != nil {
+			log.Fatalf("Error: cos.BucketKeyIgnition returns %v", err)
+			return err
+		}
+		log.Debugf("setup1zone: bBootstrapIgn = %s", string(bBootstrapIgn))
+
+		bootstrapUserData = base64.StdEncoding.EncodeToString(bBootstrapIgn)
+		log.Debugf("setup1zone: bootstrapUserData = %s", bootstrapUserData)
+
+		err = createBoostrapPVM(mode, defaults, si, bootstrapUserData)
+	case ModeDelete:
+		// @TBD
+		// err = deleteBootstrapPVM()
 	}
-
-	exPath, err = executablePath()
-	if err != nil {
-		log.Fatalf("Error: executablePath returns %v", err)
-		return err
-	}
-
-	exPath = exPath + "/tmp"
-
-	bBootstrapIgn, err = os.ReadFile(exPath + "/bootstrap.ign")
-	if err != nil {
-		log.Fatalf("Error: os.ReadFile bootstrap.ign returns %v", err)
-		return err
-	}
-	log.Debugf("setup1zone: bBootstrapIgn = %s", string(bBootstrapIgn))
-
-	bootstrapUserData = base64.StdEncoding.EncodeToString(bBootstrapIgn)
-	log.Debugf("setup1zone: bootstrapUserData = %s", bootstrapUserData)
-
-	// @TODO
-	bucket = "bootstrap.ign"
-	key = "node-bootstrap"
-	err = cos.CreateBucketFile(bucket, key, bootstrapUserData)
-	if err != nil {
-		log.Fatalf("Error: cos.CreateBucketFile returns %v", err)
-		return err
-	}
-
-	err = createBoostrapPVM(mode, defaults, si, bootstrapUserData)
 
 	return nil
 }
@@ -295,6 +311,7 @@ func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
 			return err
 		}
 	}
+	log.Debugf("createTestPVM: networks = %+v", networks)
 	createNetworks[0] = &networks[0]
 
 	if false {

@@ -16,11 +16,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
 
+	ignV3Types "github.com/coreos/ignition/v2/config/v3_4/types"
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/IBM/ibm-cos-sdk-go/aws"
 	"github.com/IBM/ibm-cos-sdk-go/aws/awserr"
@@ -29,6 +31,7 @@ import (
 	"github.com/IBM/ibm-cos-sdk-go/service/s3"
 	"github.com/IBM/ibm-cos-sdk-go/service/s3/s3manager"
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
+	"k8s.io/utils/ptr"
 )
 
 const (
@@ -446,6 +449,10 @@ func isBucketNotFound(err interface{}) bool {
 	log.Debugf("isBucketNotFound: err = %v", err)
 	log.Debugf("isBucketNotFound: err.(type) = %T", err)
 
+	if err == nil {
+		return false
+	}
+
 	// vet: ./CloudObjectStorage.go:443:14: use of .(type) outside type switch
 	// if _, ok := err.(type); !ok {
 
@@ -603,6 +610,81 @@ func (cos *CloudObjectStorage) BucketKeyURL(bucket string, key string) url.URL {
 	}
 }
 
+func (cos *CloudObjectStorage) IAMToken() string {
+
+	return ""
+}
+
+func (cos *CloudObjectStorage) BucketKeyIgnition(bucket string, key string) ([]byte, error) {
+
+	var (
+		urlLocation   url.URL
+		authenticator *core.IamAuthenticator
+		iamtoken      string
+		token         string
+		bData         []byte
+		err           error
+	)
+
+	urlLocation = cos.BucketKeyURL(bucket, key)
+
+	authenticator = &core.IamAuthenticator{
+		ApiKey: cos.options.ApiKey,
+	}
+
+	iamtoken, err = authenticator.GetToken()
+	if err != nil {
+		return []byte(""), fmt.Errorf("Error: authenticator.GetToken returns %v", err)
+	}
+	if iamtoken == "" {
+		return []byte(""), fmt.Errorf("IAM token is empty")
+	}
+	token = "Bearer " + iamtoken
+
+	ignData := &ignV3Types.Config{
+		Ignition: ignV3Types.Ignition{
+			Version: "3.2.0",
+			Config: ignV3Types.IgnitionConfig{
+				Replace: ignV3Types.Resource{
+					Source: aws.String(urlLocation.String()),
+					HTTPHeaders: ignV3Types.HTTPHeaders{
+						{
+							Name:  "Authorization",
+							Value: aws.String(token),
+						},
+					},
+				},
+			},
+		},
+	}
+
+	bData, err = json.Marshal(ignData)
+	if err != nil {
+		return []byte(""), fmt.Errorf("Error: json.Marshal returns %v", err)
+	}
+
+	return bData, nil
+
+/*
+	return `{
+  "ignition": {
+    "version": "3.2.0",
+    "config": {
+      "replace": {
+        "source": "` + urlLocation.String() + `",
+        "httpHeaders": [
+          {
+            "name": "Authorization",
+            "value": "` + cos.IAMToken() + `"
+          }
+        ]
+      }
+    }
+  }
+}`
+*/
+}
+
 func (cos *CloudObjectStorage) CreateBucketFile(bucket string, key string, contents string) error {
 
 	var (
@@ -612,6 +694,7 @@ func (cos *CloudObjectStorage) CreateBucketFile(bucket string, key string, conte
 		createBucketOutput *s3.CreateBucketOutput
 		headObjectInput    *s3.HeadObjectInput
 		headObjectOutput   *s3.HeadObjectOutput
+		createBucketFile   = false
 		putObjectInput     *s3.PutObjectInput
 		putObjectOutput    *s3.PutObjectOutput
 		err                error
@@ -628,55 +711,61 @@ func (cos *CloudObjectStorage) CreateBucketFile(bucket string, key string, conte
 	headBucketInput = &s3.HeadBucketInput{
 		Bucket: aws.String(bucket),
 	}
+	log.Debugf("CreateBucketFile: Calling HeadBucketWithContext")
 	headBucketOutput, err = cos.s3Client.HeadBucketWithContext(cos.ctx, headBucketInput)
 	if isBucketNotFound(err) {
-		// No.  Create the bucket.
-		log.Debugf("CreateBucketFile: isBucketNotFound returns true")
-
+		// No. Create the bucket.
 		createBucketInput = &s3.CreateBucketInput{
 			Bucket: aws.String(bucket),
 		}
+		log.Debugf("CreateBucketFile: Calling CreateBucketWithContext")
 		createBucketOutput, err = cos.s3Client.CreateBucketWithContext(cos.ctx, createBucketInput)
 		if err != nil {
 			log.Fatalf("Error: CreateBucketFile returns %v", err)
 			return err
 		}
 		log.Debugf("CreateBucketFile: createBucketOutput = %+v", *createBucketOutput)
-	} else 	if err != nil {
+	} else if err != nil {
 		log.Fatalf("Error: HeadBucketWithContext returns %v", err)
 		return err
+	} else {
+		log.Debugf("CreateBucketFile: headBucketOutput = %+v", *headBucketOutput)
 	}
-	log.Debugf("CreateBucketFile: headBucketOutput = %+v", *headBucketOutput)
 
 	// Does the file (key) exist?
 	headObjectInput = &s3.HeadObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
+		Bucket: ptr.To(bucket),
+		Key:    ptr.To(key),
 	}
+	log.Debugf("CreateBucketFile: Calling HeadObjectWithContext")
 	headObjectOutput, err = cos.s3Client.HeadObjectWithContext(cos.ctx, headObjectInput)
-	if !isBucketNotFound(err) {
-		log.Debugf("CreateBucketFile: isBucketNotFound returns false")
-		// It is not an error to overwrite it.
-	}
-	if err != nil {
+	if isBucketNotFound(err) {
+		createBucketFile = true
+	} else if err != nil {
 		log.Fatalf("Error: HeadObjectWithContext returns %v", err)
 		return err
-	}
-	log.Debugf("CreateBucketFile: headObjectOutput = %+v", *headObjectOutput)
-
-	// Upload the content to the bucket/key.
-	putObjectInput = &s3.PutObjectInput{
-		Bucket: &bucket,
-		Key:    &key,
-		Body:   strings.NewReader(contents),
+	} else {
+		log.Debugf("main: headObjectOutput = %+v", *headObjectOutput)
+		// It is not an error to overwrite it.
+		createBucketFile = true
 	}
 
-	putObjectOutput, err = cos.s3Client.PutObjectWithContext(cos.ctx, putObjectInput)
-	if err != nil {
-		log.Fatalf("Error: PutObjectWithContext returns %v", err)
-		return err
+	if createBucketFile {
+		// Upload the content to the bucket/key.
+		// putObjectInput = new(s3.PutObjectInput).SetBucket(bucket).SetKey(key).SetBody(strings.NewReader(msg))
+		putObjectInput = &s3.PutObjectInput{
+			Bucket: ptr.To(bucket),
+			Key:    ptr.To(key),
+			Body:   strings.NewReader(contents),
+		}
+		log.Debugf("CreateBucketFile: Calling PutObjectWithContext")
+		putObjectOutput, err = cos.s3Client.PutObjectWithContext(cos.ctx, putObjectInput)
+		if err != nil {
+			log.Fatalf("Error: PutObjectWithContext returns %v", err)
+			return err
+		}
+		log.Debugf("CreateBucketFile: putObjectOutput = %+v", *putObjectOutput)
 	}
-	log.Debugf("CreateBucketFile: putObjectOutput = %+v", *putObjectOutput)
 
 	return err
 }
