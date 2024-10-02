@@ -35,25 +35,40 @@ func NewSkeleton(siOptions SkeletonOptions) (*Skeleton, error) {
 	}, nil
 }
 
-func (si *Skeleton) Run() error {
+func (sk *Skeleton) Run() error {
 
 	var (
 		err error
 	)
 
-	switch si.options.Mode {
+	switch sk.options.Mode {
 	case ModeCreate:
-		err = si.createSkeleton()
+		err = sk.createSkeleton()
 	case ModeDelete:
-		err = si.deleteSkeleton()
+		err = sk.deleteSkeleton()
 	default:
-		return fmt.Errorf("Skeleton options must be either Create or Delete (%d)", si.options.Mode)
+		return fmt.Errorf("Skeleton options must be either Create or Delete (%d)", sk.options.Mode)
 	}
 
 	return err
 }
 
-func (si *Skeleton) createSkeleton() error {
+func (sk *Skeleton) CRN() (string, error) {
+
+	return "", nil
+}
+
+func (sk *Skeleton) Name() (string, error) {
+
+	return "", nil
+}
+
+func (sk *Skeleton) Valid() bool {
+
+	return true
+}
+
+func (sk *Skeleton) createSkeleton() error {
 
 	var (
 		err error
@@ -62,7 +77,7 @@ func (si *Skeleton) createSkeleton() error {
 	return err
 }
 
-func (si *Skeleton) deleteSkeleton() error {
+func (sk *Skeleton) deleteSkeleton() error {
 
 	var (
 		err error
