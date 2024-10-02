@@ -232,7 +232,11 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		}
 		log.Debugf("setup1zone: bBootstrapIgn = %s", string(bBootstrapIgn))
 
-		bootstrapUserData = base64.StdEncoding.EncodeToString(bBootstrapIgn)
+		if false {
+			bootstrapUserData = base64.StdEncoding.EncodeToString(bBootstrapIgn)
+		} else {
+			bootstrapUserData = string(bBootstrapIgn)
+		}
 		log.Debugf("setup1zone: bootstrapUserData = %s", bootstrapUserData)
 
 		// @TODO
@@ -922,6 +926,10 @@ func createIgnitionFiles(defaults Defaults) error {
 
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+
+	cmd.Env = append(os.Environ(),
+		"OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.18.0-0.nightly-ppc64le-2024-10-02-091615",
+	)
 
 	err = cmd.Run()
 	if err != nil {

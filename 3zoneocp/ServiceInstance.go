@@ -1191,7 +1191,7 @@ func (si *ServiceInstance) addDhcpServer() error {
 			Cidr:              &si.options.CIDR,
 //			CloudConnectionID: si.innerSi.GUID,
 			Name:              &si.dhcpName,
-			SnatEnabled:       ptr.To(false),
+			SnatEnabled:       ptr.To(true),
 		}
 		log.Debugf("addDhcpServer: createOptions = %+v", createOptions)
 
@@ -1460,10 +1460,11 @@ func (si *ServiceInstance) waitForPVMInstanceReady(pvmInstanceId string) error {
 
 		instance, err = si.instanceClient.Get(pvmInstanceId)
 		if err != nil {
-			log.Fatalf("Error: Wait instanceClient.Get: err = %v", err)
 			if strings.Contains(err.Error(), "unable to get attached volumes") {
+				log.Debugf("Error: Wait instanceClient.Get: SKIPPING err = %v", err)
 				return false, nil
 			}
+			log.Fatalf("Error: Wait instanceClient.Get: err = %v", err)
 			return false, err
 		}
 		log.Debugf("waitForPVMInstanceReady: Status = %s", *instance.Status)

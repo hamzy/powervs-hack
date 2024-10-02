@@ -1057,8 +1057,12 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 				Protocol:  ptr.To("icmp"),
 			},
 			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("inbound"),
+				Protocol:  ptr.To("udp"),
+			},
+			&vpcv1.SecurityGroupRulePrototype{
 				Direction: ptr.To("outbound"),
-				Protocol:  ptr.To("tcp"),
+				Protocol:  ptr.To("all"),
 			},
 		})
 
@@ -1285,6 +1289,8 @@ func (vpc *VPC) createInstance(zone string) error {
 		return err
 	}
 	log.Debugf("createInstance: instance = %+v", instance)
+
+	// @TODO - wait
 
 	return nil
 }
