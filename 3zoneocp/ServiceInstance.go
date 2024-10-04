@@ -339,11 +339,13 @@ func (si *ServiceInstance) GetNetworkID() (*string, error) {
 	if si.innerSi == nil {
 		return ptr.To(""), fmt.Errorf("GetNetworkID innerSi is nil")
 	}
-	if si.innerNetwork == nil {
-		return ptr.To(""), fmt.Errorf("GetNetworkID innerNetwork is nil")
+	if si.innerNetwork != nil {
+		return si.innerNetwork.NetworkID, nil
+	} else if si.dhcpServer != nil {
+		return si.dhcpServer.Network.ID, nil
+	} else {
+		return ptr.To(""), fmt.Errorf("GetNetworkID innerNetwork and dhcpServer is nil")
 	}
-
-	return si.innerNetwork.NetworkID, nil
 }
 
 func (si *ServiceInstance) GetDhcpServerID() (*string, error) {
@@ -1302,6 +1304,30 @@ func (si *ServiceInstance) waitForDhcpServer(id string) error {
 	return nil
 }
 
+func (si *ServiceInstance) getDhcpLeases() ([]*models.DHCPServerLeases, error) {
+
+	var (
+		dhcpDetail *models.DHCPServerDetail
+		err        error
+	)
+
+	if si.innerSi == nil {
+		return nil, fmt.Errorf("getDhcpLeases innerSi is nil")
+	}
+	if si.dhcpServer == nil {
+		return nil, fmt.Errorf("getDhcpLeases dhcpServer is nil")
+	}
+
+	log.Debugf("getDhcpLeases: si.dhcpServer.ID = %s", *si.dhcpServer.ID)
+	dhcpDetail, err = si.dhcpClient.Get(*si.dhcpServer.ID)
+	if err != nil {
+		return nil, fmt.Errorf("getDhcpLeases: Get returns %w", err)
+	}
+	log.Debugf("getDhcpLeases: dhcpDetail = %+v", dhcpDetail)
+
+	return dhcpDetail.Leases, nil
+}
+
 // # for the password_hash line
 // $ podman run -ti --rm quay.io/coreos/mkpasswd --method=yescrypt
 // # Generate the ignition file
@@ -1398,18 +1424,19 @@ func (si *ServiceInstance) findPVMInstance(pvmInstanceName string) (*models.PVMI
 		createNetworks = append(createNetworks, &n)
 	}
 */
-func (si *ServiceInstance) createPVMInstance(createOptions models.PVMInstanceCreate) error {
+func (si *ServiceInstance) createPVMInstance(createOptions models.PVMInstanceCreate) (*models.PVMInstance, error) {
 
 	var (
+		instance     *models.PVMInstance
 		instanceList *models.PVMInstanceList
 		err          error
 	)
 
 	if si.innerSi == nil {
-		return fmt.Errorf("Error: createPVMInstance called on nil ServiceInstance")
+		return nil, fmt.Errorf("Error: createPVMInstance called on nil ServiceInstance")
 	}
 	if si.instanceClient == nil {
-		return fmt.Errorf("Error: createPVMInstance has nil instanceClient")
+		return nil, fmt.Errorf("Error: createPVMInstance has nil instanceClient")
 	}
 
 	log.Debugf("createPVMInstance: createOptions = %+v", createOptions)
@@ -1417,26 +1444,33 @@ func (si *ServiceInstance) createPVMInstance(createOptions models.PVMInstanceCre
 	instanceList, err = si.instanceClient.Create(&createOptions)
 	if err != nil {
 		log.Fatalf("Error: createPVMInstance: Create returns %v", err)
-		return err
+		return nil, err
 	}
 	log.Debugf("createPVMInstance: instanceList = %+v", instanceList)
 
 	if instanceList == nil {
 		log.Fatalf("Error: createPVMInstance: instanceList is nil")
-		return fmt.Errorf("Error: createPVMInstance instanceList is nil")
+		return nil, fmt.Errorf("Error: createPVMInstance instanceList is nil")
 	}
 
-	for _, instance := range *instanceList {
-		log.Debugf("createPVMInstance: instance= %+v", instance)
+	log.Debugf("createPVMInstance: len(instanceList) = %d", len(*instanceList))
+	for _, inst := range *instanceList {
+		log.Debugf("createPVMInstance: inst = %+v", inst)
 
-		err = si.waitForPVMInstanceReady(*instance.PvmInstanceID)
+		err = si.waitForPVMInstanceReady(*inst.PvmInstanceID)
 		if err != nil {
 			log.Fatalf("Error: createPVMInstance: waitForPVMInstanceReady returns %v", err)
-			return err
+			return nil, err
+		}
+
+		instance, err = si.instanceClient.Get(*inst.PvmInstanceID)
+		if err != nil {
+			log.Fatalf("Error: createPVMInstance Get returns %v", err)
+			return nil, err
 		}
 	}
 
-	return nil
+	return instance, nil
 }
 
 func (si *ServiceInstance) waitForPVMInstanceReady(pvmInstanceId string) error {
