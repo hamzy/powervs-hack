@@ -862,11 +862,6 @@ func instantiateLoadBalancers(mode Mode, defaults Defaults) {
 
 	lbMap["public"] = lb
 
-	// @HACK
-	if true {
-		return
-	}
-
 	lbOptions.IsPublic = false
 
 	lb, err = NewLoadBalancer(lbOptions)

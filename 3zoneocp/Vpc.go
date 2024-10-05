@@ -323,7 +323,7 @@ func (vpc *VPC) addSubnet(createSubnetOptions SubnetOptions) error {
 
 	subnet, err = vpc.findSubnet(createSubnetOptions.Name)
 	if err != nil {
-		log.Fatalf("Error: findSubet returns %v", err)
+		log.Fatalf("Error: findSubnet returns %v", err)
 		return err
 	}
 	if subnet != nil {
@@ -857,7 +857,7 @@ func (vpc *VPC) waitForSubnetDeleted(id string) error {
 		var err2 error
 
 		foundSubnet, response, err2 = vpc.vpcSvc.GetSubnetWithContext(vpc.ctx, getOptions)
-		if err != nil {
+		if err2 != nil {
 			log.Fatalf("Error: Wait GetSubnetWithContext: response = %v, err = %v", response, err2)
 			return false, err2
 		}
@@ -1220,7 +1220,7 @@ func (vpc *VPC) createInstance(zone string) error {
 
 	subnet, err = vpc.findSubnet(subnetName)
 	if err != nil {
-		log.Fatalf("Error: findSubet returns %v", err)
+		log.Fatalf("Error: findSubnet returns %v", err)
 		return err
 	}
 	log.Debugf("createInstance: subnet = %+v", subnet)
@@ -1394,7 +1394,7 @@ func (vpc *VPC) waitForInstanceDeleted(instanceID string) error {
 		var err2 error
 
 		foundInstance, response, err2 = vpc.vpcSvc.GetInstanceWithContext(vpc.ctx, getOptions)
-		if err != nil {
+		if err2 != nil {
 			log.Fatalf("Error: Wait GetInstanceWithContext: response = %v, err = %v", response, err2)
 			return false, err2
 		}

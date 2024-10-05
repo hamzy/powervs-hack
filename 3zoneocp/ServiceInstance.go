@@ -653,7 +653,7 @@ func (si *ServiceInstance) waitForServiceInstanceReady() error {
 		var err2 error
 
 		foundSi, response, err2 = si.controllerSvc.GetResourceInstanceWithContext(si.ctx, getOptions)
-		if err != nil {
+		if err2 != nil {
 			log.Fatalf("Error: Wait GetResourceInstanceWithContext: response = %v, err = %v", response, err2)
 			return false, err2
 		}
