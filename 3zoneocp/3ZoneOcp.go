@@ -150,7 +150,7 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		networkID         *string
 		dhcpLeases        []*models.DHCPServerLeases
 		dhcpLease         *models.DHCPServerLeases
-		ipAddresses       map[string]string
+		lbInt             *LoadBalancer
 		err               error
 	)
 
@@ -365,8 +365,6 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		// err = deleteMasterPVM()
 	}
 
-	ipAddresses = make(map[string]string)
-
 	for siKey := range siMap {
 		si := siMap[siKey]
 		if !si.Valid() {
@@ -410,13 +408,18 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		}
 	}
 
-	for ipAddrKey := range ipAddresses {
-		fmt.Printf("IP address for %s is %s\n", ipAddrKey, ipAddresses[ipAddrKey])
-	}
-
 	lbMap = make(map[string]*LoadBalancer)
 
 	instantiateLoadBalancers(mode, defaults)
+
+	lbInt = lbMap["internal"]
+	if !lbInt.Valid() {
+		err = fmt.Errorf("lbMap internal is not valid")
+		log.Fatalf("Error: %v", err)
+		return err
+	}
+
+//	err = lbInt.AddLoadBalancerPool()
 
 	return nil
 }

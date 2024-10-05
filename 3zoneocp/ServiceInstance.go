@@ -1309,6 +1309,7 @@ func (si *ServiceInstance) getDhcpLeases() ([]*models.DHCPServerLeases, error) {
 	var (
 		dhcpDetail *models.DHCPServerDetail
 		err        error
+		err2       error
 	)
 
 	if si.innerSi == nil {
@@ -1318,12 +1319,29 @@ func (si *ServiceInstance) getDhcpLeases() ([]*models.DHCPServerLeases, error) {
 		return nil, fmt.Errorf("getDhcpLeases dhcpServer is nil")
 	}
 
-	log.Debugf("getDhcpLeases: si.dhcpServer.ID = %s", *si.dhcpServer.ID)
-	dhcpDetail, err = si.dhcpClient.Get(*si.dhcpServer.ID)
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(si.ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(si.ctx, backoff, func(context.Context) (bool, error) {
+
+		dhcpDetail, err2 = si.dhcpClient.Get(*si.dhcpServer.ID)
+		if err2 != nil {
+			log.Fatalf("Error: Wait dhcpClient.Get: returns = %v", err2)
+			return false, err2
+		}
+		log.Debugf("getDhcpLeases: len(dhcpDetail.Leases) = %d", len(dhcpDetail.Leases))
+		if len(dhcpDetail.Leases) > 0 {
+			return true, nil
+		} else {
+			return false, nil
+		}
+	})
 	if err != nil {
-		return nil, fmt.Errorf("getDhcpLeases: Get returns %w", err)
+		log.Fatalf("Error: getDhcpLeases: ExponentialBackoffWithContext returns %v", err)
+		return nil, err
 	}
-	log.Debugf("getDhcpLeases: dhcpDetail = %+v", dhcpDetail)
 
 	return dhcpDetail.Leases, nil
 }
