@@ -419,7 +419,18 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		return err
 	}
 
-//	err = lbInt.AddLoadBalancerPool()
+	err = lbInt.AddLoadBalancerPoolMember("machine-config-server", 22623, bootstrapIP)
+	if err != nil {
+		log.Fatalf("Error: AddLoadBalancerPool machine-config-server %s returns %v", bootstrapIP, err)
+		return err
+	}
+	for i := 1; i <= 3; i++ {
+		err = lbInt.AddLoadBalancerPoolMember("machine-config-server", 22623, masterIPs[i-1])
+		if err != nil {
+			log.Fatalf("Error: AddLoadBalancerPool machine-config-server %s returns %v", masterIPs[i-1], err)
+			return err
+		}
+	}
 
 	return nil
 }
