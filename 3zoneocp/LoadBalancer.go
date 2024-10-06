@@ -336,6 +336,8 @@ func (lb *LoadBalancer) AddLoadBalancerPoolMember(name string, port int64, addre
 		err error
 	)
 
+	log.Debugf("AddLoadBalancerPoolMember: name = %s, port = %d, address = %s", name, port, address)
+
 	err = lb.AddLoadBalancerPool(name, port, address)
 	if err != nil {
 		return err
@@ -372,8 +374,21 @@ func (lb *LoadBalancer) AddLoadBalancerPool(name string, port int64, address str
 		return err
 	}
 
-	if len(currentLb.Pools) == 0 {
+	log.Debugf("AddLoadBalancerPool: Searching for name = %s", name)
+	for _, lbpr = range currentLb.Pools {
+		log.Debugf("AddLoadBalancerPool: lbpr.Name = %s", *lbpr.Name)
+		log.Debugf("AddLoadBalancerPool: lbpr.ID   = %s", *lbpr.ID)
+		if *lbpr.Name == name {
+			lbpID = *lbpr.ID
+			break
+		}
+	}
+	log.Debugf("AddLoadBalancerPool: lbpID = %s", lbpID)
+
+	if lbpID == ""{
 		// Create a pool first!
+		log.Debugf("AddLoadBalancerPool: Creating a pool...")
+
 		createLBPOptions = vpc.vpcSvc.NewCreateLoadBalancerPoolOptions(
 			*lb.innerLb.ID,
 			vpcv1.CreateLoadBalancerPoolOptionsAlgorithmRoundRobinConst,
@@ -412,11 +427,13 @@ func (lb *LoadBalancer) AddLoadBalancerPool(name string, port int64, address str
 		}
 	}
 
+	log.Debugf("AddLoadBalancerPool: Searching for name = %s", name)
 	for _, lbpr = range currentLb.Pools {
 		log.Debugf("AddLoadBalancerPool: lbpr.Name = %s", *lbpr.Name)
 		log.Debugf("AddLoadBalancerPool: lbpr.ID   = %s", *lbpr.ID)
 		if *lbpr.Name == name {
 			lbpID = *lbpr.ID
+			break
 		}
 	}
 	log.Debugf("AddLoadBalancerPool: lbpID = %s", lbpID)
@@ -501,7 +518,9 @@ func (lb *LoadBalancer) AddLoadBalancerListener(name string, port int64, address
 		currentLb        *vpcv1.LoadBalancer
 		lbpr             vpcv1.LoadBalancerPoolReference
 		lbpID            string
+		optionsLBL       *vpcv1.ListLoadBalancerListenersOptions
 		createLBLOptions *vpcv1.CreateLoadBalancerListenerOptions
+		lblc             *vpcv1.LoadBalancerListenerCollection
 		lbl              *vpcv1.LoadBalancerListener
 		response         *core.DetailedResponse
 		err              error
@@ -522,11 +541,13 @@ func (lb *LoadBalancer) AddLoadBalancerListener(name string, port int64, address
 		return fmt.Errorf("Error: currentLb.Pools has no elements")
 	}
 
+	log.Debugf("AddLoadBalancerListener: Searching for name = %s", name)
 	for _, lbpr = range currentLb.Pools {
 		log.Debugf("AddLoadBalancerListener: lbpr.Name = %s", *lbpr.Name)
 		log.Debugf("AddLoadBalancerListener: lbpr.ID   = %s", *lbpr.ID)
 		if *lbpr.Name == name {
 			lbpID = *lbpr.ID
+			break
 		}
 	}
 	log.Debugf("AddLoadBalancerListener: lbpID = %s", lbpID)
@@ -534,28 +555,44 @@ func (lb *LoadBalancer) AddLoadBalancerListener(name string, port int64, address
 		return fmt.Errorf("Error: AddLoadBalancerListener has a empty lbpID!")
 	}
 
-	if len(currentLb.Listeners) == 0 {
-		createLBLOptions = vpc.vpcSvc.NewCreateLoadBalancerListenerOptions(
-			*lb.innerLb.ID,
-			vpcv1.CreateLoadBalancerListenerOptionsProtocolTCPConst)
-		createLBLOptions.SetDefaultPool(
-			&vpcv1.LoadBalancerPoolIdentityLoadBalancerPoolIdentityByID{
-				ID: &lbpID,
-			})
-		createLBLOptions.SetPort(port)
+	optionsLBL = vpc.vpcSvc.NewListLoadBalancerListenersOptions(*lb.innerLb.ID)
 
-		lbl, response, err = lb.vpcSvc.CreateLoadBalancerListenerWithContext(lb.ctx, createLBLOptions)
-		if err != nil {
-			log.Fatalf("Error: CreateLoadBalancerPoolMemberWithContext returns response = %v, err = %v", response, err)
-			return err
-		}
-		log.Debugf("AddLoadBalancerListener: lbl = %+v", lbl)
+	lblc, response, err = vpc.vpcSvc.ListLoadBalancerListenersWithContext(lb.ctx, optionsLBL)
+	if err != nil {
+		log.Fatalf("Error: ListLoadBalancerListenersWithContext returns response = %v, err = %v", response, err)
+		return err
+	}
+	log.Debugf("lblc = %+v", lblc)
 
-		err = lb.waitForLoadBalancer(*lb.innerLb.ID)
-		if err != nil {
-			log.Fatalf("Error: waitForLoadBalancer returns %v", err)
-			return err
+	for _, member := range lblc.Listeners {
+		log.Debugf("member.DefaultPool.Name = %s", *member.DefaultPool.Name)
+		if *member.DefaultPool.Name == name {
+			return nil
 		}
+	}
+
+	log.Debugf("AddLoadBalancerListener: Creating a listener...")
+
+	createLBLOptions = vpc.vpcSvc.NewCreateLoadBalancerListenerOptions(
+		*lb.innerLb.ID,
+		vpcv1.CreateLoadBalancerListenerOptionsProtocolTCPConst)
+	createLBLOptions.SetDefaultPool(
+		&vpcv1.LoadBalancerPoolIdentityLoadBalancerPoolIdentityByID{
+			ID: &lbpID,
+		})
+	createLBLOptions.SetPort(port)
+
+	lbl, response, err = lb.vpcSvc.CreateLoadBalancerListenerWithContext(lb.ctx, createLBLOptions)
+	if err != nil {
+		log.Fatalf("Error: CreateLoadBalancerPoolMemberWithContext returns response = %v, err = %v", response, err)
+		return err
+	}
+	log.Debugf("AddLoadBalancerListener: lbl = %+v", lbl)
+
+	err = lb.waitForLoadBalancer(*lb.innerLb.ID)
+	if err != nil {
+		log.Fatalf("Error: waitForLoadBalancer returns %v", err)
+		return err
 	}
 
 	return err

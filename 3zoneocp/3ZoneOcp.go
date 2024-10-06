@@ -133,6 +133,11 @@ func main() {
 
 func setup1zone(mode Mode, defaults Defaults) error {
 
+	type LBPoolPair struct {
+		Name string
+		Port int64
+	}
+
 	var (
 		exPath            string
 		bucket            string
@@ -151,6 +156,11 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		dhcpLeases        []*models.DHCPServerLeases
 		dhcpLease         *models.DHCPServerLeases
 		lbInt             *LoadBalancer
+		intPairs          = []LBPoolPair{
+			{ "machine-config-server", 22623 },
+			{ "api-server", 6443 },
+		}
+		pair              LBPoolPair
 		err               error
 	)
 
@@ -419,16 +429,18 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		return err
 	}
 
-	err = lbInt.AddLoadBalancerPoolMember("machine-config-server", 22623, bootstrapIP)
-	if err != nil {
-		log.Fatalf("Error: AddLoadBalancerPool machine-config-server %s returns %v", bootstrapIP, err)
-		return err
-	}
-	for i := 1; i <= 3; i++ {
-		err = lbInt.AddLoadBalancerPoolMember("machine-config-server", 22623, masterIPs[i-1])
+	for _, pair = range intPairs {
+		err = lbInt.AddLoadBalancerPoolMember(pair.Name, pair.Port, bootstrapIP)
 		if err != nil {
-			log.Fatalf("Error: AddLoadBalancerPool machine-config-server %s returns %v", masterIPs[i-1], err)
+			log.Fatalf("Error: AddLoadBalancerPool machine-config-server %s returns %v", bootstrapIP, err)
 			return err
+		}
+		for i := 1; i <= 3; i++ {
+			err = lbInt.AddLoadBalancerPoolMember(pair.Name, pair.Port, masterIPs[i-1])
+			if err != nil {
+				log.Fatalf("Error: AddLoadBalancerPool machine-config-server %s returns %v", masterIPs[i-1], err)
+				return err
+			}
 		}
 	}
 
