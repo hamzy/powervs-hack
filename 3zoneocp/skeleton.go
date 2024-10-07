@@ -26,12 +26,12 @@ type Skeleton struct {
 	options SkeletonOptions
 }
 
-func NewSkeleton(siOptions SkeletonOptions) (*Skeleton, error) {
+func NewSkeleton(dnsOptions SkeletonOptions) (*Skeleton, error) {
 
-	log.Debugf("NewSkeleton: siOptions = %+v", siOptions)
+	log.Debugf("NewSkeleton: dnsOptions = %+v", dnsOptions)
 
 	return &Skeleton{
-		options: siOptions,
+		options: dnsOptions,
 	}, nil
 }
 

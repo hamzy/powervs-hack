@@ -99,7 +99,7 @@ func NewLoadBalancer(lbOptions LoadBalancerOptions) (*LoadBalancer, error) {
 	}
 
 	vpcSvc, err = initLBVPCService(lbOptions)
-	log.Debugf("NewLoadBalancer: vpcSvc = %v", vpcSvc)
+	log.Debugf("NewLoadBalancer: vpcSvc = %+v", vpcSvc)
 	if err != nil {
 		log.Fatalf("Error: NewLoadBalancer: initLBVPCService returns %v", err)
 		return nil, err

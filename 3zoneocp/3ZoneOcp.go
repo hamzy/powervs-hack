@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// git diff 3zoneocp/3ZoneOcp.go 3zoneocp/ServiceInstance.go 3zoneocp/TransitGateway.go 3zoneocp/Vpc.go 3zoneocp/CloudObjectStorage.go 3zoneocp/LoadBalancer.go 3zoneocp/RunnableObject.go 3zoneocp/DNS.go 3zoneocp/vars.go 3zoneocp/skeleton.go
+
 // (cd 3zoneocp/; /bin/rm go.*; go mod init example/user/3ZoneOcp; go mod tidy)
 // (cd 3zoneocp/; echo "vet:"; go vet || exit 1; echo "build:"; go build *.go || exit 1; echo "run:"; ./3ZoneOcp -mode=create)
 
