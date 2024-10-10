@@ -175,6 +175,24 @@ func (lb *LoadBalancer) Valid() bool {
 	return true
 }
 
+func (lb *LoadBalancer) IsPublic() (bool, error) {
+
+	if lb.innerLb == nil {
+		return false, fmt.Errorf("LoadBalancer does not exist to be public")
+	}
+
+	return lb.options.IsPublic, nil
+}
+
+func (lb *LoadBalancer) getHostname() (string, error) {
+
+	if lb.innerLb == nil {
+		return "", fmt.Errorf("LoadBalancer does not exist to have a hostname")
+	}
+
+	return *lb.innerLb.Hostname, nil
+}
+
 func (lb *LoadBalancer) findLoadBalancer() (*vpcv1.LoadBalancer, error) {
 
 	var (

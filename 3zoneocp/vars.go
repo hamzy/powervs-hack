@@ -29,8 +29,10 @@ type JSON_Defaults struct {
 	GroupID             string `json:"group"`
 
 	BaseDomain          string `json:"BaseDomain"`
+	CIS                 string `json:"CisInstanceCRN"`
 	ClusterName         string `json:"ClusterName"`
 	Email               string `json:"Email"`
+	Image               string `json:"Image"`
 	PowerVSRegion       string `json:"PowerVSRegion"`
 	ResourceGroup       string `json:"ResourceGroup"`
 	ServiceInstanceGUID string `json:"ServiceInstanceGUID"`
@@ -67,8 +69,10 @@ type Defaults struct {
 	Region              string
 	GroupID             string
 	BaseDomain          string
+	CIS                 string
 	ClusterName         string
 	Email               string
+	Image               string
 	PowerVSRegion       string
 	ResourceGroup       string
 	ServiceInstanceGUID string
@@ -97,8 +101,10 @@ func read_defaults(jsonData []byte) (Defaults, error) {
 	defaults.Region = json_defaults.Region
 	defaults.GroupID = json_defaults.GroupID
 	defaults.BaseDomain = json_defaults.BaseDomain
+	defaults.CIS = json_defaults.CIS
 	defaults.ClusterName = json_defaults.ClusterName
 	defaults.Email = json_defaults.Email
+	defaults.Image = json_defaults.Image
 	defaults.PowerVSRegion = json_defaults.PowerVSRegion
 	defaults.ResourceGroup = json_defaults.ResourceGroup
 	defaults.ServiceInstanceGUID = json_defaults.ServiceInstanceGUID

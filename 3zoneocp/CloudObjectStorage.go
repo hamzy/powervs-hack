@@ -550,7 +550,7 @@ func (cos *CloudObjectStorage) testS3() error {
 			return err
 		}
 		log.Debugf("testS3: createBucketOutput = %+v", *createBucketOutput)
-	} else 	if err != nil {
+	} else if err != nil {
 		log.Fatalf("Error: HeadBucketWithContext returns %v", err)
 		return err
 	}

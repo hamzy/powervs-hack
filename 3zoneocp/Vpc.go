@@ -1054,6 +1054,36 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 			},
 			&vpcv1.SecurityGroupRulePrototype{
 				Direction: ptr.To("inbound"),
+				Protocol:  ptr.To("tcp"),
+				PortMin:   ptr.To(int64(443)),
+				PortMax:   ptr.To(int64(443)),
+			},
+			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("inbound"),
+				Protocol:  ptr.To("tcp"),
+				PortMin:   ptr.To(int64(6443)),
+				PortMax:   ptr.To(int64(6443)),
+			},
+			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("inbound"),
+				Protocol:  ptr.To("tcp"),
+				PortMin:   ptr.To(int64(5000)),
+				PortMax:   ptr.To(int64(5000)),
+			},
+			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("inbound"),
+				Protocol:  ptr.To("tcp"),
+				PortMin:   ptr.To(int64(10258)),
+				PortMax:   ptr.To(int64(10258)),
+			},
+			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("inbound"),
+				Protocol:  ptr.To("tcp"),
+				PortMin:   ptr.To(int64(22623)),
+				PortMax:   ptr.To(int64(22623)),
+			},
+			&vpcv1.SecurityGroupRulePrototype{
+				Direction: ptr.To("inbound"),
 				Protocol:  ptr.To("icmp"),
 			},
 			&vpcv1.SecurityGroupRulePrototype{

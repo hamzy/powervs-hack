@@ -50,6 +50,7 @@ var (
 	tg                   *TransitGateway
 	cos                  *CloudObjectStorage
 	lbMap                map[string]*LoadBalancer
+	dns                  *DNS
 )
 
 type Mode int
@@ -158,8 +159,12 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		dhcpLeases        []*models.DHCPServerLeases
 		dhcpLease         *models.DHCPServerLeases
 		lbInt             *LoadBalancer
+		lbExt             *LoadBalancer
 		intPairs          = []LBPoolPair{
 			{ "machine-config-server", 22623 },
+			{ "api-server", 6443 },
+		}
+		extPairs          = []LBPoolPair{
 			{ "api-server", 6443 },
 		}
 		pair              LBPoolPair
@@ -424,6 +429,8 @@ func setup1zone(mode Mode, defaults Defaults) error {
 
 	instantiateLoadBalancers(mode, defaults)
 
+	instantiateDNS(mode, defaults)
+
 	lbInt = lbMap["internal"]
 	if !lbInt.Valid() {
 		err = fmt.Errorf("lbMap internal is not valid")
@@ -431,16 +438,38 @@ func setup1zone(mode Mode, defaults Defaults) error {
 		return err
 	}
 
+	lbExt = lbMap["external"]
+	if !lbExt.Valid() {
+		err = fmt.Errorf("lbMap external is not valid")
+		log.Fatalf("Error: %v", err)
+		return err
+	}
+
 	for _, pair = range intPairs {
 		err = lbInt.AddLoadBalancerPoolMember(pair.Name, pair.Port, bootstrapIP)
 		if err != nil {
-			log.Fatalf("Error: AddLoadBalancerPool machine-config-server %s returns %v", bootstrapIP, err)
+			log.Fatalf("Error: AddLoadBalancerPool %s %d %s returns %v", pair.Name, pair.Port, bootstrapIP, err)
 			return err
 		}
 		for i := 1; i <= 3; i++ {
 			err = lbInt.AddLoadBalancerPoolMember(pair.Name, pair.Port, masterIPs[i-1])
 			if err != nil {
-				log.Fatalf("Error: AddLoadBalancerPool machine-config-server %s returns %v", masterIPs[i-1], err)
+				log.Fatalf("Error: AddLoadBalancerPool %s %d %s returns %v", pair.Name, pair.Port, masterIPs[i-1], err)
+				return err
+			}
+		}
+	}
+
+	for _, pair = range extPairs {
+		err = lbExt.AddLoadBalancerPoolMember(pair.Name, pair.Port, bootstrapIP)
+		if err != nil {
+			log.Fatalf("Error: AddLoadBalancerPool %s %d %s returns %v", pair.Name, pair.Port, bootstrapIP, err)
+			return err
+		}
+		for i := 1; i <= 3; i++ {
+			err = lbExt.AddLoadBalancerPoolMember(pair.Name, pair.Port, masterIPs[i-1])
+			if err != nil {
+				log.Fatalf("Error: AddLoadBalancerPool %s %d %s returns %v", pair.Name, pair.Port, masterIPs[i-1], err)
 				return err
 			}
 		}
@@ -888,7 +917,7 @@ func instantiateLoadBalancers(mode Mode, defaults Defaults) {
 		log.Fatalf("Error: lb.Run returns %v", err)
 	}
 
-	lbMap["public"] = lb
+	lbMap["external"] = lb
 
 	lbOptions.IsPublic = false
 
@@ -1031,6 +1060,36 @@ func instantiateCloudObjectStorage(mode Mode, defaults Defaults) {
 	err = iface.Run()
 	if err != nil {
 		log.Fatalf("Error: cos.Run returns %v", err)
+	}
+}
+
+func instantiateDNS(mode Mode, defaults Defaults) {
+
+	var (
+		dnsOptions DNSOptions
+		iface      RunnableObject
+		err        error
+	)
+
+	dnsOptions = DNSOptions{
+		Mode:       mode,
+		ApiKey:     defaults.ApiKey,
+		Name:       defaults.ClusterName,
+		BaseDomain: defaults.BaseDomain,
+		CIS:        defaults.CIS,
+		lbInt:      lbMap["internal"],
+		lbExt:      lbMap["external"],
+	}
+	dns, err = NewDNS(dnsOptions)
+	if err != nil {
+		log.Fatalf("Error: NewDNS returns %v", err)
+	}
+	log.Debugf("instantiateDNS: dns = %+v", dns)
+	iface = dns
+
+	err = iface.Run()
+	if err != nil {
+		log.Fatalf("Error: dns.Run returns %v", err)
 	}
 }
 
@@ -1284,7 +1343,7 @@ func createIgnitionFiles(defaults Defaults) error {
 	cmd.Stderr = os.Stderr
 
 	cmd.Env = append(os.Environ(),
-		"OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.18.0-0.nightly-ppc64le-2024-10-02-091615",
+		fmt.Sprintf("OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE=%s", defaults.Image),
 	)
 
 	err = cmd.Run()
