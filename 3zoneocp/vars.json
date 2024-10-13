@@ -5,6 +5,18 @@
 	"architecture":		"amd64",
 	"region":               "us-south",
 	"group":                "...",
+
+	"BaseDomain":          "...",
+	"CisInstanceCRN":      "...",
+	"ClusterName":         "3zone-test",
+	"Email":               "...",
+	"Image":               "...",
+	"PowerVSRegion":       "dal",
+	"ResourceGroup":       "...",
+	"ServiceInstanceGUID": "...",
+	"VpcName":             "...",
+	"Zone":                "dal10",
+
 	"vpcs": {
 		"zone1": {
 			"pvs_workspace_name": "rdr-hamzy-3zone-powervs1",
