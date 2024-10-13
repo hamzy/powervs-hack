@@ -227,7 +227,7 @@ func createHostnameRecord(lb *LoadBalancer) error {
 		isPublic      bool
 		dnsHostname   string
 		lbHostname    string
-		found         bool
+		record        *dnsrecordsv1.DnsrecordDetails
 		createOptions *dnsrecordsv1.CreateDnsRecordOptions
 		result        *dnsrecordsv1.DnsrecordResp
 		response      *core.DetailedResponse
@@ -247,13 +247,13 @@ func createHostnameRecord(lb *LoadBalancer) error {
 	}
 	log.Debugf("createHostnameRecord: dnsHostname = %s", dnsHostname)
 
-	found, err = dns.findHostname(dnsHostname)
+	record, err = dns.findHostname(dnsHostname)
 	if err != nil {
 		log.Fatalf("Error: createHostnameRecord: findHostname returns %v", err)
 		return err
 	}
 
-	if !found {
+	if record == nil {
 		lbHostname, err = lb.getHostname()
 		if err != nil {
 			log.Fatalf("Error: createHostnameRecord: lb.getHostname returns %v", err)
@@ -277,12 +277,14 @@ func createHostnameRecord(lb *LoadBalancer) error {
 	return err
 }
 
-func (dns *DNS) findHostname(hostname string) (bool, error) {
+func (dns *DNS) findHostname(hostname string) (*dnsrecordsv1.DnsrecordDetails, error) {
 
 	var (
 		dnsRecordsOptions *dnsrecordsv1.ListAllDnsRecordsOptions
 		dnsResources      *dnsrecordsv1.ListDnsrecordsResp
 		record            dnsrecordsv1.DnsrecordDetails
+		getOptions        *dnsrecordsv1.GetDnsRecordOptions
+		responseReturned  *dnsrecordsv1.DnsrecordResp
 		perPage           int64 = 20
 		page              int64 = 1
 		moreData                = true
@@ -297,7 +299,7 @@ func (dns *DNS) findHostname(hostname string) (bool, error) {
 	for moreData {
 		dnsResources, response, err = dns.dnsRecordService.ListAllDnsRecordsWithContext(dns.ctx, dnsRecordsOptions)
 		if err != nil {
-			return false, fmt.Errorf("failed to list DNS records: %w and the response is: %s", err, response)
+			return nil, fmt.Errorf("failed to list DNS records: %w and the response is: %s", err, response)
 		}
 
 		for _, record = range dnsResources.Result {
@@ -308,7 +310,14 @@ func (dns *DNS) findHostname(hostname string) (bool, error) {
 			contentMatches := *record.Content == hostname
 			if nameMatches || contentMatches {
 				log.Debugf("findHostname: FOUND: %v, %v", *record.ID, *record.Name)
-				return true, nil
+
+				getOptions = dns.dnsRecordService.NewGetDnsRecordOptions(*record.ID)
+
+				responseReturned, response, err = dns.dnsRecordService.GetDnsRecordWithContext(dns.ctx, getOptions)
+				if err != nil {
+				}
+
+				return responseReturned.Result, nil 
 			}
 		}
 
@@ -320,7 +329,62 @@ func (dns *DNS) findHostname(hostname string) (bool, error) {
 		page++
 	}
 
-	return false, err
+	return nil, err
+}
+
+func deleteHostnameRecord(lb *LoadBalancer) error {
+
+	var (
+		isPublic      bool
+		dnsHostname   string
+		lbHostname    string
+		record        *dnsrecordsv1.DnsrecordDetails
+		deleteOptions *dnsrecordsv1.DeleteDnsRecordOptions
+		result        *dnsrecordsv1.DeleteDnsrecordResp
+		response      *core.DetailedResponse
+		err           error
+	)
+
+	isPublic, err = lb.IsPublic()
+	if err != nil {
+		log.Fatalf("Error: deleteHostnameRecord: isPublic returns %v", err)
+		return err
+	}
+
+	if isPublic {
+		dnsHostname = fmt.Sprintf("api.%s.%s", dns.options.Name, dns.options.BaseDomain)
+	} else {
+		dnsHostname = fmt.Sprintf("api-int.%s.%s", dns.options.Name, dns.options.BaseDomain)
+	}
+	log.Debugf("deleteHostnameRecord: dnsHostname = %s", dnsHostname)
+
+	record, err = dns.findHostname(dnsHostname)
+	if err != nil {
+		log.Fatalf("Error: deleteHostnameRecord: findHostname returns %v", err)
+		return err
+	}
+
+	if record == nil {
+		return nil
+	}
+
+	lbHostname, err = lb.getHostname()
+	if err != nil {
+		log.Fatalf("Error: deleteHostnameRecord: lb.getHostname returns %v", err)
+		return err
+	}
+	log.Debugf("deleteHostnameRecord: lbHostname = %s", lbHostname)
+
+	deleteOptions = dns.dnsRecordService.NewDeleteDnsRecordOptions(*record.ID)
+
+	result, response, err = dns.dnsRecordService.DeleteDnsRecordWithContext(dns.ctx, deleteOptions)
+	if err != nil {
+		log.Fatalf("deleteHostnameRecord: DeleteDnsRecordWithContext returned %v and the response is: %v", err, response)
+		return err
+	}
+	log.Debugf("deleteHostnameRecord: result = %+v", result)
+
+	return err
 }
 
 func (dns *DNS) createDNS() error {
@@ -347,6 +411,16 @@ func (dns *DNS) deleteDNS() error {
 	var (
 		err error
 	)
+
+	err = deleteHostnameRecord(dns.options.lbInt)
+	if err != nil {
+		return err
+	}
+
+	err = deleteHostnameRecord(dns.options.lbExt)
+	if err != nil {
+		return err
+	}
 
 	return err
 }

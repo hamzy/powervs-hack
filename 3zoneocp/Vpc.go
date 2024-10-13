@@ -1061,14 +1061,14 @@ func (vpc *VPC) createSecurityGroup(name string) error {
 			&vpcv1.SecurityGroupRulePrototype{
 				Direction: ptr.To("inbound"),
 				Protocol:  ptr.To("tcp"),
-				PortMin:   ptr.To(int64(6443)),
-				PortMax:   ptr.To(int64(6443)),
+				PortMin:   ptr.To(int64(5000)),
+				PortMax:   ptr.To(int64(5000)),
 			},
 			&vpcv1.SecurityGroupRulePrototype{
 				Direction: ptr.To("inbound"),
 				Protocol:  ptr.To("tcp"),
-				PortMin:   ptr.To(int64(5000)),
-				PortMax:   ptr.To(int64(5000)),
+				PortMin:   ptr.To(int64(6443)),
+				PortMax:   ptr.To(int64(6443)),
 			},
 			&vpcv1.SecurityGroupRulePrototype{
 				Direction: ptr.To("inbound"),
@@ -1425,6 +1425,10 @@ func (vpc *VPC) waitForInstanceDeleted(instanceID string) error {
 
 		foundInstance, response, err2 = vpc.vpcSvc.GetInstanceWithContext(vpc.ctx, getOptions)
 		if err2 != nil {
+			if strings.Contains(err2.Error(), "Instance not found") {
+				log.Debugf("waitForInstanceDeleted: err2 message is 'Instance not found'")
+				return true, nil
+			}
 			log.Fatalf("Error: Wait GetInstanceWithContext: response = %v, err = %v", response, err2)
 			return false, err2
 		}

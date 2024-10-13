@@ -20,6 +20,7 @@ import (
 	"math"
 	"reflect"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/IBM/go-sdk-core/v5/core"
@@ -69,7 +70,7 @@ func initLBVPCService(options LoadBalancerOptions) (*vpcv1.VpcV1, error) {
 		Authenticator: authenticator,
 		URL:           "https://" + options.Region + ".iaas.cloud.ibm.com/v1",
 	})
-	log.Debugf("initVPCService: vpc.vpcSvc = %v", vpcSvc)
+	log.Debugf("initLBVPCService: vpcSvc = %v", vpcSvc)
 	if err != nil {
 		log.Fatalf("Error: vpcv1.NewVpcV1 returns %v", err)
 		return nil, err
@@ -268,7 +269,7 @@ func (lb *LoadBalancer) createLoadBalancer() error {
 			return err
 		}
 
-		getOptions = vpc.vpcSvc.NewGetLoadBalancerOptions(*lb.innerLb.ID)
+		getOptions = lb.vpcSvc.NewGetLoadBalancerOptions(*lb.innerLb.ID)
 
 		updatedLb, response, err = lb.vpcSvc.GetLoadBalancer(getOptions)
 		if err != nil {
@@ -279,10 +280,6 @@ func (lb *LoadBalancer) createLoadBalancer() error {
 		log.Debugf("createLoadBalancer: updatedLb.Pools     = %+v", updatedLb.Pools)
 		log.Debugf("createLoadBalancer: len(updatedLb.Listeners) = %d", len(updatedLb.Listeners))
 		log.Debugf("createLoadBalancer: len(updatedLb.Pools)     = %d", len(updatedLb.Pools))
-
-		// func (vpc *VpcV1) CreateLoadBalancerListenerWithContext(ctx context.Context, createLoadBalancerListenerOptions *CreateLoadBalancerListenerOptions) (result *LoadBalancerListener, response *core.DetailedResponse, err error)
-
-		// func (vpc *VpcV1) CreateLoadBalancerPoolWithContext(ctx context.Context, createLoadBalancerPoolOptions *CreateLoadBalancerPoolOptions) (result *LoadBalancerPool, response *core.DetailedResponse, err error)
 	}
 	if lb.innerLb == nil {
 		return fmt.Errorf("Error: createLoadBalancer has a nil LoadBalancer!")
@@ -303,18 +300,21 @@ func (lb *LoadBalancer) waitForLoadBalancer(lbId string) error {
 		err error
 	)
 
-	getOptions = vpc.vpcSvc.NewGetLoadBalancerOptions(lbId)
+	getOptions = lb.vpcSvc.NewGetLoadBalancerOptions(lbId)
 
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
-		Cap:      leftInContext(vpc.ctx),
+		Cap:      leftInContext(lb.ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(vpc.ctx, backoff, func(context.Context) (bool, error) {
+	err = wait.ExponentialBackoffWithContext(lb.ctx, backoff, func(context.Context) (bool, error) {
 		var err2 error
 
 		foundLb, response, err2 = lb.vpcSvc.GetLoadBalancer(getOptions)
 		if err2 != nil {
+			if strings.Contains(err2.Error(), fmt.Sprintf("The load balancer with ID '%s' cannot be found.", lbId)) {
+				return true, nil
+			}
 			log.Fatalf("Error: Wait GetLoadBalancer: response = %v, err = %v", response, err2)
 			return false, err2
 		}
@@ -385,7 +385,7 @@ func (lb *LoadBalancer) AddLoadBalancerPool(name string, port int64, address str
 		return fmt.Errorf("Error: AddLoadBalancerPool has a nil LoadBalancer!")
 	}
 
-	getOptions = vpc.vpcSvc.NewGetLoadBalancerOptions(*lb.innerLb.ID)
+	getOptions = lb.vpcSvc.NewGetLoadBalancerOptions(*lb.innerLb.ID)
 	currentLb, response, err = lb.vpcSvc.GetLoadBalancer(getOptions)
 	if err != nil {
 		log.Fatalf("Error: GetLoadBalancer returns %v", err)
@@ -407,7 +407,7 @@ func (lb *LoadBalancer) AddLoadBalancerPool(name string, port int64, address str
 		// Create a pool first!
 		log.Debugf("AddLoadBalancerPool: Creating a pool...")
 
-		createLBPOptions = vpc.vpcSvc.NewCreateLoadBalancerPoolOptions(
+		createLBPOptions = lb.vpcSvc.NewCreateLoadBalancerPoolOptions(
 			*lb.innerLb.ID,
 			vpcv1.CreateLoadBalancerPoolOptionsAlgorithmRoundRobinConst,
 			&vpcv1.LoadBalancerPoolHealthMonitorPrototype{
@@ -433,7 +433,7 @@ func (lb *LoadBalancer) AddLoadBalancerPool(name string, port int64, address str
 			return err
 		}
 
-		getOptions = vpc.vpcSvc.NewGetLoadBalancerOptions(*lb.innerLb.ID)
+		getOptions = lb.vpcSvc.NewGetLoadBalancerOptions(*lb.innerLb.ID)
 		currentLb, response, err = lb.vpcSvc.GetLoadBalancer(getOptions)
 		if err != nil {
 			log.Fatalf("Error: GetLoadBalancer returns %v", err)
@@ -460,7 +460,7 @@ func (lb *LoadBalancer) AddLoadBalancerPool(name string, port int64, address str
 	}
 
 	// Does it already exist?
-	lbpmc, response, err = vpc.vpcSvc.ListLoadBalancerPoolMembersWithContext(
+	lbpmc, response, err = lb.vpcSvc.ListLoadBalancerPoolMembersWithContext(
 		lb.ctx,
 		&vpcv1.ListLoadBalancerPoolMembersOptions{
 			LoadBalancerID: lb.innerLb.ID,
@@ -548,7 +548,7 @@ func (lb *LoadBalancer) AddLoadBalancerListener(name string, port int64, address
 		return fmt.Errorf("Error: AddLoadBalancerListener has a nil LoadBalancer!")
 	}
 
-	getOptions = vpc.vpcSvc.NewGetLoadBalancerOptions(*lb.innerLb.ID)
+	getOptions = lb.vpcSvc.NewGetLoadBalancerOptions(*lb.innerLb.ID)
 	currentLb, response, err = lb.vpcSvc.GetLoadBalancer(getOptions)
 	if err != nil {
 		log.Fatalf("Error: GetLoadBalancer returns %v", err)
@@ -573,9 +573,9 @@ func (lb *LoadBalancer) AddLoadBalancerListener(name string, port int64, address
 		return fmt.Errorf("Error: AddLoadBalancerListener has a empty lbpID!")
 	}
 
-	optionsLBL = vpc.vpcSvc.NewListLoadBalancerListenersOptions(*lb.innerLb.ID)
+	optionsLBL = lb.vpcSvc.NewListLoadBalancerListenersOptions(*lb.innerLb.ID)
 
-	lblc, response, err = vpc.vpcSvc.ListLoadBalancerListenersWithContext(lb.ctx, optionsLBL)
+	lblc, response, err = lb.vpcSvc.ListLoadBalancerListenersWithContext(lb.ctx, optionsLBL)
 	if err != nil {
 		log.Fatalf("Error: ListLoadBalancerListenersWithContext returns response = %v, err = %v", response, err)
 		return err
@@ -591,7 +591,7 @@ func (lb *LoadBalancer) AddLoadBalancerListener(name string, port int64, address
 
 	log.Debugf("AddLoadBalancerListener: Creating a listener...")
 
-	createLBLOptions = vpc.vpcSvc.NewCreateLoadBalancerListenerOptions(
+	createLBLOptions = lb.vpcSvc.NewCreateLoadBalancerListenerOptions(
 		*lb.innerLb.ID,
 		vpcv1.CreateLoadBalancerListenerOptionsProtocolTCPConst)
 	createLBLOptions.SetDefaultPool(
@@ -619,8 +619,30 @@ func (lb *LoadBalancer) AddLoadBalancerListener(name string, port int64, address
 func (lb *LoadBalancer) deleteLoadBalancer() error {
 
 	var (
+		deleteOptions *vpcv1.DeleteLoadBalancerOptions
+		response      *core.DetailedResponse
 		err error
 	)
+
+	if lb.innerLb == nil {
+		return nil
+	}
+
+	deleteOptions = lb.vpcSvc.NewDeleteLoadBalancerOptions(*lb.innerLb.ID)
+
+	response, err = lb.vpcSvc.DeleteLoadBalancerWithContext(lb.ctx, deleteOptions)
+	if err != nil {
+		log.Fatalf("Error: DeleteLoadBalancerWithContext returns response = %v, err = %v", response, err)
+		return err
+	}
+
+	err = lb.waitForLoadBalancer(*lb.innerLb.ID)
+	if err != nil {
+		log.Fatalf("Error: waitForLoadBalancer returns %v", err)
+		return err
+	}
+
+	lb.innerLb = nil
 
 	return err
 }

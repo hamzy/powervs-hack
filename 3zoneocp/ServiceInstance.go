@@ -735,6 +735,26 @@ func (si *ServiceInstance) deleteServiceInstance() error {
 		si.innerNetwork = nil
 	}
 
+	if si.dhcpClient == nil {
+		return fmt.Errorf("Error: deleteServiceInstance called on nil dhcpClient")
+	}
+	si.dhcpServer, err = si.findDhcpServer()
+	log.Debugf("deleteServiceInstance: dhcpServer = %+v", si.dhcpServer)
+	if err != nil {
+		return fmt.Errorf("Error: findDhcpServer returns %v", err)
+	}
+	if si.dhcpServer != nil {
+		err = si.dhcpClient.Delete(*si.dhcpServer.ID)
+		if err != nil {
+			return fmt.Errorf("Error: si.dhcpClient.Delete returns %v", err)
+		}
+		err = si.waitForDhcpServerDelete(*si.dhcpServer.ID)
+		if err != nil {
+			log.Fatalf("Error: waitForDhcpServerDelete returns %v", err)
+			return err
+		}
+	}
+
 	if si.imageClient == nil {
 		return fmt.Errorf("Error: deleteServiceInstance called on nil imageClient")
 	}
@@ -915,6 +935,8 @@ func (si *ServiceInstance) findSshKey() (*models.SSHKey, error) {
 	if si.keyClient == nil {
 		return nil, fmt.Errorf("Error: findSshKey has nil keyClient")
 	}
+
+	log.Debugf("findSshKey: si.sshKeyName = %s", si.sshKeyName)
 
 	keys, err = si.keyClient.GetAll()
 	if err != nil {
@@ -1205,9 +1227,9 @@ func (si *ServiceInstance) addDhcpServer() error {
 		// NOTE: Create returns a *models.DHCPServer but we store a *models.DHCPServerDetail
 		log.Debugf("addDhcpServer: dhcpServer = %+v", dhcpServer)
 
-		err = si.waitForDhcpServer(*dhcpServer.ID)
+		err = si.waitForDhcpServerCreate(*dhcpServer.ID)
 		if err != nil {
-			return fmt.Errorf("Error: waitForDhcpServer returns %v", err)
+			return fmt.Errorf("Error: waitForDhcpServerCreate returns %v", err)
 		}
 
 		si.dhcpServer, err = si.dhcpClient.Get(*dhcpServer.ID)
@@ -1228,6 +1250,8 @@ func (si *ServiceInstance) findDhcpServer() (*models.DHCPServerDetail, error) {
 		dhcpServerDetail *models.DHCPServerDetail
 		err              error
 	)
+
+	log.Debugf("addDhcpServer: findDhcpServer si.siName = %s", si.siName)
 
 	dhcpServers, err = si.dhcpClient.GetAll()
 	if err != nil {
@@ -1259,14 +1283,14 @@ func (si *ServiceInstance) findDhcpServer() (*models.DHCPServerDetail, error) {
 	return nil, nil
 }
 
-func (si *ServiceInstance) waitForDhcpServer(id string) error {
+func (si *ServiceInstance) waitForDhcpServerCreate(id string) error {
 
 	var (
 		err error
 	)
 
 	if si.innerSi == nil {
-		return fmt.Errorf("waitForDhcpServer innerSi is nil")
+		return fmt.Errorf("waitForDhcpServerCreate innerSi is nil")
 	}
 
 	backoff := wait.Backoff{
@@ -1286,18 +1310,63 @@ func (si *ServiceInstance) waitForDhcpServer(id string) error {
 			log.Fatalf("Error: Wait dhcpClient.Get: returns = %v", err2)
 			return false, err2
 		}
-		log.Debugf("waitForDhcpServer: Status = %s", *detail.Status)
+		log.Debugf("waitForDhcpServerCreate: Status = %s", *detail.Status)
 		switch *detail.Status {
 		case "ACTIVE":
 			return true, nil
 		case "BUILD":
 			return false, nil
 		default:
-			return true, fmt.Errorf("waitForDhcpServer: unknown state: %s", *detail.Status)
+			return true, fmt.Errorf("waitForDhcpServerCreate: unknown state: %s", *detail.Status)
 		}
 	})
 	if err != nil {
-		log.Fatalf("Error: waitForDhcpServer: ExponentialBackoffWithContext returns %v", err)
+		log.Fatalf("Error: waitForDhcpServerCreate: ExponentialBackoffWithContext returns %v", err)
+		return err
+	}
+
+	return nil
+}
+
+func (si *ServiceInstance) waitForDhcpServerDelete(id string) error {
+
+	var (
+		err error
+	)
+
+	if si.innerSi == nil {
+		return fmt.Errorf("waitForDhcpServerDelete innerSi is nil")
+	}
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(si.ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(si.ctx, backoff, func(context.Context) (bool, error) {
+		var (
+			detail *models.DHCPServerDetail
+
+			err2 error
+		)
+
+		detail, err2 = si.dhcpClient.Get(id)
+		if err2 != nil {
+			log.Fatalf("Error: Wait dhcpClient.Get: returns = %v", err2)
+			return false, err2
+		}
+		log.Debugf("waitForDhcpServerDelete: Status = %s", *detail.Status)
+		switch *detail.Status {
+		case "ACTIVE":
+			return false, nil
+		case "BUILD":
+			return false, nil
+		default:
+			return true, fmt.Errorf("waitForDhcpServerDelete: unknown state: %s", *detail.Status)
+		}
+	})
+	if err != nil {
+		log.Fatalf("Error: waitForDhcpServerDelete: ExponentialBackoffWithContext returns %v", err)
 		return err
 	}
 
