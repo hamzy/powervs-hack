@@ -41,11 +41,15 @@ const (
 
 	// $ ibmcloud catalog service cloud-object-storage --output json | jq -r '.[].children | .[] | select(.name=="standard") | .id'
 	// 744bfc56-d12c-4866-88d5-dac9139e0e5d
-	cosResourceID = "744bfc56-d12c-4866-88d5-dac9139e0e5d"
+	cosStandardResourceID = "744bfc56-d12c-4866-88d5-dac9139e0e5d"
+
+	// $ ibmcloud catalog service cloud-object-storage --output json | jq -r '.[].children | .[] | select(.name=="cos-one-rate-plan") | .id'
+	// 1e4e33e4-cfa6-4f12-9016-be594a6d5f87
+	cosOneRateResourceID = "1e4e33e4-cfa6-4f12-9016-be594a6d5f87"
 )
 
 type CloudObjectStorageOptions struct {
-	Mode Mode
+	Mode    Mode
 	ApiKey  string
 	Name    string
 	GroupID string
@@ -66,6 +70,8 @@ type CloudObjectStorage struct {
 	ctx context.Context
 
 	serviceEndpoint string
+
+	cosName string
 }
 
 func initCloudObjectStorageService(options CloudObjectStorageOptions) (*resourcecontrollerv2.ResourceControllerV2, error) {
@@ -95,12 +101,15 @@ func initCloudObjectStorageService(options CloudObjectStorageOptions) (*resource
 func NewCloudObjectStorage(cosOptions CloudObjectStorageOptions) (*CloudObjectStorage, error) {
 
 	var (
+		cosName         string
 		controllerSvc   *resourcecontrollerv2.ResourceControllerV2
 		ctx             context.Context
 		serviceEndpoint string
 		err             error
 	)
 	log.Debugf("NewCloudObjectStorage: cosOptions = %+v", cosOptions)
+
+	cosName = fmt.Sprintf("%s-cos", cosOptions.Name)
 
 	controllerSvc, err = initCloudObjectStorageService(cosOptions)
 	log.Debugf("NewCloudObjectStorage: controllerSvc = %+v", controllerSvc)
@@ -120,6 +129,7 @@ func NewCloudObjectStorage(cosOptions CloudObjectStorageOptions) (*CloudObjectSt
 		innerCos:        nil,
 		ctx:             ctx,
 		serviceEndpoint: serviceEndpoint,
+		cosName:         cosName,
 	}, nil
 }
 
@@ -196,10 +206,13 @@ func (cos *CloudObjectStorage) findCOS() (*resourcecontrollerv2.ResourceInstance
 		moreData = true
 	)
 
+	log.Debugf("findCOS: cos.cosName = %s", cos.cosName)
+
 	options = cos.controllerSvc.NewListResourceInstancesOptions()
 	options.Limit = &perPage
 	options.SetType("service_instance")
-	options.SetResourcePlanID(cosResourceID)
+//	options.SetResourcePlanID(cosStandardResourceID)
+//	options.SetResourcePlanID(cosOneRateResourceID)		// @BUG does not produce a list?
 
 	for moreData {
 		// https://github.com/IBM/platform-services-go-sdk/blob/main/resourcecontrollerv2/resource_controller_v2.go#L173
@@ -210,7 +223,7 @@ func (cos *CloudObjectStorage) findCOS() (*resourcecontrollerv2.ResourceInstance
 		log.Debugf("findCOS: RowsCount %v", *resources.RowsCount)
 
 		for _, instance := range resources.Resources {
-			if strings.Contains(*instance.Name, cos.options.Name) {
+			if strings.Contains(*instance.Name, cos.cosName) {
 				var (
 					getOptions *resourcecontrollerv2.GetResourceInstanceOptions
 					response   *core.DetailedResponse
@@ -370,10 +383,10 @@ func (cos *CloudObjectStorage) createCloudObjectStorage() error {
 
 	if cos.innerCos == nil {
 		createOptions = cos.controllerSvc.NewCreateResourceInstanceOptions(
-			cos.options.Name,
+			cos.cosName,
 			"global",
 			cos.options.GroupID,
-			cosResourceID,
+			cosStandardResourceID,
 		)
 		log.Debugf("createCloudObjectStorage: createOptions = %+v", createOptions)
 

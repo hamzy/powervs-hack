@@ -69,6 +69,7 @@ type ServiceInstanceOptions struct {
 	GroupID string
 	CIDR    string
 	SshKey  string
+	Number  int
 }
 
 type ServiceInstance struct {
@@ -84,9 +85,9 @@ type ServiceInstance struct {
 
 	networkName string
 
-	sshKeyName string
-
 	dhcpName string
+
+	sshKeyName string
 
 	pvmInstanceName string
 
@@ -213,9 +214,9 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 
 		networkName string
 
-		sshKeyName string
-
 		dhcpName string
+
+		sshKeyName string
 
 		pvmInstanceName string
 
@@ -230,10 +231,19 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 
 	log.Debugf("NewServiceInstance: siOptions = %+v", siOptions)
 
-	siName = fmt.Sprintf("%s-si", siOptions.Name)
+	// @HACK
+	switch siOptions.Number {
+	case 1:
+		siName = fmt.Sprintf("%s-power-iaas", siOptions.Name)
+	case 2:
+		siName = fmt.Sprintf("%s-power2-iaas", siOptions.Name)
+	case 3:
+		siName = fmt.Sprintf("%s-power3-iaas", siOptions.Name)
+	}
+
 	networkName = fmt.Sprintf("%s-si-network", siOptions.Name)
+	dhcpName = fmt.Sprintf("%s", siOptions.Name)
 	sshKeyName = fmt.Sprintf("%s-si-sshkey", siOptions.Name)
-	dhcpName = fmt.Sprintf("%s-si-dhcp", siOptions.Name)
 	pvmInstanceName = fmt.Sprintf("%s-si-instance", siOptions.Name)
 
 	controllerSvc, err = initServiceInstance(siOptions)
@@ -259,8 +269,8 @@ func NewServiceInstance(siOptions ServiceInstanceOptions) (*ServiceInstance, err
 		innerSi:         nil,
 		siName:          siName,
 		networkName:     networkName,
-		sshKeyName:      sshKeyName,
 		dhcpName:        dhcpName,
+		sshKeyName:      sshKeyName,
 		pvmInstanceName: pvmInstanceName,
 		resourceGroupID: resourceGroupID,
 	}, nil
@@ -358,6 +368,15 @@ func (si *ServiceInstance) GetDhcpServerID() (*string, error) {
 	}
 
 	return si.dhcpServer.Network.ID, nil
+}
+
+func (si *ServiceInstance) GetNumber() (int, error) {
+
+	if si.innerSi == nil {
+		return 0, fmt.Errorf("GetNumber innerSi is nil")
+	}
+
+	return si.options.Number, nil
 }
 
 func (si *ServiceInstance) findServiceInstance() (*resourcecontrollerv2.ResourceInstance, error) {
@@ -537,7 +556,7 @@ func (si *ServiceInstance) createServiceInstance() error {
 	}
 
 	importOptions = ImageImportOptions {
-		ImageName:           fmt.Sprintf("%s-rhcos", si.options.Name),
+		ImageName:           fmt.Sprintf("rhcos-%s", si.options.Name),
 		BucketName:          fmt.Sprintf("rhcos-powervs-images-%s", si.options.Region),
 		BucketAccess:        "public",
 		BucketImageFileName: "rhcos-417-94-202407010929-0-ppc64le-powervs.ova.gz",	// @TODO
@@ -1251,7 +1270,7 @@ func (si *ServiceInstance) findDhcpServer() (*models.DHCPServerDetail, error) {
 		err              error
 	)
 
-	log.Debugf("addDhcpServer: findDhcpServer si.siName = %s", si.siName)
+	log.Debugf("findDhcpServer: findDhcpServer si.dhcpName = %s", si.dhcpName)
 
 	dhcpServers, err = si.dhcpClient.GetAll()
 	if err != nil {
@@ -1267,7 +1286,7 @@ func (si *ServiceInstance) findDhcpServer() (*models.DHCPServerDetail, error) {
 			log.Debugf("findDhcpServer: SKIP %s nil(Network)", *dhcpServer.ID)
 			continue
 		}
-		if strings.Contains(*dhcpServer.Network.Name, si.siName) {
+		if strings.Contains(*dhcpServer.Network.Name, si.dhcpName) {
 			log.Debugf("findDhcpServer: FOUND %s %s", *dhcpServer.ID, *dhcpServer.Network.Name)
 
 			dhcpServerDetail, err = si.dhcpClient.Get(*dhcpServer.ID)

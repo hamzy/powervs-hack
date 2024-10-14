@@ -50,7 +50,7 @@ type TransitGateway struct {
 
 	innerTg *transitgatewayapisv1.TransitGateway
 
-	name string
+	tgName string
 }
 
 func initTransitGateway(options TransitGatewayOptions) (*transitgatewayapisv1.TransitGatewayApisV1, error) {
@@ -82,6 +82,8 @@ func initTransitGateway(options TransitGatewayOptions) (*transitgatewayapisv1.Tr
 func NewTransitGateway(tgOptions TransitGatewayOptions) (*TransitGateway, error) {
 
 	var (
+		tgName string
+
 		tgClient *transitgatewayapisv1.TransitGatewayApisV1
 
 		ctx context.Context
@@ -90,6 +92,8 @@ func NewTransitGateway(tgOptions TransitGatewayOptions) (*TransitGateway, error)
 	)
 
 	log.Debugf("NewTransitGateway: tgOptions = %+v", tgOptions)
+
+	tgName = fmt.Sprintf("%s-tg", tgOptions.Name)
 
 	tgClient, err = initTransitGateway(tgOptions)
 	if err != nil {
@@ -105,7 +109,7 @@ func NewTransitGateway(tgOptions TransitGatewayOptions) (*TransitGateway, error)
 		tgClient: tgClient,
 		ctx:      ctx,
 		innerTg:  nil,
-		name:     tgOptions.Name,
+		tgName:   tgName,
 	}, nil
 }
 
@@ -189,7 +193,7 @@ func (tg *TransitGateway) findTransitGateway() (*transitgatewayapisv1.TransitGat
 		}
 
 		for _, gateway = range gatewayCollection.TransitGateways {
-			if strings.Contains(*gateway.Name, tg.name) {
+			if strings.Contains(*gateway.Name, tg.tgName) {
 				var (
 					getOptions *transitgatewayapisv1.GetTransitGatewayOptions
 
@@ -253,7 +257,7 @@ func (tg *TransitGateway) createTransitGateway() error {
 		// https://raw.githubusercontent.com/IBM/networking-go-sdk/master/transitgatewayapisv1/transit_gateway_apis_v1.go
 		createTransitGatewayOptions = tg.tgClient.NewCreateTransitGatewayOptions(
 			tg.options.Region,
-			tg.options.Name,
+			tg.tgName,
 		)
 
 		tg.innerTg, response, err = tg.tgClient.CreateTransitGatewayWithContext(tg.ctx, createTransitGatewayOptions)

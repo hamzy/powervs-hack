@@ -47,6 +47,8 @@ type VPC struct {
 	ctx context.Context
 
 	securityGroupName string
+
+	vpcName string
 }
 
 type SubnetOptions struct {
@@ -94,12 +96,15 @@ func initVPCService(options VPCOptions) (*vpcv1.VpcV1, error) {
 func NewVPC(vpcOptions VPCOptions) (*VPC, error) {
 
 	var (
+		vpcName           string
 		vpcSvc            *vpcv1.VpcV1
 		ctx               context.Context
 		securityGroupName string
 		err               error
 	)
 	log.Debugf("NewVPC: vpcOptions = %+v", vpcOptions)
+
+	vpcName = fmt.Sprintf("vpc-%s", vpcOptions.Name)
 
 	vpcSvc, err = initVPCService(vpcOptions)
 	log.Debugf("NewVPC: vpcSvc = %v", vpcSvc)
@@ -119,6 +124,7 @@ func NewVPC(vpcOptions VPCOptions) (*VPC, error) {
 		innerVpc:          nil,
 		ctx:               ctx,
 		securityGroupName: securityGroupName,
+		vpcName:           vpcName,
 	}, nil
 }
 
@@ -199,7 +205,7 @@ func (vpc *VPC) createVPC() error {
 		// options.SetClassicAccess()
 		// options.SetDns()
 		options.SetAddressPrefixManagement("manual")
-		options.SetName(vpc.options.Name)
+		options.SetName(vpc.vpcName)
 		resourceGroupIdent.ID = ptr.To(vpc.options.GroupID)
 		options.SetResourceGroup(&resourceGroupIdent)
 
@@ -445,7 +451,7 @@ func (vpc *VPC) setSubnetPublicGateway(zone string) error {
 		return fmt.Errorf("setSubnetPublicGateway innerVpc is nil")
 	}
 
-	subnetName = fmt.Sprintf("%s-%s-subnet", vpc.options.Name, zone)
+	subnetName = fmt.Sprintf("%s-vpcsubnet-%s", vpc.options.Name, zone)
 	log.Debugf("setSubnetPublicGateway: subnetName = %s", subnetName)
 
 	publicGatewayName = fmt.Sprintf("%s-%s-pg", vpc.options.Name, zone)
@@ -644,7 +650,7 @@ func (vpc *VPC) findVPC() (*vpcv1.VPC, error) {
 		err error
 	)
 
-	log.Debugf("findVPC: name = %s", vpc.options.Name)
+	log.Debugf("findVPC: name = %s", vpc.vpcName)
 
 	options = vpc.vpcSvc.NewListVpcsOptions()
 	options.SetLimit(perPage)
@@ -657,7 +663,7 @@ func (vpc *VPC) findVPC() (*vpcv1.VPC, error) {
 		}
 
 		for _, currentVpc := range vpcs.Vpcs {
-			if strings.Contains(*currentVpc.Name, vpc.options.Name) {
+			if strings.Contains(*currentVpc.Name, vpc.vpcName) {
 				var (
 					getOptions *vpcv1.GetVPCOptions
 
@@ -1246,7 +1252,7 @@ func (vpc *VPC) createInstance(zone string) error {
 		return err
 	}
 
-	subnetName = fmt.Sprintf("%s-%s-subnet", vpc.options.Name, zone)
+	subnetName = fmt.Sprintf("%s-vpcsubnet-%s", vpc.options.Name, zone)
 
 	subnet, err = vpc.findSubnet(subnetName)
 	if err != nil {

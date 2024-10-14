@@ -85,7 +85,7 @@ func main() {
 		return fmt.Errorf(`must be one of "create" or "delete"`)
 	})
 	flag.Func("func", "Function to run", func(name string) error {
-		var allowedValues = []string{ "1zone", "3zone", "sno" }
+		var allowedValues = []string{ "1zone", "3zone", "addToZone" }
 		for _, funcName := range allowedValues {
 			if name == funcName {
 				functionName = funcName
@@ -138,13 +138,21 @@ func main() {
 			delete(zoneMap, "zone3")
 			err = createZone(defaults)
 			if err != nil {
-				log.Fatalf("Error: setup1zone returns %v", err)
+				log.Fatalf("Error: createZone returns %v", err)
 				panic(err)
 			}
 		case "3zone":
 			err = createZone(defaults)
 			if err != nil {
-				log.Fatalf("Error: setup3zone returns %v", err)
+				log.Fatalf("Error: createZone returns %v", err)
+				panic(err)
+			}
+		case "addToZone":
+			// 3 zones are predefined.  Delete one of them.
+			delete(zoneMap, "zone3")
+			err = addToZone(defaults)
+			if err != nil {
+				log.Fatalf("Error: addToZone returns %v", err)
 				panic(err)
 			}
 		}
@@ -156,13 +164,13 @@ func main() {
 			delete(zoneMap, "zone3")
 			err = deleteZone(defaults)
 			if err != nil {
-				log.Fatalf("Error: setup1zone returns %v", err)
+				log.Fatalf("Error: deleteZone returns %v", err)
 				panic(err)
 			}
 		case "3zone":
 			err = deleteZone(defaults)
 			if err != nil {
-				log.Fatalf("Error: setup3zone returns %v", err)
+				log.Fatalf("Error: deleteZone returns %v", err)
 				panic(err)
 			}
 		}
@@ -206,10 +214,10 @@ func createZone(defaults Defaults) error {
 		err               error
 	)
 
-	log.Debugf("setup1zone: zoneMap = %+v, len(zoneMap) = %d", zoneMap, len(zoneMap))
+	log.Debugf("createZone: zoneMap = %+v, len(zoneMap) = %d", zoneMap, len(zoneMap))
 	if len(zoneMap) != 1 {
-		log.Fatalf("Error: setup1zone len(zoneMap) != 1")
-		return fmt.Errorf("Error: setup1zone len(zoneMap) != 1")
+		log.Fatalf("Error: createZone len(zoneMap) != 1")
+		return fmt.Errorf("Error: createZone len(zoneMap) != 1")
 	}
 
 	instantiateCloudObjectStorage(ModeCreate, defaults)
@@ -219,17 +227,17 @@ func createZone(defaults Defaults) error {
 	instantiateVPC(ModeCreate, defaults)
 
 	siMap = make(map[string]*ServiceInstance)
-	log.Debugf("setup1zone: siMap = %+v", siMap)
+	log.Debugf("createZone: siMap = %+v", siMap)
 
 	for zone := range zoneMap {
-		log.Debugf("setup1zone: zone = %s", zone)
+		log.Debugf("createZone: zone = %s", zone)
 
 		instantiateServiceInstance(ModeCreate, defaults, zone)
 	}
 
 	if len(siMap) != 1 {
-		log.Fatalf("Error: setup1zone len(siMap) != 1")
-		err = fmt.Errorf("Error: setup1zone len(siMap) != 1")
+		log.Fatalf("Error: createZone len(siMap) != 1")
+		err = fmt.Errorf("Error: createZone len(siMap) != 1")
 		return err
 	}
 
@@ -268,14 +276,14 @@ func createZone(defaults Defaults) error {
 		log.Fatalf("Error: os.ReadFile bootstrap.ign returns %v", err)
 		return err
 	}
-	log.Debugf("setup1zone: bBootstrapIgn = %s", string(bBootstrapIgn))
+	log.Debugf("createZone: bBootstrapIgn = %s", string(bBootstrapIgn))
 
 	if false {
 		bootstrapUserData = base64.StdEncoding.EncodeToString(bBootstrapIgn)
 	} else {
 		bootstrapUserData = string(bBootstrapIgn)
 	}
-	log.Debugf("setup1zone: bootstrapUserData = %s", bootstrapUserData)
+	log.Debugf("createZone: bootstrapUserData = %s", bootstrapUserData)
 
 	// @TODO
 	bucket = "3zone-bootstrap.ign"
@@ -291,34 +299,34 @@ func createZone(defaults Defaults) error {
 		log.Fatalf("Error: cos.BucketKeyIgnition returns %v", err)
 		return err
 	}
-	log.Debugf("setup1zone: bBootstrapIgn = %s", string(bBootstrapIgn))
+	log.Debugf("createZone: bBootstrapIgn = %s", string(bBootstrapIgn))
 
 	bootstrapUserData = base64.StdEncoding.EncodeToString(bBootstrapIgn)
-	log.Debugf("setup1zone: bootstrapUserData = %s", bootstrapUserData)
+	log.Debugf("createZone: bootstrapUserData = %s", bootstrapUserData)
 
 	bootstrapInstance, err = createBoostrapPVM(ModeCreate, defaults, si, bootstrapUserData)
 	if err != nil {
 		log.Fatalf("Error: createBoostrapPVM returns %v", err)
 		return err
 	}
-	log.Debugf("setup1zone: bootstrapInstance = %+v", bootstrapInstance)
+	log.Debugf("createZone: bootstrapInstance = %+v", bootstrapInstance)
 
 	networkID, err = si.GetNetworkID()
 	if err != nil {
 		log.Fatalf("Error: GetNetworkID return %v", err)
 		return err
 	}
-	log.Debugf("setup1zone: networkID = %s", *networkID)
+	log.Debugf("createZone: networkID = %s", *networkID)
 
 	// models.PVMInstanceNetwork
 	for _, network := range bootstrapInstance.Networks {
-		log.Debugf("setup1zone: network.NetworkID = %s", network.NetworkID)
+		log.Debugf("createZone: network.NetworkID = %s", network.NetworkID)
 		if network.NetworkID == *networkID {
-			log.Debugf("setup1zone: MacAddress = %s", network.MacAddress)
+			log.Debugf("createZone: MacAddress = %s", network.MacAddress)
 			bootstrapMAC = network.MacAddress
 		}
 	}
-	log.Debugf("setup1zone: bootstrapMAC = %s", bootstrapMAC)
+	log.Debugf("createZone: bootstrapMAC = %s", bootstrapMAC)
 
 	// Create the master VMs
 	masterInstances = make([]*models.PVMInstance, 3)
@@ -338,18 +346,18 @@ func createZone(defaults Defaults) error {
 		log.Fatalf("Error: os.ReadFile master.ign returns %v", err)
 		return err
 	}
-	log.Debugf("setup1zone: bMasterIgn = %s", string(bMasterIgn))
+	log.Debugf("createZone: bMasterIgn = %s", string(bMasterIgn))
 
 	if false {
 		masterUserData = base64.StdEncoding.EncodeToString(bMasterIgn)
 	} else {
 		masterUserData = string(bMasterIgn)
 	}
-	log.Debugf("setup1zone: masterUserData = %s", masterUserData)
+	log.Debugf("createZone: masterUserData = %s", masterUserData)
 
 	// @TODO
-	bucket = "3zone-master.ign"
-	key = "node-master"
+	bucket = fmt.Sprintf("%s-bootstrap-ign", defaults.ClusterName)
+	key = "control-plane"
 	err = cos.CreateBucketFile(bucket, key, masterUserData)
 	if err != nil {
 		log.Fatalf("Error: cos.CreateBucketFile returns %v", err)
@@ -361,10 +369,10 @@ func createZone(defaults Defaults) error {
 		log.Fatalf("Error: cos.BucketKeyIgnition returns %v", err)
 		return err
 	}
-	log.Debugf("setup1zone: bMasterIgn = %s", string(bMasterIgn))
+	log.Debugf("createZone: bMasterIgn = %s", string(bMasterIgn))
 
 	masterUserData = base64.StdEncoding.EncodeToString(bMasterIgn)
-	log.Debugf("setup1zone: masterUserData = %s", masterUserData)
+	log.Debugf("createZone: masterUserData = %s", masterUserData)
 
 	for i := 1; i <= 3; i++ {
 		masterInstances[i-1], err = createMasterPVM(ModeCreate, defaults, si, masterUserData, i)
@@ -372,7 +380,7 @@ func createZone(defaults Defaults) error {
 			log.Fatalf("Error: createMasterPVM returns %v", err)
 			return err
 		}
-		log.Debugf("setup1zone: masterInstances[%d] = %+v", i, masterInstances[i-1])
+		log.Debugf("createZone: masterInstances[%d] = %+v", i, masterInstances[i-1])
 	}
 
 	networkID, err = si.GetNetworkID()
@@ -380,18 +388,18 @@ func createZone(defaults Defaults) error {
 		log.Fatalf("Error: GetNetworkID return %v", err)
 		return err
 	}
-	log.Debugf("setup1zone: networkID = %s", *networkID)
+	log.Debugf("createZone: networkID = %s", *networkID)
 
 	for i := 1; i <= 3; i++ {
 		// models.PVMInstanceNetwork
 		for _, network := range masterInstances[i-1].Networks {
-			log.Debugf("setup1zone: network.NetworkID = %s", network.NetworkID)
+			log.Debugf("createZone: network.NetworkID = %s", network.NetworkID)
 			if network.NetworkID == *networkID {
-				log.Debugf("setup1zone: MacAddress = %s", network.MacAddress)
+				log.Debugf("createZone: MacAddress = %s", network.MacAddress)
 				masterMACs[i-1] = network.MacAddress
 			}
 		}
-		log.Debugf("setup1zone: masterMACs[%d] = %s", i, masterMACs[i-1])
+		log.Debugf("createZone: masterMACs[%d] = %s", i, masterMACs[i-1])
 	}
 
 	for siKey := range siMap {
@@ -407,7 +415,7 @@ func createZone(defaults Defaults) error {
 				log.Fatalf("Error: si.GetInstanceIP returns %v", err)
 				return err
 			}
-			log.Debugf("setup1zone: ipAddress = %v", ipAddress)
+			log.Debugf("createZone: ipAddress = %v", ipAddress)
 		}
 
 		dhcpLeases, err = si.getDhcpLeases()
@@ -415,11 +423,11 @@ func createZone(defaults Defaults) error {
 			log.Fatalf("Error: getDhcpLeases returns %v", err)
 			return err
 		}
-		log.Debugf("setup1zone: len(dhcpLeases) = %d", len(dhcpLeases))
+		log.Debugf("createZone: len(dhcpLeases) = %d", len(dhcpLeases))
 
 		for _, dhcpLease = range dhcpLeases {
-			log.Debugf("setup1zone: dhcpLease.InstanceIP = %s", *dhcpLease.InstanceIP)
-			log.Debugf("setup1zone: dhcpLease.InstanceMacAddress = %v", *dhcpLease.InstanceMacAddress)
+			log.Debugf("createZone: dhcpLease.InstanceIP = %s", *dhcpLease.InstanceIP)
+			log.Debugf("createZone: dhcpLease.InstanceMacAddress = %v", *dhcpLease.InstanceMacAddress)
 			if bootstrapMAC == *dhcpLease.InstanceMacAddress {
 				bootstrapIP = *dhcpLease.InstanceIP
 			} else {
@@ -431,9 +439,9 @@ func createZone(defaults Defaults) error {
 			}
 		}
 
-		log.Debugf("setup1zone: bootstrapIP = %s", bootstrapIP)
+		log.Debugf("createZone: bootstrapIP = %s", bootstrapIP)
 		for i := 1; i <= 3; i++ {
-			log.Debugf("setup1zone: masterIPs[%d] = %s", i, masterIPs[i-1])
+			log.Debugf("createZone: masterIPs[%d] = %s", i, masterIPs[i-1])
 		}
 	}
 
@@ -492,19 +500,15 @@ func createZone(defaults Defaults) error {
 
 func deleteZone(defaults Defaults) error {
 
-	var (
-		err error
-	)
-
 	lbMap = make(map[string]*LoadBalancer)
 
 	instantiateLoadBalancers(ModeDelete, defaults)
 
 	siMap = make(map[string]*ServiceInstance)
-	log.Debugf("setup1zone: siMap = %+v", siMap)
+	log.Debugf("deleteZone: siMap = %+v", siMap)
 
 	for zone := range zoneMap {
-		log.Debugf("setup1zone: zone = %s", zone)
+		log.Debugf("deleteZone: zone = %s", zone)
 
 		instantiateServiceInstance(ModeDelete, defaults, zone)
 
@@ -517,7 +521,110 @@ func deleteZone(defaults Defaults) error {
 
 	instantiateVPC(ModeDelete, defaults)
 
-	return err
+	return nil
+}
+
+func addToZone(defaults Defaults) error {
+
+	type LBPoolPair struct {
+		Name string
+		Port int64
+	}
+
+	var (
+		bucket            string
+		key               string
+		bMasterIgn        []byte
+		masterUserData    string
+		masterInstances   []*models.PVMInstance
+		masterMACs        []string
+		masterIPs         []string
+		err               error
+	)
+
+	instantiateCloudObjectStorage(ModeCreate, defaults)
+
+	instantiateTransitGateway(ModeCreate, defaults)
+
+	instantiateVPC(ModeCreate, defaults)
+
+	siMap = make(map[string]*ServiceInstance)
+
+	for zoneKey, zoneValue := range zoneMap {
+		log.Debugf("addToZone: zoneKey = %s, zoneValue = %s", zoneKey, zoneValue)
+
+		instantiateServiceInstance(ModeCreate, defaults, zoneKey)
+	}
+	log.Debugf("addToZone: siMap = %+v", siMap)
+
+	createTransitGatewayConnections(ModeCreate, defaults)
+
+	for siKey := range siMap {
+		si := siMap[siKey]
+		if !si.Valid() {
+			continue
+		}
+
+		err = createTestPVM(ModeCreate, defaults, si)
+		if err != nil {
+			log.Fatalf("Error: createTestPVM returns %v", err)
+			return err
+		}
+	}
+
+	// Create the master VMs
+	masterInstances = make([]*models.PVMInstance, 3)
+	masterMACs = make([]string, 3)
+	masterIPs = make([]string, 3)
+
+	bucket = fmt.Sprintf("%s-bootstrap-ign", defaults.ClusterName)
+	key = fmt.Sprintf("control-plane/%s-master-%d", defaults.ClusterName, 2)
+
+	bMasterIgn, err = cos.BucketKeyIgnition(bucket, key)
+	if err != nil {
+		log.Fatalf("Error: cos.BucketKeyIgnition returns %v", err)
+		return err
+	}
+	log.Debugf("addToZone: bMasterIgn = %s", string(bMasterIgn))
+
+	masterUserData = base64.StdEncoding.EncodeToString(bMasterIgn)
+	log.Debugf("addToZone: masterUserData = %s", masterUserData)
+
+	for siKey := range siMap {
+		si := siMap[siKey]
+		if !si.Valid() {
+			continue
+		}
+
+		var siNumber int
+
+		siNumber, err = si.GetNumber()
+		if err != nil {
+			log.Fatalf("Error: si.GetNumber returns %v", err)
+			return err
+		}
+
+		log.Debugf("addToZone: siNumber = %d", siNumber)
+
+		masterInstances[siNumber-1], err = createMasterPVM(ModeCreate, defaults, si, masterUserData, siNumber)
+		if err != nil {
+			log.Fatalf("Error: createMasterPVM returns %v", err)
+			return err
+		}
+		log.Debugf("addToZone: masterInstances[%d] = %+v", siNumber, masterInstances[siNumber-1])
+	}
+
+	log.Debugf("addToZone: masterInstances = %v", masterInstances)
+	log.Debugf("addToZone: masterMACs      = %v", masterMACs)
+	log.Debugf("addToZone: masterIPs       = %v", masterIPs)
+
+/*
+	if true {
+		return nil, fmt.Errorf("HAMZY")
+	}
+*/
+
+	return nil
 }
 
 func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
@@ -762,7 +869,7 @@ func instantiateVPC(mode Mode, defaults Defaults) {
 		Mode:    mode,
 		ApiKey:  defaults.ApiKey,
 		Region:  defaults.Region,
-		Name:    "rdr-hamzy-3zone-vpc", // defaults.VPCS[zone]["pvs_workspace_name"],
+		Name:    defaults.ClusterName,
 		GroupID: defaults.GroupID,
 	}
 
@@ -799,7 +906,7 @@ func instantiateVPC(mode Mode, defaults Defaults) {
 			}
 
 			createSubnetOptions = SubnetOptions{
-				Name:    fmt.Sprintf("%s-%s-subnet", vpc.options.Name, rsv.VPCZoneName),
+				Name:    fmt.Sprintf("%s-vpcsubnet-%s", vpc.options.Name, rsv.VPCZoneName),
 				Zone:    rsv.VPCZoneName,
 				GroupID: defaults.GroupID,
 				CIDR:    defaults.VPCS[zone]["vpc_zone_cidr"],
@@ -890,7 +997,7 @@ func instantiateLoadBalancers(mode Mode, defaults Defaults) {
 		Mode:     mode,
 		ApiKey:   defaults.ApiKey,
 		Region:   defaults.Region,
-		Name:     "rdr-hamzy-3zone-loadbalancer",
+		Name:     defaults.ClusterName,
 		GroupID:  defaults.GroupID,
 		IsPublic: true,
 		Subnets:  subnets,
@@ -898,9 +1005,9 @@ func instantiateLoadBalancers(mode Mode, defaults Defaults) {
 
 	lb, err = NewLoadBalancer(lbOptions)
 	if err != nil {
-		log.Fatalf("Error: setup1zone NewLoadBalancer returns %v", err)
+		log.Fatalf("Error: instantiateLoadBalancers NewLoadBalancer returns %v", err)
 	}
-	log.Debugf("setup1zone: lb (public) = %+v", lb)
+	log.Debugf("instantiateLoadBalancers: lb (public) = %+v", lb)
 
 	iface = lb
 
@@ -915,9 +1022,9 @@ func instantiateLoadBalancers(mode Mode, defaults Defaults) {
 
 	lb, err = NewLoadBalancer(lbOptions)
 	if err != nil {
-		log.Fatalf("Error: setup1zone NewLoadBalancer returns %v", err)
+		log.Fatalf("Error: instantiateLoadBalancers NewLoadBalancer returns %v", err)
 	}
-	log.Debugf("setup1zone: lb (internal) = %+v", lb)
+	log.Debugf("instantiateLoadBalancers: lb (internal) = %+v", lb)
 
 	iface = lb
 
@@ -953,6 +1060,15 @@ func instantiateServiceInstance(mode Mode, defaults Defaults, zone string) {
 		CIDR:    defaults.VPCS[zone]["pvs_dc_cidr"],
 		SshKey:  defaults.SshKey,
 	}
+	// @HACK
+	switch zone {
+	case "zone1":
+		siOptions.Number = 1
+	case "zone2":
+		siOptions.Number = 2
+	case "zone3":
+		siOptions.Number = 3
+	}
 
 	si, err = NewServiceInstance(siOptions)
 	if err != nil {
@@ -979,7 +1095,7 @@ func instantiateTransitGateway(mode Mode, defaults Defaults) {
 	tgOptions = TransitGatewayOptions{
 		Mode:   mode,
 		ApiKey: defaults.ApiKey,
-		Name:   "rdr-hamzy-3zone-tg", // defaults.VPCS[zone]["pvs_workspace_name"],
+		Name:   defaults.ClusterName,
 		Region: defaults.Region,
 	}
 	tg, err = NewTransitGateway(tgOptions)
@@ -1038,7 +1154,7 @@ func instantiateCloudObjectStorage(mode Mode, defaults Defaults) {
 	cosOptions = CloudObjectStorageOptions{
 		Mode:    mode,
 		ApiKey:  defaults.ApiKey,
-		Name:    "rdr-hamzy-3zone-cos",
+		Name:    defaults.ClusterName,
 		GroupID: defaults.GroupID,
 		Region:  defaults.Region,
 	}

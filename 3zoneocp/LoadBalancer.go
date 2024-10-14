@@ -94,9 +94,9 @@ func NewLoadBalancer(lbOptions LoadBalancerOptions) (*LoadBalancer, error) {
 	log.Debugf("NewLoadBalancer: lbOptions = %+v", lbOptions)
 
 	if lbOptions.IsPublic {
-		lbName = fmt.Sprintf("%s", lbOptions.Name)
+		lbName = fmt.Sprintf("%s-loadbalancer", lbOptions.Name)
 	} else {
-		lbName = fmt.Sprintf("%s-int", lbOptions.Name)
+		lbName = fmt.Sprintf("%s-loadbalancer-int", lbOptions.Name)
 	}
 
 	vpcSvc, err = initLBVPCService(lbOptions)
