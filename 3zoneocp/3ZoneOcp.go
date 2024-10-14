@@ -21,6 +21,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -534,6 +535,7 @@ func addToZone(defaults Defaults) error {
 	var (
 		bucket            string
 		key               string
+		masterIgn         string
 		bMasterIgn        []byte
 		masterUserData    string
 		masterInstances   []*models.PVMInstance
@@ -572,23 +574,22 @@ func addToZone(defaults Defaults) error {
 		}
 	}
 
+	// Read the master ignition data
+	masterIgn, err = loadMasterFromJson()
+	if err != nil {
+		log.Fatalf("Error: loadMasterFromJson returns %v", err)
+		return err
+	}
+	log.Debugf("addToZone: masterIgn = %s", masterIgn)
+
+	if true {
+		return fmt.Errorf("HAMZY")
+	}
+
 	// Create the master VMs
 	masterInstances = make([]*models.PVMInstance, 3)
 	masterMACs = make([]string, 3)
 	masterIPs = make([]string, 3)
-
-	bucket = fmt.Sprintf("%s-bootstrap-ign", defaults.ClusterName)
-	key = fmt.Sprintf("control-plane/%s-master-%d", defaults.ClusterName, 2)
-
-	bMasterIgn, err = cos.BucketKeyIgnition(bucket, key)
-	if err != nil {
-		log.Fatalf("Error: cos.BucketKeyIgnition returns %v", err)
-		return err
-	}
-	log.Debugf("addToZone: bMasterIgn = %s", string(bMasterIgn))
-
-	masterUserData = base64.StdEncoding.EncodeToString(bMasterIgn)
-	log.Debugf("addToZone: masterUserData = %s", masterUserData)
 
 	for siKey := range siMap {
 		si := siMap[siKey]
@@ -605,6 +606,26 @@ func addToZone(defaults Defaults) error {
 		}
 
 		log.Debugf("addToZone: siNumber = %d", siNumber)
+
+		// Write to the COS bucket
+		bucket = fmt.Sprintf("%s-bootstrap-ign", defaults.ClusterName)
+		key = fmt.Sprintf("control-plane/%s-master-%d", defaults.ClusterName, siNumber)
+		// @TODO
+
+		// Get the initial ignition data
+		bMasterIgn, err = cos.BucketKeyIgnition(bucket, key)
+		if err != nil {
+			log.Fatalf("Error: cos.BucketKeyIgnition returns %v", err)
+			return err
+		}
+		log.Debugf("addToZone: bMasterIgn = %s", string(bMasterIgn))
+
+		masterUserData = base64.StdEncoding.EncodeToString(bMasterIgn)
+		log.Debugf("addToZone: masterUserData = %s", masterUserData)
+
+		if true {
+			return fmt.Errorf("HAMZY")
+		}
 
 		masterInstances[siNumber-1], err = createMasterPVM(ModeCreate, defaults, si, masterUserData, siNumber)
 		if err != nil {
@@ -625,6 +646,52 @@ func addToZone(defaults Defaults) error {
 */
 
 	return nil
+}
+
+func loadMasterFromJson() (string, error) {
+
+	var (
+		bMasterIgn []byte
+		data       map[string]interface{}
+		level1      map[string]interface{}
+		level2      map[string]interface{}
+		masterIgn  string
+		ok         bool
+		err        error
+	)
+
+	bMasterIgn, err = os.ReadFile("/home/OpenShift/git/hamzy-installer/ocp-test-dal10/.openshift_install_state.json")
+	if err != nil {
+		log.Fatalf("Error: os.ReadFile .openshift_install_state.json returns %v", err)
+		return "", err
+	}
+	// log.Debugf("addToZone: bMasterIgn = %s", string(bMasterIgn))
+
+	err = json.Unmarshal(bMasterIgn, &data)
+	if err != nil {
+		log.Fatalf("Error: json.Unmarshal returns %v", err)
+		return "", err
+	}
+	// log.Debugf("addToZone: data = %+v", data)
+
+	level1, ok = data["*machine.Master"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("Could not convert level1 *machine.Master")
+	}
+	// log.Debugf("addToZone: level1 = %+v", level1)
+
+	level2, ok = level1["File"].(map[string]interface{})
+	if !ok {
+		return "", fmt.Errorf("Could not convert level2 File")
+	}
+	// log.Debugf("addToZone: level2 = %+v", level2)
+
+	masterIgn, ok = level2["Data"].(string)
+	if !ok {
+		return "", fmt.Errorf("Could not convert level3 Data")
+	}
+
+	return masterIgn, nil
 }
 
 func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
