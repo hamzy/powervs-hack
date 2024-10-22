@@ -541,6 +541,9 @@ func addToZone(defaults Defaults) error {
 		masterInstances   []*models.PVMInstance
 		masterMACs        []string
 		masterIPs         []string
+		networkID         *string
+		dhcpLeases        []*models.DHCPServerLeases
+		dhcpLease         *models.DHCPServerLeases
 		err               error
 	)
 
@@ -582,10 +585,6 @@ func addToZone(defaults Defaults) error {
 	}
 	log.Debugf("addToZone: masterIgn = %s", masterIgn)
 
-	if true {
-		return fmt.Errorf("HAMZY")
-	}
-
 	// Create the master VMs
 	masterInstances = make([]*models.PVMInstance, 3)
 	masterMACs = make([]string, 3)
@@ -610,7 +609,12 @@ func addToZone(defaults Defaults) error {
 		// Write to the COS bucket
 		bucket = fmt.Sprintf("%s-bootstrap-ign", defaults.ClusterName)
 		key = fmt.Sprintf("control-plane/%s-master-%d", defaults.ClusterName, siNumber)
-		// @TODO
+
+		err = cos.CreateBucketFile(bucket, key, masterIgn)
+		if err != nil {
+			log.Fatalf("Error: cos.CreateBucketFile returns %v", err)
+			return err
+		}
 
 		// Get the initial ignition data
 		bMasterIgn, err = cos.BucketKeyIgnition(bucket, key)
@@ -622,22 +626,63 @@ func addToZone(defaults Defaults) error {
 
 		masterUserData = base64.StdEncoding.EncodeToString(bMasterIgn)
 		log.Debugf("addToZone: masterUserData = %s", masterUserData)
-
+/*
 		if true {
 			return fmt.Errorf("HAMZY")
 		}
-
+*/
 		masterInstances[siNumber-1], err = createMasterPVM(ModeCreate, defaults, si, masterUserData, siNumber)
 		if err != nil {
 			log.Fatalf("Error: createMasterPVM returns %v", err)
 			return err
 		}
 		log.Debugf("addToZone: masterInstances[%d] = %+v", siNumber, masterInstances[siNumber-1])
+
+		networkID, err = si.GetNetworkID()
+		if err != nil {
+			log.Fatalf("Error: GetNetworkID return %v", err)
+			return err
+		}
+		log.Debugf("addToZone: networkID = %s", *networkID)
+
+		// models.PVMInstanceNetwork
+		for _, network := range masterInstances[siNumber-1].Networks {
+			log.Debugf("addToZone: network.NetworkID = %s", network.NetworkID)
+			if network.NetworkID == *networkID {
+				log.Debugf("addToZone: MacAddress = %s", network.MacAddress)
+				masterMACs[siNumber-1] = network.MacAddress
+			}
+		}
+		log.Debugf("addToZone: masterMACs[%d] = %s", siNumber, masterMACs[siNumber-1])
 	}
 
-	log.Debugf("addToZone: masterInstances = %v", masterInstances)
-	log.Debugf("addToZone: masterMACs      = %v", masterMACs)
-	log.Debugf("addToZone: masterIPs       = %v", masterIPs)
+	for siKey := range siMap {
+		si := siMap[siKey]
+		if !si.Valid() {
+			continue
+		}
+
+		dhcpLeases, err = si.getDhcpLeases()
+		if err != nil {
+			log.Fatalf("Error: getDhcpLeases returns %v", err)
+			return err
+		}
+		log.Debugf("addToZone: len(dhcpLeases) = %d", len(dhcpLeases))
+
+		for _, dhcpLease = range dhcpLeases {
+			log.Debugf("addToZone: dhcpLease.InstanceIP = %s", *dhcpLease.InstanceIP)
+			log.Debugf("addToZone: dhcpLease.InstanceMacAddress = %v", *dhcpLease.InstanceMacAddress)
+			for i := 1; i <= 3; i++ {
+				if masterMACs[i-1] == *dhcpLease.InstanceMacAddress {
+					masterIPs[i-1] = *dhcpLease.InstanceIP
+				}
+			}
+		}
+	}
+
+	for i := 1; i <= 3; i++ {
+		log.Debugf("addToZone: masterIPs[%d] = %s", i, masterIPs[i-1])
+	}
 
 /*
 	if true {
@@ -651,13 +696,13 @@ func addToZone(defaults Defaults) error {
 func loadMasterFromJson() (string, error) {
 
 	var (
-		bMasterIgn []byte
-		data       map[string]interface{}
-		level1      map[string]interface{}
-		level2      map[string]interface{}
-		masterIgn  string
-		ok         bool
-		err        error
+		bMasterIgn      []byte
+		data            map[string]interface{}
+		level1          map[string]interface{}
+		level2          map[string]interface{}
+		base64MasterIgn string
+		ok              bool
+		err             error
 	)
 
 	bMasterIgn, err = os.ReadFile("/home/OpenShift/git/hamzy-installer/ocp-test-dal10/.openshift_install_state.json")
@@ -686,12 +731,17 @@ func loadMasterFromJson() (string, error) {
 	}
 	// log.Debugf("addToZone: level2 = %+v", level2)
 
-	masterIgn, ok = level2["Data"].(string)
+	base64MasterIgn, ok = level2["Data"].(string)
 	if !ok {
 		return "", fmt.Errorf("Could not convert level3 Data")
 	}
 
-	return masterIgn, nil
+	bMasterIgn, err = base64.StdEncoding.DecodeString(base64MasterIgn)
+	if err != nil {
+		return "", fmt.Errorf("Could not base64 DecodeString")
+	}
+
+	return string(bMasterIgn), nil
 }
 
 func createTestPVM(mode Mode, defaults Defaults, si *ServiceInstance) error {
@@ -851,7 +901,6 @@ func createBoostrapPVM(mode Mode, defaults Defaults, si *ServiceInstance, bootst
 func createMasterPVM(mode Mode, defaults Defaults, si *ServiceInstance, masterUserData string, number int) (*models.PVMInstance, error) {
 
 	var (
-		siName          string
 		pvmInstanceName string
 		networks        [1]models.PVMInstanceAddNetwork
 		createNetworks  [1]*models.PVMInstanceAddNetwork
@@ -861,13 +910,20 @@ func createMasterPVM(mode Mode, defaults Defaults, si *ServiceInstance, masterUs
 		err             error
 	)
 
-	siName, err = si.Name()
-	if err != nil {
-		log.Fatalf("Error: si.Name returns %v", err)
-		return nil, err
-	}
+	// @TODO testing, delete the true block
+	if false {
+		var siName string
 
-	pvmInstanceName = fmt.Sprintf("%s-master%d", siName, number)
+		siName, err = si.Name()
+		if err != nil {
+			log.Fatalf("Error: si.Name returns %v", err)
+			return nil, err
+		}
+
+		pvmInstanceName = fmt.Sprintf("%s-master%d", siName, number)
+	} else {
+		pvmInstanceName = fmt.Sprintf("%s-master-%d", defaults.ClusterName, number-1)
+	}
 	log.Debugf("createMasterPVM: pvmInstanceName = %s", pvmInstanceName)
 
 	instance, err = si.findPVMInstance(pvmInstanceName)

@@ -515,10 +515,10 @@ func (tg *TransitGateway) AddTransitGatewayConnection(crn string, networkType Tr
 		switch networkType {
 		case NETWORK_TYPE_PVS:
 			nt = transitgatewayapisv1.CreateTransitGatewayConnectionOptions_NetworkType_PowerVirtualServer
-			name = fmt.Sprintf("tg-pvs-connection-%d", pvsCount)
+			name = fmt.Sprintf("%s-pvs-con%d", tg.options.Name, pvsCount)
 		case NETWORK_TYPE_VPC:
 			nt = transitgatewayapisv1.CreateTransitGatewayConnectionOptions_NetworkType_Vpc
-			name = fmt.Sprintf("tg-vpc-connection-%d", vpcCount)
+			name = fmt.Sprintf("%s-vpc-conn%d", tg.options.Name, vpcCount)
 		default:
 			return fmt.Errorf("AddTransitGatewayConnection: unknown type: %d", networkType)
 		}
