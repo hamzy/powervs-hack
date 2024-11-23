@@ -30,8 +30,9 @@ import (
 	"github.com/IBM/go-sdk-core/v5/core"
 	"github.com/sirupsen/logrus"
 	"io"
-	"os"
 	gohttp "net/http"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -191,31 +192,153 @@ func createPiSession (ptrApiKey *string, ptrServiceName *string) (*ibmpisession.
 
 }
 
-func main() {
+func parse_ipi_zones(release string, region string) (map[string]string, error) {
 
-	var logMain *logrus.Logger = &logrus.Logger{
-		Out: os.Stderr,
-		Formatter: new(logrus.TextFormatter),
-		Level: logrus.DebugLevel,
+	var (
+		url               string
+		resp              *gohttp.Response
+		body              []byte
+		reAllRegions      *regexp.Regexp
+		reRegion          *regexp.Regexp
+		reSysTypes        *regexp.Regexp
+		matches           []string
+		allRegions        string
+		matchesRegion     []string
+		allMatchesSysType [][]string
+		currentZone       string
+		supportedTypes    map[string]string
+		err               error
+	)
+
+	url = fmt.Sprintf(
+		"https://raw.githubusercontent.com/openshift/installer/refs/heads/%s/pkg/types/powervs/powervs_regions.go",
+		release,
+	)
+
+	resp, err = gohttp.Get(url)
+	if err != nil {
+		if shouldDebug { log.Debugf("Get err = %v\n", err) }
+		return nil, fmt.Errorf("Error: Get of %s returned %v", url, err)
+	}
+	switch resp.StatusCode {
+	case gohttp.StatusOK:
+		// Everything Ok!
+	case gohttp.StatusNotFound:
+		return nil, fmt.Errorf("Error: Release %s does not exist!", release)
+	default:
+		if shouldDebug { log.Debugf("Get resp.StatusCode = %v\n", resp.StatusCode) }
+		return nil, fmt.Errorf("Error: Get of %s returned code %v", url, resp.StatusCode)
 	}
 
-	var ptrApiKey *string
-	var ptrServiceName *string
-	var ptrShouldDebug *string
+	if shouldDebug { log.Printf("resp = %v\n", resp) }
+
+	body, err = io.ReadAll(resp.Body)
+	defer resp.Body.Close()
+	if err != nil {
+		if shouldDebug { log.Debugf("ReadAll err = %v\n", err) }
+		return nil, fmt.Errorf("Error: io.ReadAll returned %v", err)
+	}
+
+	if shouldDebug { log.Printf("body = %v\n", string(body)) }
+
+	reAllRegions = regexp.MustCompile(`(?msU)^var Regions =.*^}$`)
+	reRegion     = regexp.MustCompile(`(?msU)"[^"]*": {.*\t},$`)
+	reSysTypes   = regexp.MustCompile(`SysTypes: *\[\]string{(.*)},`)
+
+	matches = reAllRegions.FindAllString(string(body), -1)
+
+	if len (matches) != 1 {
+		err := fmt.Errorf("Error: only expecting 1 match for matches!")
+		if shouldDebug { log.Printf("%v", err) }
+		return nil, err
+	}
+
+	allRegions = matches[0]
+
+	matchesRegion = reRegion.FindAllString(allRegions, -1)
+
+	for _, matchRegion := range matchesRegion {
+		if shouldDebug { log.Printf("matchRegion = %v", matchRegion) }
+
+		splitRegion := strings.Split(matchRegion, `"`)
+		if len(splitRegion) < 2 {
+			err := fmt.Errorf("Error: expecting more than 2 matches for matchRegion!")
+			if shouldDebug { log.Printf("%v", err) }
+			return nil, err
+		}
+		currentZone = splitRegion[1]
+		if shouldDebug { log.Printf("currentZone = %v", currentZone) }
+
+		if currentZone != region {
+			if shouldDebug { log.Printf("Skipping") }
+			continue
+		}
+
+		allMatchesSysType = reSysTypes.FindAllStringSubmatch(matchRegion, -1)
+		if shouldDebug { log.Printf("allMatchesSysType = %v", allMatchesSysType) }
+
+		if len(allMatchesSysType) != 1 {
+			err := fmt.Errorf("Error: only expecting 1 match for allMatchesSysType!")
+			if shouldDebug { log.Printf("%v", err) }
+			return nil, err
+		}
+		if len(allMatchesSysType[0]) != 2 {
+			err := fmt.Errorf("Error: only expecting 2 matches for allMatchesSysType[0]!")
+			if shouldDebug { log.Printf("%v", err) }
+			return nil, err
+		}
+
+		supportedTypes = make(map[string]string)
+
+		for _, dirtySysType := range strings.Split(allMatchesSysType[0][1], ",") {
+			sysType := strings.ReplaceAll(dirtySysType, ` `, "")
+			sysType = strings.ReplaceAll(sysType, `"`, "")
+			if shouldDebug { log.Printf("sysType = %v", sysType) }
+
+			supportedTypes[sysType] = "found"
+		}
+	}
+
+	if supportedTypes == nil {
+		err := fmt.Errorf("Error: region %s not found in table!", region)
+		if shouldDebug { log.Printf("%v", err) }
+		return nil, err
+	}
+
+	if shouldDebug { log.Printf("supportedTypes = %v", supportedTypes) }
+
+	return supportedTypes, nil
+}
+
+func main() {
+
+	var (
+		logMain *logrus.Logger = &logrus.Logger{
+			Out: os.Stderr,
+			Formatter: new(logrus.TextFormatter),
+			Level: logrus.DebugLevel,
+		}
+		out               io.Writer
+		ptrApiKey         *string
+		ptrServiceName    *string
+		ptrLimitTypes     *string
+		ptrZone           *string
+		ptrShouldDebug    *string
+		supportedTypes    map[string]string
+		piSession         *ibmpisession.IBMPISession
+		serviceGuid       string
+		maxCoresAvailable float64
+		poolType          string = "error"
+		err               error
+	 )
 
 	ptrApiKey = flag.String("apiKey", "", "Your IBM Cloud API key")
 	ptrServiceName = flag.String("serviceName", "", "The cloud service to use")
+	ptrLimitTypes = flag.String("limitTypes", "", "Limit the return to currently supported types")
+	ptrZone = flag.String("zone", "", "The zone to use")
 	ptrShouldDebug = flag.String("shouldDebug", "false", "Should output debug output")
 
 	flag.Parse()
-
-	if *ptrApiKey == "" {
-		logMain.Fatal("Error: No API key set, use --apiKey")
-	}
-
-	if *ptrServiceName == "" {
-		logMain.Fatal("Error: No cloud service set, use --serviceName")
-	}
 
 	switch strings.ToLower(*ptrShouldDebug) {
 	case "true":
@@ -225,8 +348,6 @@ func main() {
 	default:
 		logMain.Fatal("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
 	}
-
-	var out io.Writer
 
 	if shouldDebug {
 		out = os.Stderr
@@ -239,14 +360,35 @@ func main() {
 		Level: logrus.DebugLevel,
 	}
 
+	if *ptrApiKey == "" {
+		fmt.Println("Error: No API key set, use -apiKey")
+		os.Exit(1)
+	}
+
+	if *ptrServiceName == "" {
+		fmt.Println("Error: No cloud service set, use -serviceName")
+		os.Exit(1)
+	}
+
+	if *ptrLimitTypes == "" {
+		supportedTypes = make(map[string]string)
+	} else {
+		if *ptrZone == "" {
+			fmt.Println("Error: No zone set, use -zone")
+			os.Exit(1)
+		}
+
+		supportedTypes, err = parse_ipi_zones(*ptrLimitTypes, *ptrZone)
+		if err != nil {
+			fmt.Println(err)
+			os.Exit(1)
+		}
+	}
+
 	if shouldDebug { logMain.Printf("version = %v\n", version) }
 
 	ctx, cancel := context.WithTimeout(context.TODO(), 2*time.Minute)
 	defer cancel()
-
-	var piSession *ibmpisession.IBMPISession
-	var serviceGuid string
-	var err error
 
 	piSession, serviceGuid, err = createPiSession(ptrApiKey, ptrServiceName)
 	if err != nil {
@@ -262,12 +404,17 @@ func main() {
 	}
 	if shouldDebug { logMain.Printf("systemPools = %v\n", systemPools) }
 
-	var maxCoresAvailable float64
-	var poolType string = "error"
-
 	for _, systemPool := range systemPools {
 		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/system.go#L20
 		// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/system_pool.go#L20
+
+		_, foundType := supportedTypes[systemPool.Type]
+		if foundType {
+			if shouldDebug { logMain.Printf("found type = %v, continuing", systemPool.Type) }
+		} else {
+			if shouldDebug { logMain.Printf("didn't find type = %v, skipping!", systemPool.Type) }
+			continue
+		}
 
 		// Helpful debug statement to save typing
 		if shouldDebug {
