@@ -38,6 +38,29 @@ var (
 	log         *logrus.Logger
 )
 
+// ResourceType is the different types that can be selected by a tag.
+type ResourceType int
+
+const (
+	// ResourceUnknown Is an unmatched resource.
+	ResourceUnknown ResourceType = iota
+
+	// ResourceCOS Is a Cloud Object Storage resource.
+        ResourceCOS
+
+	// ResourceIAAS Is an Infrastructure As A Service resource (AKA PowerVS server).
+	ResourceIAAS
+
+	// ResourceGateway Is a Transit Gateway resource.
+	ResourceTransitGateway
+
+	// ResourceLoadBalancer Is a Load Balancer resource.
+	ResourceLoadBalancer
+
+	// ResourceVPC Is a Virtual Private Cloud resource.
+	ResourceVPC
+)
+
 func leftInContext(ctx context.Context) time.Duration {
 	deadline, ok := ctx.Deadline()
 	if !ok {
@@ -47,6 +70,39 @@ func leftInContext(ctx context.Context) time.Duration {
 	duration := time.Until(deadline)
 
 	return duration
+}
+
+/*
+** if Family == "resource_controller" AND Type == "resource-instance" AND CRN contains ":cloud-object-storage:"
+** if Family == "resource_controller" AND Type == "resource-instance" AND CRN contains ":power-iaas:"
+** if Family == "resource_controller" AND Type == "gateway"
+** if Family == "is" AND Type == "load-balancer"
+** if Family == "is" AND Type == "vpc"
+*/
+func determineResourceType (propertyFamily string, propertyName string, propertyType string, CRN string) ResourceType {
+
+	switch propertyFamily {
+	case "resource_controller":
+		switch propertyType {
+			case "resource-instance":
+				if strings.Contains(CRN, ":cloud-object-storage:") {
+					return ResourceCOS
+				} else if strings.Contains(CRN, ":power-iaas:") {
+					return ResourceIAAS
+				}
+			case "gateway":
+				return ResourceTransitGateway
+		}
+	case "is":
+		switch propertyType {
+			case "load-balancer":
+				return ResourceLoadBalancer
+			case "vpc":
+				return ResourceVPC
+		}
+	}
+
+	return ResourceUnknown
 }
 
 func main() {
@@ -161,20 +217,41 @@ func main() {
 		for _, item := range result.Items {
 			properties = item.GetProperties()
 
-//			fmt.Printf("%+v\n", item)
-			fmt.Printf("CRN:    %s\n", *item.CRN)
-			fmt.Printf("Family: %s\n", properties["family"])
-			fmt.Printf("Name:   %s\n", properties["name"])
-			fmt.Printf("Type:   %s\n", properties["type"])
-			fmt.Printf("\n")
+			var (
+				propertyFamily string
+				propertyName   string
+				propertyType   string
+				ok             bool
+				resourceType   ResourceType
+			)
 
-/*
-** if Family == "resource_controller" AND Type == "resource-instance" AND CRN contains ":cloud-object-storage:"
-** if Family == "resource_controller" AND Type == "resource-instance" AND CRN contains ":power-iaas:"
-** if Family == "resource_controller" AND Type == "gateway"
-** if Family == "is" AND Type == "load-balancer"
-** if Family == "is" AND Type == "vpc"
-*/
+			propertyFamily, ok = properties["family"].(string)
+			if !ok {
+				fmt.Printf("Error: %v is not a string?", properties["family"])
+				os.Exit(1)
+			}
+
+			propertyName, ok = properties["name"].(string)
+			if !ok {
+				fmt.Printf("Error: %v is not a string?", properties["name"])
+				os.Exit(1)
+			}
+
+			propertyType, ok = properties["type"].(string)
+			if !ok {
+				fmt.Printf("Error: %v is not a string?", properties["type"])
+				os.Exit(1)
+			}
+
+			resourceType = determineResourceType (propertyFamily, propertyName, propertyType, *item.CRN)
+
+//			fmt.Printf("%+v\n", item)
+			fmt.Printf("CRN:          %s\n", *item.CRN)
+			fmt.Printf("Family:       %s\n", properties["family"])
+			fmt.Printf("Name:         %s\n", properties["name"])
+			fmt.Printf("Type:         %s\n", properties["type"])
+			fmt.Printf("ResourceType: %d\n", resourceType)
+			fmt.Printf("\n")
 		}
 
 		moreData = int64(len(result.Items)) == perPage
