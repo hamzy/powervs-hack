@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +17,7 @@ import (
 
 	"k8s.io/utils/ptr"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	survey "github.com/AlecAivazis/survey/v2"
 	aacore "github.com/AlecAivazis/survey/v2/core"
@@ -102,7 +104,6 @@ func main() {
 	for i := range s1.Difference(s2) {
 		log.Printf("i = %+v\n", i)
 	}
-	return
 
 	infraID := "rdr-hamzy-test-dal10-lrzr7"
 	log.Debugf("infraID = %s", infraID)
@@ -126,9 +127,14 @@ func main() {
 	}
 	log.Debugf("NewClient returns %+v", client)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	log.Debugf("ctx = %v", ctx)
+
+	if err = client.SetVPCServiceURLForRegion(ctx, "us-south"); err != nil {
+		log.Errorf("SetVPCServiceURLForRegion returns %v", err)
+		return
+	}
 
 //	serviceInstanceNameToGUID(*ptrVPCId,
 //		client,
@@ -147,6 +153,20 @@ func main() {
 //	listSecurityGroupRules(ptrVPCId,
 //		client,
 //		ctx)
+
+//	createLoadBalancerPool(ptrVPCId,
+//		client,
+//		ctx,
+//		"additional-pool-22",
+//		22,
+//		"192.168.0.13")
+
+	addIPToLoadBalancerPool(ptrVPCId,
+		client,
+		ctx,
+		"additional-pool-22623",
+		22623,
+		"192.168.0.13")
 }
 
 func serviceInstanceNameToGUID(name string, client *Client, ctx context.Context) {
@@ -247,6 +267,28 @@ func listSecurityGroupRules(ptrVPCId *string, client *Client, ctx context.Contex
 			log.Debugf("listSecurityGroupRules: found = %v", found)
 		case "*vpcv1.SecurityGroupRuleSecurityGroupRuleProtocolIcmp":
 		}
+	}
+}
+
+func createLoadBalancerPool(lbID *string, client *Client, ctx context.Context, poolName string, port int64, ip string) {
+	var (
+		err         error
+	)
+
+	err = client.CreateLoadBalancerPool(ctx, *lbID, poolName, port, ip)
+	if err != nil {
+		log.Errorf("client.CreateLoadBalancerPool returns %v", err)
+	}
+}
+
+func addIPToLoadBalancerPool(lbID *string, client *Client, ctx context.Context, poolName string, port int64, ip string) {
+	var (
+		err         error
+	)
+
+	err = client.AddIPToLoadBalancerPool(ctx, *lbID, poolName, port, ip)
+	if err != nil {
+		log.Errorf("client.AddIPToLoadBalancerPool returns %v", err)
 	}
 }
 
@@ -453,12 +495,265 @@ func (c *Client) ListSecurityGroupRules(ctx context.Context, securityGroupID str
 	result, response, err = c.vpcAPI.ListSecurityGroupRulesWithContext(ctx, optionsLSGR)
 	if err != nil {
 		log.Debugf("ListSecurityGroupRules: result = %+v, response = %+v, err = %v", result, response, err)
+		return nil, err
 	}
 
 	return result, err
 }
 
 // 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------
+
+// CreateLoadBalancerPool creates a load balancer pool for the specified port and ip address.
+func (c *Client) CreateLoadBalancerPool(ctx context.Context, lbID string, poolName string, port int64, ip string) error {
+	var (
+		glbOptions   *vpcv1.GetLoadBalancerOptions
+		llbpOptions  *vpcv1.ListLoadBalancerPoolsOptions
+		llbpmOptions *vpcv1.ListLoadBalancerPoolMembersOptions
+		clbpOptions  *vpcv1.CreateLoadBalancerPoolOptions
+		clbpmOptions *vpcv1.CreateLoadBalancerPoolMemberOptions
+		clblOptions  *vpcv1.CreateLoadBalancerListenerOptions
+		lb           *vpcv1.LoadBalancer
+		lbPools      *vpcv1.LoadBalancerPoolCollection
+		lbMembers    *vpcv1.LoadBalancerPoolMemberCollection
+		lbPool       *vpcv1.LoadBalancerPool
+		lbpmtp       *vpcv1.LoadBalancerPoolMemberTargetPrototypeIP
+		lbpm         *vpcv1.LoadBalancerPoolMember
+		lbl          *vpcv1.LoadBalancerListener
+		response     *core.DetailedResponse
+		err          error
+	)
+
+	// Make sure the load balancer exists
+	glbOptions = c.vpcAPI.NewGetLoadBalancerOptions(lbID)
+
+	lb, response, err = c.vpcAPI.GetLoadBalancerWithContext(ctx, glbOptions)
+	if err != nil {
+		log.Errorf("CreateLoadBalancerPool: GLBWC lb = %+v, response = %+v, err = %v", lb, response, err)
+		return err
+	}
+	log.Debugf("CreateLoadBalancerPool: GLBWC lb = %+v", lb)
+
+	// Query the existing load balancer pools
+	llbpOptions = c.vpcAPI.NewListLoadBalancerPoolsOptions(lbID)
+
+	lbPools, response, err = c.vpcAPI.ListLoadBalancerPoolsWithContext(ctx, llbpOptions)
+	if err != nil {
+		log.Errorf("CreateLoadBalancerPool: LLBPWC lbPools = %+v, response = %+v, err = %v", lbPools, response, err)
+		return err
+	}
+
+	// Is there an existing listener with that port?
+	for _, pool := range lbPools.Pools {
+		log.Debugf("CreateLoadBalancerPool: pool.ID = %v", *pool.ID)
+		log.Debugf("CreateLoadBalancerPool: pool.Name = %v", *pool.Name)
+
+		llbpmOptions = c.vpcAPI.NewListLoadBalancerPoolMembersOptions(lbID, *pool.ID)
+
+		lbMembers, response, err = c.vpcAPI.ListLoadBalancerPoolMembersWithContext(ctx, llbpmOptions)
+		if err != nil {
+			return err
+		}
+
+		for _, member := range lbMembers.Members {
+			log.Debugf("CreateLoadBalancerPool: member.ID = %v", *member.ID)
+			log.Debugf("CreateLoadBalancerPool: member.Port = %v", *member.Port)
+
+			if *member.Port == port {
+				log.Debugf("CreateLoadBalancerPool: found matching port!")
+				return nil
+			}
+		}
+	}
+
+	log.Debugf("CreateLoadBalancerPool: Creating pool...")
+
+	lbpmtp, err = c.vpcAPI.NewLoadBalancerPoolMemberTargetPrototypeIP(ip)
+	if err != nil {
+		log.Errorf("CreateLoadBalancerPool: NLBPMTPI err = %v", err)
+		return err
+	}
+	log.Debugf("CreateLoadBalancerPool: lbpmtp = %+v", *lbpmtp)
+
+	clbpOptions = c.vpcAPI.NewCreateLoadBalancerPoolOptions(
+		lbID,
+		"round_robin",
+		&vpcv1.LoadBalancerPoolHealthMonitorPrototype{
+			Delay:      core.Int64Ptr(5),
+			MaxRetries: core.Int64Ptr(2),
+			Timeout:    core.Int64Ptr(2),
+			Type:       core.StringPtr("tcp"),
+		},
+		"tcp",
+	)
+	clbpOptions.SetName(poolName)
+
+	lbPool, response, err = c.vpcAPI.CreateLoadBalancerPoolWithContext(ctx, clbpOptions)
+	if err != nil {
+		log.Debugf("CreateLoadBalancerPool: CLBPWC lbPool = %+v, response = %+v, err = %v", lbPool, response, err)
+		return err
+	}
+	log.Debugf("CreateLoadBalancerPool: lbPool = %+v", lbPool)
+
+	clbpmOptions = c.vpcAPI.NewCreateLoadBalancerPoolMemberOptions(lbID, *lbPool.ID, port, lbpmtp)
+	log.Debugf("CreateLoadBalancerPool: clbpmOptions = %+v", clbpmOptions)
+
+	lbpm, response, err = c.vpcAPI.CreateLoadBalancerPoolMemberWithContext(ctx, clbpmOptions)
+	if err != nil {
+		log.Debugf("CreateLoadBalancerPool: CLBPMWC lbpm = %+v, response = %+v, err = %v", lbpm, response, err)
+		return err
+	}
+	log.Debugf("CreateLoadBalancerPool: CLBPMWC lbpm = %+v", lbpm)
+
+	clblOptions = c.vpcAPI.NewCreateLoadBalancerListenerOptions(lbID,
+		vpcv1.CreateLoadBalancerListenerOptionsProtocolTCPConst)
+	clblOptions.SetPort(port)
+	clblOptions.SetDefaultPool(&vpcv1.LoadBalancerPoolIdentity{
+		ID: lbPool.ID,
+	})
+	log.Debugf("CreateLoadBalancerPool: clblOptions = %+v", clblOptions)
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+		log.Debugf("CreateLoadBalancerPool: Trying CreateLoadBalancerListenerWithContext")
+		lbl, response, err = c.vpcAPI.CreateLoadBalancerListenerWithContext(ctx, clblOptions)
+		if response != nil && response.StatusCode == http.StatusConflict {
+			return false, nil
+		}
+		if err != nil {
+			log.Debugf("CreateLoadBalancerPool: CLBLWC lbl = %+v, response = %+v, err = %v", lbl, response, err)
+			return false, err
+		}
+		log.Debugf("CreateLoadBalancerPool: CLBLWC lbl = %+v", lbl)
+		return true, nil
+	})
+
+	return err
+}
+
+// 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------
+
+// AddIPToLoadBalancerPool adds a server to a load balancer pool for the specified port.
+func (c *Client) AddIPToLoadBalancerPool(ctx context.Context, lbID string, poolName string, port int64, ip string) error {
+	var (
+		glbOptions    *vpcv1.GetLoadBalancerOptions
+		llbpOptions   *vpcv1.ListLoadBalancerPoolsOptions
+		llbpmOptions  *vpcv1.ListLoadBalancerPoolMembersOptions
+		clbpmOptions  *vpcv1.CreateLoadBalancerPoolMemberOptions
+		lb            *vpcv1.LoadBalancer
+		lbPools       *vpcv1.LoadBalancerPoolCollection
+		lbPool        vpcv1.LoadBalancerPool
+		lbPoolMembers *vpcv1.LoadBalancerPoolMemberCollection
+		lbpmtp        *vpcv1.LoadBalancerPoolMemberTargetPrototypeIP
+		lbpm          *vpcv1.LoadBalancerPoolMember
+		response      *core.DetailedResponse
+		err           error
+	)
+
+	// Make sure the load balancer exists
+	glbOptions = c.vpcAPI.NewGetLoadBalancerOptions(lbID)
+
+	lb, response, err = c.vpcAPI.GetLoadBalancerWithContext(ctx, glbOptions)
+	if err != nil {
+		log.Errorf("AddIPToLoadBalancerPool: GLBWC lb = %+v, response = %+v, err = %v", lb, response, err)
+		return err
+	}
+	log.Debugf("AddIPToLoadBalancerPool: GLBWC lb = %+v", lb)
+
+	// Query the existing load balancer pools
+	llbpOptions = c.vpcAPI.NewListLoadBalancerPoolsOptions(lbID)
+
+	lbPools, response, err = c.vpcAPI.ListLoadBalancerPoolsWithContext(ctx, llbpOptions)
+	if err != nil {
+		log.Errorf("AddIPToLoadBalancerPool: LLBPWC lbPools = %+v, response = %+v, err = %v", lbPools, response, err)
+		return err
+	}
+
+	// Find the pool with the specified name
+	for _, pool := range lbPools.Pools {
+		log.Debugf("AddIPToLoadBalancerPool: pool.ID = %v", *pool.ID)
+		log.Debugf("AddIPToLoadBalancerPool: pool.Name = %v", *pool.Name)
+
+		if *pool.Name == poolName {
+			lbPool = pool
+			break
+		}
+	}
+	if lbPool.ID == nil {
+		return fmt.Errorf("could not find loadbalancer pool with name %s", poolName)
+	}
+
+	// Query the load balancer pool members
+	llbpmOptions = c.vpcAPI.NewListLoadBalancerPoolMembersOptions(lbID, *lbPool.ID)
+
+	lbPoolMembers, response, err = c.vpcAPI.ListLoadBalancerPoolMembersWithContext(ctx, llbpmOptions)
+	if err != nil {
+		log.Errorf("AddIPToLoadBalancerPool: LLBPMWC lbPoolMembers = %+v, response = %+v, err = %v",
+			lbPools,
+			response,
+			err)
+	}
+
+	// See if a member already exists with that IP
+	for _, poolMember := range lbPoolMembers.Members {
+		logrus.Debugf("AddIPToLoadBalancerPool: poolMember.ID = %s", *poolMember.ID)
+		switch pmt := poolMember.Target.(type) {
+		case *vpcv1.LoadBalancerPoolMemberTarget:
+			log.Debugf("AddIPToLoadBalancerPool: pmt.Address = %+v", *pmt.Address)
+			if ip == *pmt.Address {
+				log.Debugf("AddIPToLoadBalancerPool: found %s", ip)
+				return nil
+			}
+		case *vpcv1.LoadBalancerPoolMemberTargetIP:
+			log.Debugf("AddIPToLoadBalancerPool: pmt.Address = %+v", *pmt.Address)
+			if ip == *pmt.Address {
+				log.Debugf("AddIPToLoadBalancerPool: found %s", ip)
+				return nil
+			}
+		case *vpcv1.LoadBalancerPoolMemberTargetInstanceReference:
+			// No IP address, ignore
+		default:
+			log.Debugf("AddIPToLoadBalancerPool: unhandled type %T", poolMember.Target)
+		}
+	}
+
+	// Create a new member
+	lbpmtp, err = c.vpcAPI.NewLoadBalancerPoolMemberTargetPrototypeIP(ip)
+	if err != nil {
+		log.Errorf("AddIPToLoadBalancerPool: NLBPMTPI err = %v", err)
+		return err
+	}
+	log.Debugf("AddIPToLoadBalancerPool: lbpmtp = %+v", *lbpmtp)
+
+	// Add that member to the pool
+	clbpmOptions = c.vpcAPI.NewCreateLoadBalancerPoolMemberOptions(lbID, *lbPool.ID, port, lbpmtp)
+	log.Debugf("AddIPToLoadBalancerPool: clbpmOptions = %+v", clbpmOptions)
+
+	lbpm, response, err = c.vpcAPI.CreateLoadBalancerPoolMemberWithContext(ctx, clbpmOptions)
+	if err != nil {
+		log.Debugf("AddIPToLoadBalancerPool: CLBPMWC lbpm = %+v, response = %+v, err = %v", lbpm, response, err)
+		return err
+	}
+	log.Debugf("AddIPToLoadBalancerPool: CLBPMWC lbpm = %+v", lbpm)
+
+	return nil
+}
+
+// 8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------8<--------
+
+func leftInContext(ctx context.Context) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return math.MaxInt64
+	}
+
+	duration := time.Until(deadline)
+
+	return duration
+}
 
 // PublishingStrategy is a strategy for how various endpoints for the cluster are exposed.
 // +kubebuilder:validation:Enum="";External;Internal
@@ -966,6 +1261,20 @@ func (c *Client) loadSDKServices() error {
 		}
 	}
 
+	return nil
+}
+
+// SetVPCServiceURLForRegion will set the VPC Service URL to a specific IBM Cloud Region, in order to access Region scoped resources
+func (c *Client) SetVPCServiceURLForRegion(ctx context.Context, region string) error {
+	regionOptions := c.vpcAPI.NewGetRegionOptions(region)
+	vpcRegion, _, err := c.vpcAPI.GetRegionWithContext(ctx, regionOptions)
+	if err != nil {
+		return err
+	}
+	err = c.vpcAPI.SetServiceURL(fmt.Sprintf("%s/v1", *vpcRegion.Endpoint))
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
