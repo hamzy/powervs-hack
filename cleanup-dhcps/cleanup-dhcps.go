@@ -22,6 +22,7 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/golang-jwt/jwt"
 	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
 	"github.com/IBM-Cloud/bluemix-go"
 	"github.com/IBM-Cloud/bluemix-go/api/resource/resourcev2/controllerv2"
 	"github.com/IBM-Cloud/bluemix-go/authentication"
@@ -31,8 +32,10 @@ import (
 	"github.com/IBM-Cloud/power-go-client/clients/instance"
 	"github.com/IBM-Cloud/power-go-client/ibmpisession"
 	"github.com/IBM-Cloud/power-go-client/power/models"
+	"github.com/sirupsen/logrus"
+	"io"
 	"io/ioutil"
-	"log"
+	"os"
 	gohttp "net/http"
 	"net/url"
 	"regexp"
@@ -40,8 +43,16 @@ import (
 	"strings"
 )
 
-var shouldDebug = false
-var shouldDelete = false
+var (
+	shouldDebug  bool = false
+	shouldDelete bool = false
+	log          *logrus.Logger
+)
+
+const (
+	// resource ID for Power Systems Virtual Server in the Global catalog.
+	virtualServerResourceID = "f165dd34-3a40-423b-9d95-e90a23f724dd"
+)
 
 type PowerVSStruct struct {
 	APIKey         string `json:"APIKey"`
@@ -135,80 +146,171 @@ func fetchUserDetails(bxSession *bxsession.Session, generation int) (*User, erro
 		user.cloudName = "staging"
 	}
 	user.cloudType = "public"
-
 	user.generation = generation
+
 	return &user, nil
 }
 
-func getServiceGuid(ptrApiKey *string, ptrZone *string) (string, error) {
+func getServiceGuid(ptrApiKey *string, ptrServiceGUID *string, ptrServiceName *string) (string, error) {
 
-	var bxSession *bxsession.Session
-	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
-	var err error
-	var serviceGuid string = ""
-
-	bxSession, err = bxsession.New(&bluemix.Config{
-		BluemixAPIKey:         *ptrApiKey,
-		TokenProviderEndpoint: &tokenProviderEndpoint,
-		Debug:                 false,
-	})
-	if err != nil {
-		return "", fmt.Errorf("Error bxsession.New: %v", err)
-	}
-	if shouldDebug { log.Printf("bxSession = %+v\n", bxSession) }
-
-	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
-		DefaultHeader: gohttp.Header{
-			"User-Agent": []string{http.UserAgent()},
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
-	}
-	if shouldDebug { log.Printf("tokenRefresher = %+v\n", tokenRefresher) }
-	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
-	if err != nil {
-		return "", fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
-	}
-
-	ctrlv2, err := controllerv2.New(bxSession)
-	if err != nil {
-		return "", fmt.Errorf("Error controllerv2.New: %v", err)
-	}
-	if shouldDebug { log.Printf("ctrlv2 = %+v\n", ctrlv2) }
-
-	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
-	if err != nil {
-		return "", fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
-	}
-	if shouldDebug { log.Printf("resourceClientV2 = %+v\n", resourceClientV2) }
-
-	svcs, err := resourceClientV2.ListInstances(controllerv2.ServiceInstanceQuery{
-		Type: "service_instance",
-	})
-	if err != nil {
-		return "", fmt.Errorf("Error resourceClientV2.ListInstances: %v", err)
-	}
-
-	for _, svc := range svcs {
-		if shouldDebug {
-			log.Printf("Guid = %v\n", svc.Guid)
-			log.Printf("RegionID = %v\n", svc.RegionID)
-			log.Printf("Name = %v\n", svc.Name)
-			log.Printf("Crn = %v\n", svc.Crn)
+	var (
+		authenticator core.Authenticator = &core.IamAuthenticator{
+			ApiKey: *ptrApiKey,
 		}
-		if (ptrZone != nil) && (svc.RegionID == *ptrZone) {
-			serviceGuid = svc.Guid
-			break
-		}
+		controllerSvc         *resourcecontrollerv2.ResourceControllerV2
+		resourceInstance      *resourcecontrollerv2.ResourceInstance
+		err                   error
+	)
+
+	// Instantiate the service with an API key based IAM authenticator
+	controllerSvc, err = resourcecontrollerv2.NewResourceControllerV2(&resourcecontrollerv2.ResourceControllerV2Options{
+		Authenticator: authenticator,
+		ServiceName:   "cloud-object-storage",
+		URL:           "https://resource-controller.cloud.ibm.com",
+	})
+	if err != nil {
+		log.Fatalf("Error: resourcecontrollerv2.NewResourceControllerV2 returns %v", err)
+		return "", err
 	}
 
-	if serviceGuid == "" {
-		return "", fmt.Errorf("%s not found in list of service instances!\n", *ptrZone)
+	resourceInstance, err = findServiceInstance(controllerSvc, "", *ptrServiceGUID, *ptrServiceName)
+	if err != nil {
+		log.Fatalf("Error: findServiceInstance returns %v", err)
+		return "", err
+	}
+
+	if resourceInstance == nil {
+		if *ptrServiceGUID != "" {
+			return "", fmt.Errorf("%s not found in list of service instances!", *ptrServiceGUID)
+		} else {
+			return "", fmt.Errorf("%s not found in list of service instances!", *ptrServiceName)
+		}
 	} else {
-		return serviceGuid, nil
+		return *resourceInstance.GUID, nil
 	}
 
+}
+
+func findServiceInstance(controllerSvc *resourcecontrollerv2.ResourceControllerV2, resourceGroupID string, guid string, name string) (*resourcecontrollerv2.ResourceInstance, error) {
+
+	var (
+		options   *resourcecontrollerv2.ListResourceInstancesOptions
+		resources *resourcecontrollerv2.ResourceInstancesList
+		err       error
+		perPage   int64 = 64
+		moreData        = true
+		nextURL   *string
+	)
+
+	options = controllerSvc.NewListResourceInstancesOptions()
+	// options.SetType("resource_instance")
+	options.SetResourceGroupID(resourceGroupID)
+	options.SetResourcePlanID(virtualServerResourceID)
+	options.SetLimit(perPage)
+
+	for moreData {
+		if options.Start != nil {
+			if shouldDebug { log.Debugf("findServiceInstance: options = %+v, options.Limit = %v, options.Start = %v, options.ResourceGroupID = %v", options, *options.Limit, *options.Start, *options.ResourceGroupID) }
+		} else {
+			if shouldDebug { log.Debugf("findServiceInstance: options = %+v, options.Limit = %v, options.ResourceGroupID = %v", options, *options.Limit, *options.ResourceGroupID) }
+		}
+
+		resources, _, err = controllerSvc.ListResourceInstances(options)
+		if err != nil {
+			log.Fatalf("Error: ListResourceInstancesWithContext returns %v", err)
+			return nil, err
+		}
+
+		if shouldDebug { log.Debugf("findServiceInstance: resources.RowsCount = %v", *resources.RowsCount) }
+
+		for _, resource := range resources.Resources {
+			var (
+				getResourceOptions *resourcecontrollerv2.GetResourceInstanceOptions
+				resourceInstance   *resourcecontrollerv2.ResourceInstance
+				response           *core.DetailedResponse
+			)
+
+			getResourceOptions = controllerSvc.NewGetResourceInstanceOptions(*resource.ID)
+
+			resourceInstance, response, err = controllerSvc.GetResourceInstance(getResourceOptions)
+			if err != nil {
+				log.Fatalf("Error: GetResourceInstance returns %v", err)
+				return nil, err
+			}
+			if response != nil && response.StatusCode == gohttp.StatusNotFound {
+				if shouldDebug { log.Debugf("findServiceInstance: gohttp.StatusNotFound") }
+				continue
+			} else if response != nil && response.StatusCode == gohttp.StatusInternalServerError {
+				if shouldDebug { log.Debugf("findServiceInstance: gohttp.StatusInternalServerError") }
+				continue
+			}
+
+			if resourceInstance.Type == nil || resourceInstance.GUID == nil {
+				continue
+			}
+			if *resourceInstance.Type != "service_instance" && *resourceInstance.Type != "composite_instance" {
+				continue
+			}
+
+			if guid != "" && strings.Contains(*resource.GUID, guid) {
+				var (
+					getOptions *resourcecontrollerv2.GetResourceInstanceOptions
+
+					foundSi *resourcecontrollerv2.ResourceInstance
+				)
+
+				if shouldDebug { log.Debugf("listServiceInstances: FOUND GUID = %s", *resource.GUID) }
+
+				getOptions = controllerSvc.NewGetResourceInstanceOptions(*resource.ID)
+
+				foundSi, response, err = controllerSvc.GetResourceInstance(getOptions)
+				if err != nil {
+					log.Fatalf("Error: GetResourceInstanceWithContext: response = %v, err = %v", response, err)
+					return nil, err
+				}
+
+				return foundSi, nil
+			} else if name != "" && strings.Contains(*resource.Name, name) {
+				var (
+					getOptions *resourcecontrollerv2.GetResourceInstanceOptions
+
+					foundSi *resourcecontrollerv2.ResourceInstance
+				)
+
+				if shouldDebug { log.Debugf("listServiceInstances: FOUND Name = %s", *resource.Name) }
+
+				getOptions = controllerSvc.NewGetResourceInstanceOptions(*resource.ID)
+
+				foundSi, response, err = controllerSvc.GetResourceInstance(getOptions)
+				if err != nil {
+					log.Fatalf("Error: GetResourceInstanceWithContext: response = %v, err = %v", response, err)
+					return nil, err
+				}
+
+				return foundSi, nil
+			} else {
+				if shouldDebug { log.Debugf("listServiceInstances: SKIP Name = %s", *resource.Name) }
+			}
+		}
+
+		// Based on: https://cloud.ibm.com/apidocs/resource-controller/resource-controller?code=go#list-resource-instances
+		nextURL, err = core.GetQueryParam(resources.NextURL, "start")
+		if err != nil {
+			log.Fatalf("Error: GetQueryParam returns %v", err)
+			return nil, err
+		}
+		if nextURL == nil {
+			// log.Debugf("nextURL = nil")
+			options.SetStart("")
+		} else {
+			// log.Debugf("nextURL = %v", *nextURL)
+			options.SetStart(*nextURL)
+		}
+
+		moreData = *resources.RowsCount == perPage
+	}
+
+	return nil, nil
 }
 
 func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string) (*ibmpisession.IBMPISession, error) {
@@ -225,7 +327,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string) (*i
 	if err != nil {
 		return nil, fmt.Errorf("Error bxsession.New: %v", err)
 	}
-	if shouldDebug { log.Printf("bxSession = %+v\n", bxSession) }
+	if shouldDebug { log.Printf("bxSession = %+v", bxSession) }
 
 	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
 		DefaultHeader: gohttp.Header{
@@ -235,7 +337,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string) (*i
 	if err != nil {
 		return nil, fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
 	}
-	if shouldDebug { log.Printf("tokenRefresher = %+v\n", tokenRefresher) }
+	if shouldDebug { log.Printf("tokenRefresher = %+v", tokenRefresher) }
 	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
 	if err != nil {
 		return nil, fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
@@ -250,19 +352,19 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string) (*i
 	if err != nil {
 		return nil, fmt.Errorf("Error controllerv2.New: %v", err)
 	}
-	if shouldDebug { log.Printf("ctrlv2 = %+v\n", ctrlv2) }
+	if shouldDebug { log.Printf("ctrlv2 = %+v", ctrlv2) }
 
 	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
 	if err != nil {
 		return nil, fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
 	}
-	if shouldDebug { log.Printf("resourceClientV2 = %+v\n", resourceClientV2) }
+	if shouldDebug { log.Printf("resourceClientV2 = %+v", resourceClientV2) }
 
 	serviceInstance, err := resourceClientV2.GetInstance(serviceGuid)
 	if err != nil {
 		return nil, fmt.Errorf("Error resourceClientV2.GetInstance: %v", err)
 	}
-	if shouldDebug { log.Printf("serviceInstance = %+v\n", serviceInstance) }
+	if shouldDebug { log.Printf("serviceInstance = %+v", serviceInstance) }
 
 	var authenticator = &core.IamAuthenticator{
 			ApiKey: *ptrApiKey,
@@ -279,7 +381,7 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string) (*i
 	if err != nil {
 		return nil, fmt.Errorf("Error ibmpisession.New: %v", err)
 	}
-	if shouldDebug { log.Printf("piSession = %+v\n", piSession) }
+	if shouldDebug { log.Printf("piSession = %+v", piSession) }
 
 	return piSession, nil
 
@@ -287,23 +389,36 @@ func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string) (*i
 
 func main() {
 
-	var data *Metadata = nil
-	var err error
+	var (
+		logMain *logrus.Logger = &logrus.Logger{
+			Out: os.Stderr,
+			Formatter: new(logrus.TextFormatter),
+			Level: logrus.DebugLevel,
+		}
+		out               io.Writer
 
-	// CLI parameters:
-	var ptrMetadaFilename *string
-	var ptrApiKey *string
-	var ptrSearch *string
-	var ptrZone *string = nil
-	var ptrShouldDebug *string
-	var ptrShouldDelete *string
-	var needAPIKey = true
-	var needSearch = true
+		data *Metadata = nil
+		err  error
+
+		// CLI parameters:
+		ptrMetadaFilename *string
+		ptrApiKey         *string
+		ptrSearch         *string
+		ptrZone           *string = nil
+		ptrServiceGUID    *string = nil
+		ptrServiceName    *string = nil
+		ptrShouldDebug    *string
+		ptrShouldDelete   *string
+		needAPIKey        bool    = true
+		needSearch        bool    = true
+	)
 
 	ptrMetadaFilename = flag.String("metadata", "", "The filename containing cluster metadata")
 	ptrApiKey = flag.String("apiKey", "", "Your IBM Cloud API key")
 	ptrSearch = flag.String("search", "", "The search string to match for deletes")
 	ptrZone = flag.String("zone", "", "The zone to use")
+	ptrServiceGUID = flag.String("ServiceGUID", "", "The service instance GUID to use")
+	ptrServiceName = flag.String("ServiceName", "", "The service instance Name to use")
 	ptrShouldDebug = flag.String("shouldDebug", "false", "Should output debug output")
 	ptrShouldDelete = flag.String("shouldDelete", "false", "Should delete matching records")
 
@@ -315,7 +430,18 @@ func main() {
 	case "false":
 		shouldDebug = false
 	default:
-		log.Fatal("Error: shouldDebug is not true/false (%s)\n", *ptrShouldDebug)
+		logMain.Fatalf("Error: shouldDebug is not true/false (%s)", *ptrShouldDebug)
+	}
+
+	if shouldDebug {
+		out = os.Stderr
+	} else {
+		out = io.Discard
+	}
+	log = &logrus.Logger{
+		Out: out,
+		Formatter: new(logrus.TextFormatter),
+		Level: logrus.DebugLevel,
 	}
 
 	if *ptrMetadaFilename != "" {
@@ -338,17 +464,17 @@ func main() {
 
 		// Handle:
 		// {
-  		//   "clusterName": "rdr-hamzy-test",
-  		//   "clusterID": "ffbb8a77-1ae7-445b-83ad-44cae63a8679",
-  		//   "infraID": "rdr-hamzy-test-rwmtj",
-  		//   "powervs": {
-    		//     "APIKey": "blah",
-    		//     "BaseDomain": "scnl-ibm.com",
-    		//     "cisInstanceCRN": "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::",
-    		//     "region": "lon",
-    		//     "vpcRegion": "eu-gb",
-    		//     "zone": "lon04"
-  		//   }
+		//   "clusterName": "rdr-hamzy-test",
+		//   "clusterID": "ffbb8a77-1ae7-445b-83ad-44cae63a8679",
+		//   "infraID": "rdr-hamzy-test-rwmtj",
+		//   "powervs": {
+		//     "APIKey": "blah",
+		//     "BaseDomain": "scnl-ibm.com",
+		//     "cisInstanceCRN": "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::",
+		//     "region": "lon",
+		//     "vpcRegion": "eu-gb",
+		//     "zone": "lon04"
+		//   }
 		// }
 		// Handle:
 		// {
@@ -371,6 +497,7 @@ func main() {
 		needSearch = false
 
 		ptrZone = &data.PowerVS.Zone
+		// @TBD ptrServiceGUID ptrServiceName
 	}
 	if needAPIKey && *ptrApiKey == "" {
 		log.Fatal("Error: No API key set, use -apiKey")
@@ -384,29 +511,32 @@ func main() {
 	case "false":
 		shouldDelete = false
 	default:
-		log.Fatal("Error: shouldDelete is not true/false (%s)\n", *ptrShouldDelete)
+		log.Fatalf("Error: shouldDelete is not true/false (%s)", *ptrShouldDelete)
 	}
 
 	rSearch, _ := regexp.Compile(*ptrSearch)
 
-	var ctx context.Context
-	var piSession *ibmpisession.IBMPISession
-	var serviceGuid string
+	var (
+		ctx         context.Context
+		piSession   *ibmpisession.IBMPISession
+		serviceGuid string
+	)
 
-	serviceGuid, err = getServiceGuid(ptrApiKey, ptrZone)
+	serviceGuid, err = getServiceGuid(ptrApiKey, ptrServiceGUID, ptrServiceName)
 	if err != nil {
-		log.Fatal("Error: getServiceGuid: %v\n", err)
+		log.Fatalf("Error: getServiceGuid: %v", err)
 	}
+	if shouldDebug { log.Debugf("serviceGuid = %s", serviceGuid) }
 
 	piSession, err = createPiSession(ptrApiKey, serviceGuid, ptrZone)
 	if err != nil {
-		log.Fatal("Error: createPiSession: %v\n", err)
+		log.Fatalf("Error: createPiSession: %v", err)
 	}
 
 	var piDhcpClient *instance.IBMPIDhcpClient
 
 	piDhcpClient = instance.NewIBMPIDhcpClient(context.Background(), piSession, serviceGuid)
-	if shouldDebug { log.Printf("piDhcpClient = %+v\n", piDhcpClient) }
+	if shouldDebug { log.Printf("piDhcpClient = %+v", piDhcpClient) }
 
 	cleanupDHCPs(rSearch, piDhcpClient)
 
@@ -439,8 +569,13 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 	}
 
 	for _, dhcpServer = range dhcpServers {
-		log.Printf("Found: DHCP: %s\n", *dhcpServer.ID)
-		if shouldDebug { spew.Printf("dhcpServer = %v\n", dhcpServer) }
+		if dhcpServer.Network == nil {
+			fmt.Printf("Found: DHCP: %s\n", *dhcpServer.ID)
+		} else {
+			fmt.Printf("Found: DHCP: %s %s\n", *dhcpServer.ID, *dhcpServer.Network.Name)
+		}
+
+		if false { if shouldDebug { spew.Printf("dhcpServer = %v", dhcpServer) } }
 
 		if !rSearch.MatchString(*dhcpServer.ID) {
 			continue
@@ -452,7 +587,7 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 
 		err = piDhcpClient.Delete(*dhcpServer.ID)
 		if err != nil {
-			log.Fatalf("Failed to delete DHCP id %s: %v", *dhcpServerDetail.Network.ID, err)
+			log.Fatalf("Failed to delete DHCP id %s: %v", *dhcpServer.ID, err)
 		}
 
 		dhcpServerDetail, err = piDhcpClient.Get(*dhcpServer.ID)
@@ -460,7 +595,7 @@ func cleanupDHCPs (rSearch *regexp.Regexp, piDhcpClient *instance.IBMPIDhcpClien
 			log.Fatalf("Failed to get DHCP detail: %v", err)
 		}
 
-		if shouldDebug { spew.Printf("dhcpServerDetail =: %v\n", dhcpServerDetail) }
+		if false { if shouldDebug { spew.Printf("dhcpServerDetail =: %v", dhcpServerDetail) } }
 	}
 
 }
