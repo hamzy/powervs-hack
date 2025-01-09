@@ -167,6 +167,14 @@ func main() {
 			fmt.Printf("Name:   %s\n", properties["name"])
 			fmt.Printf("Type:   %s\n", properties["type"])
 			fmt.Printf("\n")
+
+/*
+** if Family == "resource_controller" AND Type == "resource-instance" AND CRN contains ":cloud-object-storage:"
+** if Family == "resource_controller" AND Type == "resource-instance" AND CRN contains ":power-iaas:"
+** if Family == "resource_controller" AND Type == "gateway"
+** if Family == "is" AND Type == "load-balancer"
+** if Family == "is" AND Type == "vpc"
+*/
 		}
 
 		moreData = int64(len(result.Items)) == perPage
