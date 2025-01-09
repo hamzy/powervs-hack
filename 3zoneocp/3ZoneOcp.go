@@ -149,8 +149,10 @@ func main() {
 				panic(err)
 			}
 		case "addToZone":
+/*
 			// 3 zones are predefined.  Delete one of them.
 			delete(zoneMap, "zone3")
+*/
 			err = addToZone(defaults)
 			if err != nil {
 				log.Fatalf("Error: addToZone returns %v", err)
@@ -564,17 +566,20 @@ func addToZone(defaults Defaults) error {
 
 	createTransitGatewayConnections(ModeCreate, defaults)
 
+	// Create a test VM in each Service Instance
 	for siKey := range siMap {
 		si := siMap[siKey]
 		if !si.Valid() {
 			continue
 		}
 
+/*
 		err = createTestPVM(ModeCreate, defaults, si)
 		if err != nil {
 			log.Fatalf("Error: createTestPVM returns %v", err)
 			return err
 		}
+*/
 	}
 
 	// Read the master ignition data
@@ -626,11 +631,7 @@ func addToZone(defaults Defaults) error {
 
 		masterUserData = base64.StdEncoding.EncodeToString(bMasterIgn)
 		log.Debugf("addToZone: masterUserData = %s", masterUserData)
-/*
-		if true {
-			return fmt.Errorf("HAMZY")
-		}
-*/
+
 		masterInstances[siNumber-1], err = createMasterPVM(ModeCreate, defaults, si, masterUserData, siNumber)
 		if err != nil {
 			log.Fatalf("Error: createMasterPVM returns %v", err)
@@ -656,6 +657,7 @@ func addToZone(defaults Defaults) error {
 		log.Debugf("addToZone: masterMACs[%d] = %s", siNumber, masterMACs[siNumber-1])
 	}
 
+	// Get the Master IP addresses
 	for siKey := range siMap {
 		si := siMap[siKey]
 		if !si.Valid() {
@@ -680,6 +682,7 @@ func addToZone(defaults Defaults) error {
 		}
 	}
 
+	// Print them out
 	for i := 1; i <= 3; i++ {
 		log.Debugf("addToZone: masterIPs[%d] = %s", i, masterIPs[i-1])
 	}
@@ -1436,9 +1439,18 @@ platform:
     userID: {{.Email}}
     powervsResourceGroup: {{.ResourceGroup}}
     region: {{.PowerVSRegion}}
+{{if .VpcName }}
     vpcName: {{.VpcName}}
+{{else}}
+{{end}}
+{{if .Zone }}
     zone: {{.Zone}}
+{{else}}
+{{end}}
+{{if .ServiceInstanceGUID }}
     serviceInstanceGUID: {{.ServiceInstanceGUID}}
+{{else}}
+{{end}}
 featureSet: CustomNoUpgrade
 featureGates:
    - ClusterAPIInstall=true
