@@ -36,6 +36,7 @@ import (
 	gohttp "net/http"
 	"os"
 
+	"gopkg.in/yaml.v2"
 	"github.com/IBM-Cloud/bluemix-go"
 	"github.com/IBM-Cloud/bluemix-go/api/resource/resourcev2/controllerv2"
 	"github.com/IBM-Cloud/bluemix-go/authentication"
@@ -339,7 +340,16 @@ func (o *ClusterUninstaller) listTransitConnections(item cloudResource) (cloudRe
 			return nil, err
 		}
 		for _, transitConnection = range transitConnectionCollections.Connections {
+			if *transitConnection.TransitGateway.ID == item.id {
+				o.Logger.Debugf("listTransitConnections: ID MATCH %s", *transitConnection.TransitGateway.ID)
+			}
 			if !strings.Contains(*transitConnection.TransitGateway.Name, o.InfraID) {
+				if false {
+					bytes, _ := yaml.Marshal(transitConnection)
+					o.Logger.Debugf("listTransitConnections: SKIP %s", string(bytes))
+				} else {
+					o.Logger.Debugf("listTransitConnections: SKIP: %s, %s, %s", *transitConnection.ID, *transitConnection.Name, *transitConnection.TransitGateway.Name)
+				}
 				continue
 			}
 
@@ -709,6 +719,8 @@ func GetRegion(zone string) (region string, err error) {
 		region = "osa"
 	case strings.HasPrefix(zone, "mon"):
 		region = "mon"
+	case strings.HasPrefix(zone, "wdc"):
+		region = "wdc"
 	default:
 		return "", fmt.Errorf("region not found for the zone: %s", zone)
 	}
