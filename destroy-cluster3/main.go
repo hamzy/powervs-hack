@@ -4,6 +4,8 @@
 // $ (cd destroy-cluster3/; ./create-destroy-cluster3.sh > destroy-cluster3.go 2>&1)
 //
 // $ (cd destroy-cluster3/; echo "vet:"; go vet || exit 1; echo "build:"; go build *.go || exit 1)
+//
+// $ (cd destroy-cluster3/; echo "vet:"; go vet || exit 1; echo "build:"; go build *.go || exit 1; ./destroy-cluster3 --apiKey "${IBMCLOUD_API_KEY}" --metadata metadata.json --shouldDebug true -shouldDelete false)
 
 package main
 
@@ -47,10 +49,13 @@ import (
 	"time"
 )
 
-var Raw = "was not built correctly"
-var log *logrus.Logger = nil
-var shouldDelete = false
-var shouldDeleteDHCP = false
+var (
+	Raw = "was not built correctly"
+	log *logrus.Logger = nil
+	shouldDelete       = false
+	shouldDeleteDHCP   = false
+	shouldDebug        = false
+)
 
 //func leftInContext(ctx context.Context) time.Time {
 //	deadline, ok := ctx.Deadline()
@@ -1165,8 +1170,11 @@ type Metadata struct {
 }
 
 func readMetadata(fileName string) (*Metadata, error) {
-	var data = Metadata{}
-	var err error
+
+	var (
+		data = Metadata{}
+		err error
+	)
 
 	file, err := ioutil.ReadFile(fileName)
 	if err != nil {
@@ -1176,6 +1184,10 @@ func readMetadata(fileName string) (*Metadata, error) {
 	err = json.Unmarshal([]byte(file), &data)
 	if err != nil {
 		return &data, fmt.Errorf("Error: Unmarshal returns %v", err)
+	}
+	if shouldDebug {
+		log.Printf("data = %+v", data)
+		log.Printf("data.PowerVS = %+v", data.PowerVS)
 	}
 
 	return &data, nil
@@ -1309,8 +1321,6 @@ func main() {
 	var ptrZone *string			// In metadata.json
 	var ptrResourceGroupID *string
 
-	var shouldDebug = false
-
 	var needAPIKey = true
 	var needBaseDomain = true
 	var needServiceInstanceGUID = true
@@ -1363,20 +1373,20 @@ func main() {
 	}
 
 	if shouldDebug {
-		logMain.Printf("ptrMetadaFilename      = %v", *ptrMetadaFilename)
-		logMain.Printf("ptrShouldDebug         = %v", *ptrShouldDebug)
-		logMain.Printf("ptrShouldDelete        = %v", *ptrShouldDelete)
-		logMain.Printf("ptrShouldDeleteDHCP    = %v", *ptrShouldDeleteDHCP)
-		logMain.Printf("ptrApiKey              = %v", *ptrApiKey)
-		logMain.Printf("ptrBaseDomain          = %v", *ptrBaseDomain)
-		logMain.Printf("ptrServiceInstanceGUID = %v", *ptrServiceInstanceGUID)
-		logMain.Printf("ptrClusterName         = %v", *ptrClusterName)
-		logMain.Printf("ptrInfraID             = %v", *ptrInfraID)
-		logMain.Printf("ptrCISInstanceCRN      = %v", *ptrCISInstanceCRN)
-		logMain.Printf("ptrDNSInstanceCRN      = %v", *ptrDNSInstanceCRN)
-		logMain.Printf("ptrRegion              = %v", *ptrRegion)
-		logMain.Printf("ptrZone                = %v", *ptrZone)
-		logMain.Printf("ptrResourceGroupID     = %v", *ptrResourceGroupID)
+		log.Printf("ptrMetadaFilename      = %v", *ptrMetadaFilename)
+		log.Printf("ptrShouldDebug         = %v", *ptrShouldDebug)
+		log.Printf("ptrShouldDelete        = %v", *ptrShouldDelete)
+		log.Printf("ptrShouldDeleteDHCP    = %v", *ptrShouldDeleteDHCP)
+		log.Printf("ptrApiKey              = %v", *ptrApiKey)
+		log.Printf("ptrBaseDomain          = %v", *ptrBaseDomain)
+		log.Printf("ptrServiceInstanceGUID = %v", *ptrServiceInstanceGUID)
+		log.Printf("ptrClusterName         = %v", *ptrClusterName)
+		log.Printf("ptrInfraID             = %v", *ptrInfraID)
+		log.Printf("ptrCISInstanceCRN      = %v", *ptrCISInstanceCRN)
+		log.Printf("ptrDNSInstanceCRN      = %v", *ptrDNSInstanceCRN)
+		log.Printf("ptrRegion              = %v", *ptrRegion)
+		log.Printf("ptrZone                = %v", *ptrZone)
+		log.Printf("ptrResourceGroupID     = %v", *ptrResourceGroupID)
 	}
 
 	switch strings.ToLower(*ptrShouldDeleteDHCP) {
@@ -1385,23 +1395,30 @@ func main() {
 	case "false":
 		shouldDeleteDHCP = false
 	default:
-		logMain.Fatalf("Error: shouldDeleteDHCP is not true/false (%s)", *ptrShouldDeleteDHCP)
+		log.Fatalf("Error: shouldDeleteDHCP is not true/false (%s)", *ptrShouldDeleteDHCP)
 	}
 
 	if *ptrMetadaFilename != "" {
+		if shouldDebug { log.Printf("ptrMetadaFilename = %v", *ptrMetadaFilename) }
+
 		data, err = readMetadata(*ptrMetadaFilename)
 		if err != nil {
-			logMain.Fatal(err)
+			log.Fatal(err)
 		}
 
 		if shouldDebug {
-			logMain.Printf("ClusterName    = %v", data.ClusterName)
-			logMain.Printf("ClusterID      = %v", data.ClusterID)
-			logMain.Printf("InfraID        = %v", data.InfraID)
-			logMain.Printf("CISInstanceCRN = %v", data.PowerVS.CISInstanceCRN)
-			logMain.Printf("DNSInstanceCRN = %v", data.PowerVS.DNSInstanceCRN)
-			logMain.Printf("Region         = %v", data.PowerVS.Region)
-			logMain.Printf("Zone           = %v", data.PowerVS.Zone)
+			log.Printf("ClusterName          = %v", data.ClusterName)
+			log.Printf("ClusterID            = %v", data.ClusterID)
+			log.Printf("InfraID              = %v", data.InfraID)
+			log.Printf("BaseDomain           = %v", data.PowerVS.BaseDomain)
+			log.Printf("CISInstanceCRN       = %v", data.PowerVS.CISInstanceCRN)
+			log.Printf("DNSInstanceCRN       = %v", data.PowerVS.DNSInstanceCRN)
+			log.Printf("PowerVSResourceGroup = %v", data.PowerVS.PowerVSResourceGroup)
+			log.Printf("Region               = %v", data.PowerVS.Region)
+			log.Printf("VPCRegion            = %v", data.PowerVS.VPCRegion)
+			log.Printf("Zone                 = %v", data.PowerVS.Zone)
+			log.Printf("ServiceInstanceGUID  = %v", data.PowerVS.ServiceInstanceGUID)
+			log.Printf("TransitGatewayName   = %v", data.PowerVS.TransitGatewayName)
 		}
 
 		// Handle:
@@ -1416,35 +1433,47 @@ func main() {
 		//   }
 		// }
 
+		ptrClusterName = &data.ClusterName
+		needClusterName = false
+
 		ptrInfraID = &data.InfraID
 		needInfraID = false
 
-		ptrCISInstanceCRN= &data.PowerVS.CISInstanceCRN
+		ptrBaseDomain = &data.PowerVS.BaseDomain
+		needBaseDomain = false
+
+		ptrCISInstanceCRN = &data.PowerVS.CISInstanceCRN
 		needCISInstanceCRN = false
 
-		ptrDNSInstanceCRN= &data.PowerVS.DNSInstanceCRN
+		ptrDNSInstanceCRN = &data.PowerVS.DNSInstanceCRN
 		needDNSInstanceCRN = false
+
+		ptrResourceGroupID = &data.PowerVS.PowerVSResourceGroup
+		needResourceGroupID = false
 
 		ptrRegion = &data.PowerVS.Region
 		needRegion = false
 
 		ptrZone = &data.PowerVS.Zone
 		needZone = false
+
+		ptrServiceInstanceGUID = &data.PowerVS.ServiceInstanceGUID
+		needServiceInstanceGUID = false
 	}
 	if needAPIKey && *ptrApiKey == "" {
-		logMain.Fatal("Error: No API key set, use -apiKey")
+		log.Fatal("Error: No API key set, use -apiKey")
 	}
 	if needBaseDomain && *ptrBaseDomain == "" {
-		logMain.Fatal("Error: No base domain set, use -baseDomain")
+		log.Fatal("Error: No base domain set, use -baseDomain")
 	}
 	if needServiceInstanceGUID && *ptrServiceInstanceGUID == "" {
-		logMain.Fatal("Error: No service instance GUID set, use -serviceInstanceGUID")
+		log.Fatal("Error: No service instance GUID set, use -serviceInstanceGUID")
 	}
 	if needClusterName && *ptrClusterName == "" {
-		logMain.Fatal("Error: No cluster name set, use -clusterName")
+		log.Fatal("Error: No cluster name set, use -clusterName")
 	}
 	if needInfraID && *ptrInfraID == "" {
-		logMain.Fatal("Error: No Infra ID set, use -infraID")
+		log.Fatal("Error: No Infra ID set, use -infraID")
 	}
 	if *ptrCISInstanceCRN != "" {
 		needDNSInstanceCRN = false
@@ -1453,19 +1482,19 @@ func main() {
 		needCISInstanceCRN = false
 	}
 	if needCISInstanceCRN && *ptrCISInstanceCRN == "" {
-		logMain.Fatal("Error: No CISInstanceCRN set, use -CISInstanceCRN")
+		log.Fatal("Error: No CISInstanceCRN set, use -CISInstanceCRN")
 	}
 	if needDNSInstanceCRN && *ptrDNSInstanceCRN == "" {
-		logMain.Fatal("Error: No DNSInstanceCRN set, use -DNSInstanceCRN")
+		log.Fatal("Error: No DNSInstanceCRN set, use -DNSInstanceCRN")
 	}
 	if needRegion && *ptrRegion == "" {
-		logMain.Fatal("Error: No region set, use -region")
+		log.Fatal("Error: No region set, use -region")
 	}
 	if needZone && *ptrZone == "" {
-		logMain.Fatal("Error: No zone set, use -zone")
+		log.Fatal("Error: No zone set, use -zone")
 	}
 	if needResourceGroupID && *ptrResourceGroupID == "" {
-		logMain.Fatal("Error: No resource group ID set, use -resourceGroupID")
+		log.Fatal("Error: No resource group ID set, use -resourceGroupID")
 	}
 	switch strings.ToLower(*ptrShouldDelete) {
 	case "true":
@@ -1473,8 +1502,10 @@ func main() {
 	case "false":
 		shouldDelete = false
 	default:
-		logMain.Fatalf("Error: shouldDelete is not true/false (%s)", *ptrShouldDelete)
+		log.Fatalf("Error: shouldDelete is not true/false (%s)", *ptrShouldDelete)
 	}
+
+	os.Exit(1)
 
 	var clusterUninstaller *ClusterUninstaller
 
@@ -1490,13 +1521,13 @@ func main() {
 		*ptrZone,
 		*ptrResourceGroupID)
 	if err != nil {
-		logMain.Fatalf("Error New: %v", err)
+		log.Fatalf("Error New: %v", err)
 	}
-	if shouldDebug { logMain.Printf("clusterUninstaller = %+v", clusterUninstaller) }
+	if shouldDebug { log.Printf("clusterUninstaller = %+v", clusterUninstaller) }
 
 	err = clusterUninstaller.Run ()
 	if err != nil {
-		logMain.Fatalf("Error clusterUninstaller.Run: %v", err)
+		log.Fatalf("Error clusterUninstaller.Run: %v", err)
 	}
 
 }
