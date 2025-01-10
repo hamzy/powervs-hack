@@ -1,230 +1,23 @@
-//
-// (cd destroy-cluster2/; go build; ./destroy-cluster2 -apiKey "${IBMCLOUD_API_KEY}" -baseDomain "scnl-ibm.com" -clusterName "rdr-hamzy-test" -infraID "rdr-hamzy-test" -CISInstanceCRN $(ibmcloud cis instances --output json | jq -r '.[] | select (.name|test("'${CIS_INSTANCE}'")) | .crn') -region "${POWERVS_REGION}" -zone "${POWERVS_ZONE}" -serviceInstanceGUID $(ibmcloud resource service-instance ${SERVICE_INSTANCE} --output json | jq -r '.[].guid') -resourceGroupID "powervs-ipi-resource-group" -shouldDebug true -shouldDelete true
-//
-
 package main
 
 import (
 	"context"
-	"encoding/json"
-	"flag"
 	"fmt"
-	"github.com/golang-jwt/jwt"
-	"github.com/IBM-Cloud/bluemix-go"
-	"github.com/IBM-Cloud/bluemix-go/api/resource/resourcev2/controllerv2"
-	"github.com/IBM-Cloud/bluemix-go/authentication"
 	"github.com/IBM-Cloud/bluemix-go/crn"
-	"github.com/IBM-Cloud/bluemix-go/http"
-	bxmodels "github.com/IBM-Cloud/bluemix-go/models"
-	"github.com/IBM-Cloud/bluemix-go/rest"
-	bxsession "github.com/IBM-Cloud/bluemix-go/session"
-	"github.com/IBM-Cloud/power-go-client/clients/instance"
-	"github.com/IBM-Cloud/power-go-client/ibmpisession"
 	"github.com/IBM-Cloud/power-go-client/power/models"
 	"github.com/IBM/go-sdk-core/v5/core"
-	"github.com/IBM/networking-go-sdk/dnsrecordsv1"
-	"github.com/IBM/networking-go-sdk/dnszonesv1"
 	"github.com/IBM/networking-go-sdk/resourcerecordsv1"
-	"github.com/IBM/networking-go-sdk/zonesv1"
+	"github.com/IBM/networking-go-sdk/transitgatewayapisv1"
 	"github.com/IBM/platform-services-go-sdk/resourcecontrollerv2"
-	"github.com/IBM/platform-services-go-sdk/resourcemanagerv2"
 	"github.com/IBM/vpc-go-sdk/vpcv1"
-	"github.com/openshift/installer/pkg/version"
-	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
-	"io"
-	utilerrors "k8s.io/apimachinery/pkg/util/errors"
 	"k8s.io/apimachinery/pkg/util/wait"
-	"io/ioutil"
 	"math"
 	gohttp "net/http"
-	"net/url"
-	"os"
-	"reflect"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 )
-
-var log *logrus.Logger = nil
-var shouldDelete = false
-var shouldDeleteDHCP = false
-
-//func leftInContext(ctx context.Context) time.Time {
-//	deadline, ok := ctx.Deadline()
-//	if !ok {
-//		// https://stackoverflow.com/a/32620397
-//		return time.Unix(1<<63-62135596801, 999999999)
-//	}
-//
-//	duration := deadline.Sub(time.Now())
-//
-//	return time.Time{}.Add(duration)
-//}
-
-func leftInContext(ctx context.Context) time.Duration {
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return math.MaxInt64
-	}
-
-	duration := deadline.Sub(time.Now())
-
-//	log.Debugf("leftInContext: duration = %v", duration)
-
-	return duration
-}
-
-
-// listCloudConnections lists cloud connections in the cloud.
-func (o *ClusterUninstaller) listCloudConnections() (cloudResources, error) {
-	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connections.go#L20-L25
-	var cloudConnections *models.CloudConnections
-
-	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection.go#L20-L71
-	var cloudConnection *models.CloudConnection
-
-	// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job_reference.go#L18-L27
-	var jobReference *models.JobReference
-
-	var err error
-
-	o.Logger.Debugf("Listing Cloud Connections")
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	select {
-	case <-ctx.Done():
-		o.Logger.Debugf("listCloudConnections: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
-	default:
-	}
-
-	cloudConnections, err = o.cloudConnectionClient.GetAll()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list cloud connections")
-	}
-
-	var foundOne = false
-
-	result := []cloudResource{}
-	for _, cloudConnection = range cloudConnections.CloudConnections {
-		if strings.Contains(*cloudConnection.Name, o.InfraID) {
-			o.Logger.Debugf("listCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
-			foundOne = true
-
-			jobReference, err = o.cloudConnectionClient.Delete(*cloudConnection.CloudConnectionID)
-			if err != nil {
-				errors.Errorf("Failed to delete cloud connection (%s): %v", *cloudConnection.CloudConnectionID, err)
-			}
-
-			o.Logger.Debugf("listCloudConnections: jobReference.ID = %s", *jobReference.ID)
-
-			result = append(result, cloudResource{
-				key:      *jobReference.ID,
-				name:     *jobReference.ID,
-				status:   "",
-				typeName: jobTypeName,
-				id:       *jobReference.ID,
-			})
-		}
-	}
-	if !foundOne {
-		o.Logger.Debugf("listCloudConnections: NO matching cloud connections against: %s", o.InfraID)
-		for _, cloudConnection = range cloudConnections.CloudConnections {
-			o.Logger.Debugf("listCloudConnections: only found cloud connection: %s", *cloudConnection.Name)
-		}
-	}
-
-	return cloudResources{}.insert(result...), nil
-}
-
-// destroyCloudConnections removes all cloud connections that have a name prefixed
-// with the cluster's infra ID.
-func (o *ClusterUninstaller) destroyCloudConnections() error {
-	firstPassList, err := o.listCloudConnections()
-	if err != nil {
-		return err
-	}
-
-	if len(firstPassList.list()) == 0 {
-		return nil
-	}
-
-	items := o.insertPendingItems(jobTypeName, firstPassList.list())
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	for _, item := range items {
-		select {
-		case <-ctx.Done():
-			o.Logger.Debugf("destroyCloudConnections: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
-		default:
-		}
-
-		backoff := wait.Backoff{
-			Duration: 15 * time.Second,
-			Factor:   1.1,
-			Cap:      leftInContext(ctx),
-			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-			result, err2 := o.deleteJob(item)
-			switch result {
-			case DeleteJobSuccess:
-				o.Logger.Debugf("destroyCloudConnections: deleteJob returns DeleteJobSuccess")
-				return true, nil
-			case DeleteJobRunning:
-				o.Logger.Debugf("destroyCloudConnections: deleteJob returns DeleteJobRunning")
-				return false, nil
-			case DeleteJobError:
-				o.Logger.Debugf("destroyCloudConnections: deleteJob returns DeleteJobError: %v", err2)
-				return false, err2
-			default:
-				return false, errors.Errorf("destroyCloudConnections: deleteJob unknown result enum %v", result)
-			}
-		})
-		if err != nil {
-			o.Logger.Fatal("destroyCloudConnections: ExponentialBackoffWithContext (destroy) returns ", err)
-		}
-	}
-
-	if items = o.getPendingItems(jobTypeName); len(items) > 0 {
-		for _, item := range items {
-			o.Logger.Debugf("destroyCloudConnections: found %s in pending items", item.name)
-		}
-		return errors.Errorf("destroyCloudConnections: %d undeleted items pending", len(items))
-	}
-
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-		secondPassList, err2 := o.listCloudConnections()
-		if err2 != nil {
-			return false, err2
-		}
-		if len(secondPassList) == 0 {
-			// We finally don't see any remaining instances!
-			return true, nil
-		}
-		for _, item := range secondPassList {
-			o.Logger.Debugf("destroyCloudConnections: found %s in second pass", item.name)
-		}
-		return false, nil
-	})
-	if err != nil {
-		o.Logger.Fatal("destroyCloudConnections: ExponentialBackoffWithContext (list) returns ", err)
-	}
-
-	return nil
-}
-
 
 const (
 	cloudInstanceTypeName = "cloudInstance"
@@ -234,7 +27,7 @@ const (
 func (o *ClusterUninstaller) listCloudInstances() (cloudResources, error) {
 	o.Logger.Debugf("Listing virtual Cloud service instances")
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	options := o.vpcSvc.NewListInstancesOptions()
@@ -282,7 +75,7 @@ func (o *ClusterUninstaller) destroyCloudInstance(item cloudResource) error {
 		response              *core.DetailedResponse
 	)
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	getInstanceOptions = o.vpcSvc.NewGetInstanceOptions(item.id)
@@ -323,15 +116,13 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 	}
 
 	items := o.insertPendingItems(cloudInstanceTypeName, firstPassList.list())
-
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
-
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyCloudInstances: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -340,7 +131,7 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.destroyCloudInstance(item)
 			if err2 == nil {
 				return true, err2
@@ -357,7 +148,7 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyCloudInstances: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyCloudInstances: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyCloudInstances: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -365,7 +156,7 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listCloudInstances()
 		if err2 != nil {
 			return false, err2
@@ -386,11 +177,10 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 	return nil
 }
 
-
 const cosTypeName = "cos instance"
 
 // $ ibmcloud catalog service cloud-object-storage --output json | jq -r '.[].id'
-// dff97f5c-bc5e-4455-b470-411c3edbe49c
+// dff97f5c-bc5e-4455-b470-411c3edbe49c.
 const cosResourceID = "dff97f5c-bc5e-4455-b470-411c3edbe49c"
 
 // listCOSInstances lists COS service instances.
@@ -398,44 +188,111 @@ const cosResourceID = "dff97f5c-bc5e-4455-b470-411c3edbe49c"
 func (o *ClusterUninstaller) listCOSInstances() (cloudResources, error) {
 	o.Logger.Debugf("Listing COS instances")
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
-	options := o.controllerSvc.NewListResourceInstancesOptions()
+	var (
+		// https://github.com/IBM/platform-services-go-sdk/blob/main/resourcecontrollerv2/resource_controller_v2.go#L3086
+		options *resourcecontrollerv2.ListResourceInstancesOptions
+
+		perPage int64 = 64
+
+		// https://github.com/IBM/platform-services-go-sdk/blob/main/resourcecontrollerv2/resource_controller_v2.go#L4525-L4534
+		resources *resourcecontrollerv2.ResourceInstancesList
+
+		err error
+
+		foundOne = false
+		moreData = true
+	)
+
+	options = o.controllerSvc.NewListResourceInstancesOptions()
+	options.Limit = &perPage
 	options.SetResourceID(cosResourceID)
 	options.SetType("service_instance")
 
-	resources, _, err := o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list COS instances")
-	}
-
-	var foundOne = false
-
 	result := []cloudResource{}
-	for _, instance := range resources.Resources {
-		// Match the COS instances created by both the installer and the
-		// cluster-image-registry-operator.
-		if strings.Contains(*instance.Name, o.InfraID) {
-			if !(strings.HasSuffix(*instance.Name, "-cos") ||
-				strings.HasSuffix(*instance.Name, "-image-registry")) {
-				continue
+
+	for moreData {
+		// https://github.com/IBM/platform-services-go-sdk/blob/main/resourcecontrollerv2/resource_controller_v2.go#L173
+		resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list COS instances: %w", err)
+		}
+		o.Logger.Debugf("listCOSInstances: RowsCount %v", *resources.RowsCount)
+
+		for _, instance := range resources.Resources {
+			// Match the COS instances created by both the installer and the
+			// cluster-image-registry-operator.
+			if strings.Contains(*instance.Name, o.InfraID) {
+				if !(strings.HasSuffix(*instance.Name, "-cos") ||
+					strings.HasSuffix(*instance.Name, "-image-registry")) {
+					continue
+				}
+				foundOne = true
+				o.Logger.Debugf("listCOSInstances: FOUND %s %s", *instance.Name, *instance.GUID)
+				result = append(result, cloudResource{
+					key:      *instance.ID,
+					name:     *instance.Name,
+					status:   *instance.State,
+					typeName: cosTypeName,
+					id:       *instance.GUID,
+				})
 			}
-			foundOne = true
-			o.Logger.Debugf("listCOSInstances: FOUND %s %s", *instance.Name, *instance.GUID)
-			result = append(result, cloudResource{
-				key:      *instance.ID,
-				name:     *instance.Name,
-				status:   *instance.State,
-				typeName: cosTypeName,
-				id:       *instance.GUID,
-			})
+		}
+
+		if resources.NextURL != nil {
+			start, err := resources.GetNextStart()
+			if err != nil {
+				o.Logger.Debugf("listCOSInstances: err = %v", err)
+				return nil, fmt.Errorf("failed to GetNextStart: %w", err)
+			}
+			if start != nil {
+				o.Logger.Debugf("listCOSInstances: start = %v", *start)
+				options.SetStart(*start)
+			}
+		} else {
+			o.Logger.Debugf("listCOSInstances: NextURL = nil")
+			moreData = false
 		}
 	}
 	if !foundOne {
-		o.Logger.Debugf("listCOSInstances: NO matching COS instance against: %s", o.InfraID)
-		for _, instance := range resources.Resources {
-			o.Logger.Debugf("listCOSInstances: only found COS instance: %s", *instance.Name)
+		options = o.controllerSvc.NewListResourceInstancesOptions()
+		options.Limit = &perPage
+		options.SetResourceID(cosResourceID)
+		options.SetType("service_instance")
+
+		moreData = true
+		for moreData {
+			// https://github.com/IBM/platform-services-go-sdk/blob/main/resourcecontrollerv2/resource_controller_v2.go#L173
+			resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
+			if err != nil {
+				return nil, fmt.Errorf("failed to list COS instances: %w", err)
+			}
+			o.Logger.Debugf("listCOSInstances: RowsCount %v", *resources.RowsCount)
+			if resources.NextURL != nil {
+				o.Logger.Debugf("listCOSInstances: NextURL   %v", *resources.NextURL)
+			}
+
+			o.Logger.Debugf("listCOSInstances: NO matching COS instance against: %s", o.InfraID)
+			for _, instance := range resources.Resources {
+				o.Logger.Debugf("listCOSInstances: only found COS instance: %s", *instance.Name)
+			}
+
+			if resources.NextURL != nil {
+				start, err := resources.GetNextStart()
+				if err != nil {
+					o.Logger.Debugf("listCOSInstances: err = %v", err)
+					return nil, fmt.Errorf("failed to GetNextStart: %w", err)
+				}
+				if start != nil {
+					o.Logger.Debugf("listCOSInstances: start = %v", *start)
+					options.SetStart(*start)
+				}
+			} else {
+				o.Logger.Debugf("listCOSInstances: NextURL = nil")
+				moreData = false
+			}
 		}
 	}
 
@@ -453,7 +310,7 @@ func (o *ClusterUninstaller) findReclaimedCOSInstance(item cloudResource) (*reso
 
 	getReclamationOptions = o.controllerSvc.NewListReclamationsOptions()
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	reclamations, response, err = o.controllerSvc.ListReclamationsWithContext(ctx, getReclamationOptions)
@@ -497,7 +354,7 @@ func (o *ClusterUninstaller) destroyCOSInstance(item cloudResource) error {
 
 	getOptions = o.controllerSvc.NewGetResourceInstanceOptions(item.id)
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	_, response, err = o.controllerSvc.GetResourceInstanceWithContext(ctx, getOptions)
@@ -519,7 +376,7 @@ func (o *ClusterUninstaller) destroyCOSInstance(item cloudResource) error {
 	response, err = o.controllerSvc.DeleteResourceInstanceWithContext(ctx, options)
 
 	if err != nil && response != nil && response.StatusCode != gohttp.StatusNotFound {
-		return errors.Wrapf(err, "failed to delete COS instance %s", item.name)
+		return fmt.Errorf("failed to delete COS instance %s: %w", item.name, err)
 	}
 
 	var reclamation *resourcecontrollerv2.Reclamation
@@ -532,7 +389,7 @@ func (o *ClusterUninstaller) destroyCOSInstance(item cloudResource) error {
 
 		_, response, err = o.controllerSvc.RunReclamationActionWithContext(ctx, reclamationActionOptions)
 		if err != nil {
-			return errors.Wrapf(err, "failed RunReclamationActionWithContext")
+			return fmt.Errorf("failed RunReclamationActionWithContext: %w", err)
 		}
 	}
 
@@ -556,14 +413,14 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 
 	items := o.insertPendingItems(cosTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyCOSInstances: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -572,7 +429,7 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.destroyCOSInstance(item)
 			if err2 == nil {
 				return true, err2
@@ -589,7 +446,7 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyCOSInstances: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyCOSInstances: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyCOSInstances: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -597,7 +454,7 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listCOSInstances()
 		if err2 != nil {
 			return false, err2
@@ -630,7 +487,7 @@ func (o *ClusterUninstaller) COSInstanceID() (string, error) {
 	}
 	instanceList := cosInstances.list()
 	if len(instanceList) == 0 {
-		return "", errors.Errorf("COS instance not found")
+		return "", fmt.Errorf("COS instance not found")
 	}
 
 	// Locate the installer's COS instance by name.
@@ -640,8 +497,9 @@ func (o *ClusterUninstaller) COSInstanceID() (string, error) {
 			return instance.id, nil
 		}
 	}
-	return "", errors.Errorf("COS instance not found")
+	return "", fmt.Errorf("COS instance not found")
 }
+
 
 // cloudResource hold various fields for any given cloud resource
 type cloudResource struct {
@@ -676,7 +534,6 @@ func (r cloudResources) list() []cloudResource {
 	return values
 }
 
-
 const (
 	cloudSSHKeyTypeName = "cloudSshKey"
 )
@@ -698,13 +555,13 @@ func (o *ClusterUninstaller) listCloudSSHKeys() (cloudResources, error) {
 		sshKey           vpcv1.Key
 	)
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listCloudSSHKeys: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -716,7 +573,7 @@ func (o *ClusterUninstaller) listCloudSSHKeys() (cloudResources, error) {
 	for moreData {
 		sshKeyCollection, detailedResponse, err = o.vpcSvc.ListKeysWithContext(ctx, listKeysOptions)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to list Cloud ssh keys: %v and the response is: %s", err, detailedResponse)
+			return nil, fmt.Errorf("failed to list Cloud ssh keys: %w and the response is: %s", err, detailedResponse)
 		}
 
 		for _, sshKey = range sshKeyCollection.Keys {
@@ -740,12 +597,19 @@ func (o *ClusterUninstaller) listCloudSSHKeys() (cloudResources, error) {
 			o.Logger.Debugf("listCloudSSHKeys: Limit = %v", *sshKeyCollection.Limit)
 		}
 		if sshKeyCollection.Next != nil {
-			o.Logger.Debugf("listCloudSSHKeys: Next = %v", *sshKeyCollection.Next.Href)
-			listKeysOptions.SetStart(*sshKeyCollection.Next.Href)
+			start, err := sshKeyCollection.GetNextStart()
+			if err != nil {
+				o.Logger.Debugf("listCloudSSHKeys: err = %v", err)
+				return nil, fmt.Errorf("listCloudSSHKeys: failed to GetNextStart: %w", err)
+			}
+			if start != nil {
+				o.Logger.Debugf("listCloudSSHKeys: start = %v", *start)
+				listKeysOptions.SetStart(*start)
+			}
+		} else {
+			o.Logger.Debugf("listCloudSSHKeys: Next = nil")
+			moreData = false
 		}
-
-		moreData = sshKeyCollection.Next != nil
-		o.Logger.Debugf("listCloudSSHKeys: moreData = %v", moreData)
 	}
 	if !foundOne {
 		o.Logger.Debugf("listCloudSSHKeys: NO matching sshKey against: %s", o.InfraID)
@@ -757,7 +621,7 @@ func (o *ClusterUninstaller) listCloudSSHKeys() (cloudResources, error) {
 		for moreData {
 			sshKeyCollection, detailedResponse, err = o.vpcSvc.ListKeysWithContext(ctx, listKeysOptions)
 			if err != nil {
-				return nil, errors.Wrapf(err, "failed to list Cloud ssh keys: %v and the response is: %s", err, detailedResponse)
+				return nil, fmt.Errorf("failed to list Cloud ssh keys: %w and the response is: %s", err, detailedResponse)
 			}
 			for _, sshKey = range sshKeyCollection.Keys {
 				o.Logger.Debugf("listCloudSSHKeys: FOUND: %v", *sshKey.Name)
@@ -769,11 +633,19 @@ func (o *ClusterUninstaller) listCloudSSHKeys() (cloudResources, error) {
 				o.Logger.Debugf("listCloudSSHKeys: Limit = %v", *sshKeyCollection.Limit)
 			}
 			if sshKeyCollection.Next != nil {
-				o.Logger.Debugf("listCloudSSHKeys: Next = %v", *sshKeyCollection.Next.Href)
-				listKeysOptions.SetStart(*sshKeyCollection.Next.Href)
+				start, err := sshKeyCollection.GetNextStart()
+				if err != nil {
+					o.Logger.Debugf("listCloudSSHKeys: err = %v", err)
+					return nil, fmt.Errorf("listCloudSSHKeys: failed to GetNextStart: %w", err)
+				}
+				if start != nil {
+					o.Logger.Debugf("listCloudSSHKeys: start = %v", *start)
+					listKeysOptions.SetStart(*start)
+				}
+			} else {
+				o.Logger.Debugf("listCloudSSHKeys: Next = nil")
+				moreData = false
 			}
-			moreData = sshKeyCollection.Next != nil
-			o.Logger.Debugf("listCloudSSHKeys: moreData = %v", moreData)
 		}
 	}
 
@@ -789,13 +661,13 @@ func (o *ClusterUninstaller) deleteCloudSSHKey(item cloudResource) error {
 		err              error
 	)
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("deleteCloudSSHKey: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -812,7 +684,7 @@ func (o *ClusterUninstaller) deleteCloudSSHKey(item cloudResource) error {
 
 	_, err = o.vpcSvc.DeleteKeyWithContext(ctx, deleteKeyOptions)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete sshKey %s", item.name)
+		return fmt.Errorf("failed to delete sshKey %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted Cloud SSHKey %q", item.name)
@@ -835,14 +707,14 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 
 	items := o.insertPendingItems(cloudSSHKeyTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyCloudSSHKeys: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -851,7 +723,7 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.deleteCloudSSHKey(item)
 			if err2 == nil {
 				return true, err2
@@ -868,7 +740,7 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyCloudSSHKeys: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyCloudSSHKeys: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyCloudSSHKeys: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -876,7 +748,7 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listCloudSSHKeys()
 		if err2 != nil {
 			return false, err2
@@ -898,6 +770,649 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 }
 
 
+// listCloudSubnets lists subnets in the VPC cloud.
+func (o *ClusterUninstaller) listCloudSubnets() (cloudResources, error) {
+	o.Logger.Debugf("Listing virtual Cloud Subnets")
+
+	ctx, cancel := contextWithTimeout()
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		o.Logger.Debugf("listCloudSubnets: case <-ctx.Done()")
+		return nil, ctx.Err() // we're cancelled, abort
+	default:
+	}
+
+	options := o.vpcSvc.NewListSubnetsOptions()
+	subnets, detailedResponse, err := o.vpcSvc.ListSubnets(options)
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to list subnets and the response is: %s: %w", detailedResponse, err)
+	}
+
+	var foundOne = false
+
+	result := []cloudResource{}
+	for _, subnet := range subnets.Subnets {
+		if strings.Contains(*subnet.Name, o.InfraID) {
+			foundOne = true
+			o.Logger.Debugf("listCloudSubnets: FOUND: %s, %s", *subnet.ID, *subnet.Name)
+			result = append(result, cloudResource{
+				key:      *subnet.ID,
+				name:     *subnet.Name,
+				status:   "",
+				typeName: publicGatewayTypeName,
+				id:       *subnet.ID,
+			})
+		}
+	}
+	if !foundOne {
+		o.Logger.Debugf("listCloudSubnets: NO matching subnet against: %s", o.InfraID)
+		for _, subnet := range subnets.Subnets {
+			o.Logger.Debugf("listCloudSubnets: subnet: %s", *subnet.Name)
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+func (o *ClusterUninstaller) deleteCloudSubnet(item cloudResource) error {
+	var getOptions *vpcv1.GetSubnetOptions
+	var response *core.DetailedResponse
+	var err error
+
+	ctx, cancel := contextWithTimeout()
+	defer cancel()
+
+	select {
+	case <-ctx.Done():
+		o.Logger.Debugf("deleteCloudSubnet: case <-ctx.Done()")
+		return ctx.Err() // we're cancelled, abort
+	default:
+	}
+
+	getOptions = o.vpcSvc.NewGetSubnetOptions(item.id)
+	_, response, err = o.vpcSvc.GetSubnet(getOptions)
+
+	if err != nil && response != nil && response.StatusCode == gohttp.StatusNotFound {
+		// The resource is gone
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted Subnet %q", item.name)
+		return nil
+	}
+	if err != nil && response != nil && response.StatusCode == gohttp.StatusInternalServerError {
+		o.Logger.Infof("deleteCloudSubnet: internal server error")
+		return nil
+	}
+
+	deleteOptions := o.vpcSvc.NewDeleteSubnetOptions(item.id)
+	_, err = o.vpcSvc.DeleteSubnetWithContext(ctx, deleteOptions)
+	if err != nil {
+		return fmt.Errorf("failed to delete subnet %s: %w", item.name, err)
+	}
+
+	o.Logger.Infof("Deleted Subnet %q", item.name)
+	o.deletePendingItems(item.typeName, []cloudResource{item})
+
+	return nil
+}
+
+// destroyCloudSubnets removes all subnet resources that have a name prefixed
+// with the cluster's infra ID.
+func (o *ClusterUninstaller) destroyCloudSubnets() error {
+	firstPassList, err := o.listCloudSubnets()
+	if err != nil {
+		return err
+	}
+
+	if len(firstPassList.list()) == 0 {
+		return nil
+	}
+
+	items := o.insertPendingItems(publicGatewayTypeName, firstPassList.list())
+
+	ctx, cancel := contextWithTimeout()
+	defer cancel()
+
+	for _, item := range items {
+		select {
+		case <-ctx.Done():
+			o.Logger.Debugf("destroyCloudSubnets: case <-ctx.Done()")
+			return ctx.Err() // we're cancelled, abort
+		default:
+		}
+
+		backoff := wait.Backoff{
+			Duration: 15 * time.Second,
+			Factor:   1.1,
+			Cap:      leftInContext(ctx),
+			Steps:    math.MaxInt32}
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+			err2 := o.deleteCloudSubnet(item)
+			if err2 == nil {
+				return true, err2
+			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
+		})
+		if err != nil {
+			o.Logger.Fatal("destroyCloudSubnets: ExponentialBackoffWithContext (destroy) returns ", err)
+		}
+	}
+
+	if items = o.getPendingItems(publicGatewayTypeName); len(items) > 0 {
+		for _, item := range items {
+			o.Logger.Debugf("destroyCloudSubnets: found %s in pending items", item.name)
+		}
+		return fmt.Errorf("destroyCloudSubnets: %d undeleted items pending", len(items))
+	}
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+		secondPassList, err2 := o.listCloudSubnets()
+		if err2 != nil {
+			return false, err2
+		}
+		if len(secondPassList) == 0 {
+			// We finally don't see any remaining instances!
+			return true, nil
+		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyCloudSubnets: found %s in second pass", item.name)
+		}
+		return false, nil
+	})
+	if err != nil {
+		o.Logger.Fatal("destroyCloudSubnets: ExponentialBackoffWithContext (list) returns ", err)
+	}
+
+	return nil
+}
+
+const (
+	transitGatewayTypeName           = "transitGateway"
+	transitGatewayConnectionTypeName = "transitGatewayConnection"
+)
+
+// listTransitGateways lists Transit Gateways in the IBM Cloud.
+func (o *ClusterUninstaller) listTransitGateways() (cloudResources, error) {
+	o.Logger.Debugf("Listing Transit Gateways (%s)", o.InfraID)
+
+	var (
+		ctx                        context.Context
+		cancel                     func()
+		listTransitGatewaysOptions *transitgatewayapisv1.ListTransitGatewaysOptions
+		gatewayCollection          *transitgatewayapisv1.TransitGatewayCollection
+		gateway                    transitgatewayapisv1.TransitGateway
+		response                   *core.DetailedResponse
+		err                        error
+		foundOne                         = false
+		perPage                    int64 = 32
+		moreData                         = true
+	)
+
+	ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	listTransitGatewaysOptions = o.tgClient.NewListTransitGatewaysOptions()
+	listTransitGatewaysOptions.Limit = &perPage
+
+	result := []cloudResource{}
+
+	for moreData {
+		// https://github.com/IBM/networking-go-sdk/blob/master/transitgatewayapisv1/transit_gateway_apis_v1.go#L184
+		gatewayCollection, response, err = o.tgClient.ListTransitGatewaysWithContext(ctx, listTransitGatewaysOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to list transit gateways: %w and the respose is: %s", err, response)
+		}
+
+		for _, gateway = range gatewayCollection.TransitGateways {
+			if strings.Contains(*gateway.Name, o.InfraID) {
+				foundOne = true
+				o.Logger.Debugf("listTransitGateways: FOUND: %s, %s", *gateway.ID, *gateway.Name)
+				result = append(result, cloudResource{
+					key:      *gateway.ID,
+					name:     *gateway.Name,
+					status:   "",
+					typeName: transitGatewayTypeName,
+					id:       *gateway.ID,
+				})
+			}
+		}
+
+		if gatewayCollection.First != nil {
+			o.Logger.Debugf("listTransitGateways: First = %+v", *gatewayCollection.First.Href)
+		} else {
+			o.Logger.Debugf("listTransitGateways: First = nil")
+		}
+		if gatewayCollection.Limit != nil {
+			o.Logger.Debugf("listTransitGateways: Limit = %v", *gatewayCollection.Limit)
+		}
+		if gatewayCollection.Next != nil {
+			start, err := gatewayCollection.GetNextStart()
+			if err != nil {
+				o.Logger.Debugf("listTransitGateways: err = %v", err)
+				return nil, fmt.Errorf("listTransitGateways: failed to GetNextStart: %w", err)
+			}
+			if start != nil {
+				o.Logger.Debugf("listTransitGateways: start = %v", *start)
+				listTransitGatewaysOptions.SetStart(*start)
+			}
+		} else {
+			o.Logger.Debugf("listTransitGateways: Next = nil")
+			moreData = false
+		}
+	}
+	if !foundOne {
+		o.Logger.Debugf("listTransitGateways: NO matching transit gateway against: %s", o.InfraID)
+
+		listTransitGatewaysOptions = o.tgClient.NewListTransitGatewaysOptions()
+		listTransitGatewaysOptions.Limit = &perPage
+		moreData = true
+
+		for moreData {
+			gatewayCollection, response, err = o.tgClient.ListTransitGatewaysWithContext(ctx, listTransitGatewaysOptions)
+			if err != nil {
+				return nil, fmt.Errorf("failed to list transit gateways: %w and the respose is: %s", err, response)
+			}
+			for _, gateway = range gatewayCollection.TransitGateways {
+				o.Logger.Debugf("listTransitGateways: FOUND: %s, %s", *gateway.ID, *gateway.Name)
+			}
+			if gatewayCollection.First != nil {
+				o.Logger.Debugf("listTransitGateways: First = %+v", *gatewayCollection.First.Href)
+			} else {
+				o.Logger.Debugf("listTransitGateways: First = nil")
+			}
+			if gatewayCollection.Limit != nil {
+				o.Logger.Debugf("listTransitGateways: Limit = %v", *gatewayCollection.Limit)
+			}
+			if gatewayCollection.Next != nil {
+				start, err := gatewayCollection.GetNextStart()
+				if err != nil {
+					o.Logger.Debugf("listTransitGateways: err = %v", err)
+					return nil, fmt.Errorf("listTransitGateways: failed to GetNextStart: %w", err)
+				}
+				if start != nil {
+					o.Logger.Debugf("listTransitGateways: start = %v", *start)
+					listTransitGatewaysOptions.SetStart(*start)
+				}
+			} else {
+				o.Logger.Debugf("listTransitGateways: Next = nil")
+				moreData = false
+			}
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+// Destroy a specified transit gateway.
+func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
+	var (
+		deleteTransitGatewayOptions *transitgatewayapisv1.DeleteTransitGatewayOptions
+		response                    *core.DetailedResponse
+		err                         error
+
+		ctx    context.Context
+		cancel func()
+	)
+
+	ctx, cancel = contextWithTimeout()
+	defer cancel()
+
+	err = o.destroyTransitGatewayConnections(item)
+	if err != nil {
+		return err
+	}
+
+	// We can delete the transit gateway now!
+	deleteTransitGatewayOptions = o.tgClient.NewDeleteTransitGatewayOptions(item.id)
+
+	response, err = o.tgClient.DeleteTransitGatewayWithContext(ctx, deleteTransitGatewayOptions)
+	if err != nil {
+		o.Logger.Fatalf("destroyTransitGateway: DeleteTransitGatewayWithContext returns %v with response %v", err, response)
+	}
+
+	o.deletePendingItems(item.typeName, []cloudResource{item})
+	o.Logger.Infof("Deleted Transit Gateway %q", item.name)
+
+	return nil
+}
+
+// Destroy the connections for a specified transit gateway.
+func (o *ClusterUninstaller) destroyTransitGatewayConnections(item cloudResource) error {
+	var (
+		firstPassList cloudResources
+
+		err error
+
+		items []cloudResource
+
+		ctx    context.Context
+		cancel func()
+
+		backoff = wait.Backoff{Duration: 15 * time.Second,
+			Factor: 1.5,
+			Cap:    10 * time.Minute,
+			Steps:  math.MaxInt32}
+	)
+
+	firstPassList, err = o.listTransitConnections(item)
+	if err != nil {
+		return err
+	}
+
+	items = o.insertPendingItems(transitGatewayConnectionTypeName, firstPassList.list())
+
+	ctx, cancel = contextWithTimeout()
+	defer cancel()
+
+	for _, item := range items {
+		select {
+		case <-ctx.Done():
+			o.Logger.Debugf("destroyTransitGateway: case <-ctx.Done()")
+			return ctx.Err() // we're cancelled, abort
+		default:
+		}
+
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+			err2 := o.destroyTransitConnection(item)
+			if err2 == nil {
+				return true, err2
+			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
+		})
+		if err != nil {
+			o.Logger.Fatalf("destroyTransitGateway: ExponentialBackoffWithContext (destroy) returns %v", err)
+		}
+	}
+
+	if items = o.getPendingItems(transitGatewayConnectionTypeName); len(items) > 0 {
+		return fmt.Errorf("destroyTransitGateway: %d undeleted items pending", len(items))
+	}
+
+	backoff = wait.Backoff{Duration: 15 * time.Second,
+		Factor: 1.5,
+		Cap:    10 * time.Minute,
+		Steps:  math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+		var (
+			secondPassList cloudResources
+
+			err2 error
+		)
+
+		secondPassList, err2 = o.listTransitConnections(item)
+		if err2 != nil {
+			return false, err2
+		}
+		if len(secondPassList) == 0 {
+			// We finally don't see any remaining instances!
+			return true, nil
+		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyTransitGateway: found %s in second pass", item.name)
+		}
+		return false, nil
+	})
+	if err != nil {
+		o.Logger.Fatalf("destroyTransitGateway: ExponentialBackoffWithContext (list) returns %v", err)
+	}
+
+	return err
+}
+
+// Destroy a specified transit gateway connection.
+func (o *ClusterUninstaller) destroyTransitConnection(item cloudResource) error {
+	var (
+		ctx    context.Context
+		cancel func()
+
+		deleteTransitGatewayConnectionOptions *transitgatewayapisv1.DeleteTransitGatewayConnectionOptions
+		response                              *core.DetailedResponse
+		err                                   error
+	)
+
+	ctx, cancel = contextWithTimeout()
+	defer cancel()
+
+	// ...Options(transitGatewayID string, id string)
+	// NOTE: item.status is reused as the parent transit gateway id!
+	deleteTransitGatewayConnectionOptions = o.tgClient.NewDeleteTransitGatewayConnectionOptions(item.status, item.id)
+
+	response, err = o.tgClient.DeleteTransitGatewayConnectionWithContext(ctx, deleteTransitGatewayConnectionOptions)
+	if err != nil {
+		o.Logger.Fatalf("destroyTransitConnection: DeleteTransitGatewayConnectionWithContext returns %v with response %v", err, response)
+	}
+
+	o.deletePendingItems(item.typeName, []cloudResource{item})
+	o.Logger.Infof("Deleted Transit Gateway Connection %q", item.name)
+
+	return nil
+}
+
+// listTransitConnections lists Transit Connections for a Transit Gateway in the IBM Cloud.
+func (o *ClusterUninstaller) listTransitConnections(item cloudResource) (cloudResources, error) {
+	o.Logger.Debugf("Listing Transit Gateways Connections (%s)", item.name)
+
+	var (
+		ctx                          context.Context
+		cancel                       func()
+		listConnectionsOptions       *transitgatewayapisv1.ListConnectionsOptions
+		transitConnectionCollections *transitgatewayapisv1.TransitConnectionCollection
+		transitConnection            transitgatewayapisv1.TransitConnection
+		response                     *core.DetailedResponse
+		err                          error
+		foundOne                           = false
+		perPage                      int64 = 32
+		moreData                           = true
+	)
+
+	ctx, cancel = contextWithTimeout()
+	defer cancel()
+
+	o.Logger.Debugf("listTransitConnections: searching for ID %s", item.id)
+
+	listConnectionsOptions = o.tgClient.NewListConnectionsOptions()
+	listConnectionsOptions.SetLimit(perPage)
+	listConnectionsOptions.SetNetworkID("")
+
+	result := []cloudResource{}
+
+	for moreData {
+		transitConnectionCollections, response, err = o.tgClient.ListConnectionsWithContext(ctx, listConnectionsOptions)
+		if err != nil {
+			o.Logger.Debugf("listTransitConnections: ListConnections returns %v and the response is: %s", err, response)
+			return nil, err
+		}
+		for _, transitConnection = range transitConnectionCollections.Connections {
+			if *transitConnection.TransitGateway.ID != item.id {
+				o.Logger.Debugf("listTransitConnections: SKIP: %s, %s, %s", *transitConnection.ID, *transitConnection.Name, *transitConnection.TransitGateway.Name)
+				continue
+			}
+
+			foundOne = true
+			o.Logger.Debugf("listTransitConnections: FOUND: %s, %s, %s", *transitConnection.ID, *transitConnection.Name, *transitConnection.TransitGateway.Name)
+			result = append(result, cloudResource{
+				key:      *transitConnection.ID,
+				name:     *transitConnection.Name,
+				status:   *transitConnection.TransitGateway.ID,
+				typeName: transitGatewayConnectionTypeName,
+				id:       *transitConnection.ID,
+			})
+		}
+
+		if transitConnectionCollections.First != nil {
+			o.Logger.Debugf("listTransitConnections: First = %+v", *transitConnectionCollections.First)
+		} else {
+			o.Logger.Debugf("listTransitConnections: First = nil")
+		}
+		if transitConnectionCollections.Limit != nil {
+			o.Logger.Debugf("listTransitConnections: Limit = %v", *transitConnectionCollections.Limit)
+		}
+		if transitConnectionCollections.Next != nil {
+			start, err := transitConnectionCollections.GetNextStart()
+			if err != nil {
+				o.Logger.Debugf("listTransitConnections: err = %v", err)
+				return nil, fmt.Errorf("listTransitConnections: failed to GetNextStart: %w", err)
+			}
+			if start != nil {
+				o.Logger.Debugf("listTransitConnections: start = %v", *start)
+				listConnectionsOptions.SetStart(*start)
+			}
+		} else {
+			o.Logger.Debugf("listTransitConnections: Next = nil")
+			moreData = false
+		}
+	}
+	if !foundOne {
+		o.Logger.Debugf("listTransitConnections: NO matching transit connections against: %s", o.InfraID)
+
+		listConnectionsOptions = o.tgClient.NewListConnectionsOptions()
+		listConnectionsOptions.SetLimit(perPage)
+		listConnectionsOptions.SetNetworkID("")
+		moreData = true
+
+		for moreData {
+			transitConnectionCollections, response, err = o.tgClient.ListConnectionsWithContext(ctx, listConnectionsOptions)
+			if err != nil {
+				o.Logger.Debugf("listTransitConnections: ListConnections returns %v and the response is: %s", err, response)
+				return nil, err
+			}
+			for _, transitConnection = range transitConnectionCollections.Connections {
+				o.Logger.Debugf("listTransitConnections: FOUND: %s, %s, %s", *transitConnection.ID, *transitConnection.Name, *transitConnection.TransitGateway.Name)
+			}
+			if transitConnectionCollections.First != nil {
+				o.Logger.Debugf("listTransitConnections: First = %+v", *transitConnectionCollections.First)
+			} else {
+				o.Logger.Debugf("listTransitConnections: First = nil")
+			}
+			if transitConnectionCollections.Limit != nil {
+				o.Logger.Debugf("listTransitConnections: Limit = %v", *transitConnectionCollections.Limit)
+			}
+			if transitConnectionCollections.Next != nil {
+				start, err := transitConnectionCollections.GetNextStart()
+				if err != nil {
+					o.Logger.Debugf("listTransitConnections: err = %v", err)
+					return nil, fmt.Errorf("listTransitConnections: failed to GetNextStart: %w", err)
+				}
+				if start != nil {
+					o.Logger.Debugf("listTransitConnections: start = %v", *start)
+					listConnectionsOptions.SetStart(*start)
+				}
+			} else {
+				o.Logger.Debugf("listTransitConnections: Next = nil")
+				moreData = false
+			}
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+// We either deal with an existing TG or destroy TGs matching a name.
+func (o *ClusterUninstaller) destroyTransitGateways() error {
+	// Old style: delete all TGs matching by name
+	if o.TransitGatewayName == "" {
+		return o.innerDestroyTransitGateways()
+	}
+
+	// New style: leave the TG and its existing connections alone
+	o.Logger.Infof("Not cleaning up persistent Transit Gateway since tgName was specified")
+	return nil
+}
+
+// innerDestroyTransitGateways searches for transit gateways that have a name that starts with
+// the cluster's infra ID.
+func (o *ClusterUninstaller) innerDestroyTransitGateways() error {
+	var (
+		firstPassList cloudResources
+
+		err error
+
+		items []cloudResource
+
+		ctx    context.Context
+		cancel func()
+
+		backoff = wait.Backoff{Duration: 15 * time.Second,
+			Factor: 1.5,
+			Cap:    10 * time.Minute,
+			Steps:  math.MaxInt32}
+	)
+
+	firstPassList, err = o.listTransitGateways()
+	if err != nil {
+		return err
+	}
+
+	items = o.insertPendingItems(transitGatewayTypeName, firstPassList.list())
+
+	ctx, cancel = contextWithTimeout()
+	defer cancel()
+
+	for _, item := range items {
+		select {
+		case <-ctx.Done():
+			o.Logger.Debugf("destroyTransitGateways: case <-ctx.Done()")
+			return ctx.Err() // we're cancelled, abort
+		default:
+		}
+
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+			err2 := o.destroyTransitGateway(item)
+			if err2 == nil {
+				return true, err2
+			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
+		})
+		if err != nil {
+			o.Logger.Fatalf("destroyTransitGateways: ExponentialBackoffWithContext (destroy) returns %v", err)
+		}
+	}
+
+	if items = o.getPendingItems(transitGatewayTypeName); len(items) > 0 {
+		return fmt.Errorf("destroyTransitGateways: %d undeleted items pending", len(items))
+	}
+
+	backoff = wait.Backoff{Duration: 15 * time.Second,
+		Factor: 1.5,
+		Cap:    10 * time.Minute,
+		Steps:  math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+		var (
+			secondPassList cloudResources
+
+			err2 error
+		)
+
+		secondPassList, err2 = o.listTransitGateways()
+		if err2 != nil {
+			return false, err2
+		}
+		if len(secondPassList) == 0 {
+			// We finally don't see any remaining instances!
+			return true, nil
+		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyTransitGateways: found %s in second pass", item.name)
+		}
+		return false, nil
+	})
+	if err != nil {
+		o.Logger.Fatalf("destroyTransitGateways: ExponentialBackoffWithContext (list) returns %v", err)
+	}
+
+	return nil
+}
+
 const (
 	dhcpTypeName = "dhcp"
 )
@@ -911,6 +1426,12 @@ func (o *ClusterUninstaller) listDHCPNetworks() (cloudResources, error) {
 	var err error
 
 	o.Logger.Debugf("Listing DHCP networks")
+
+	if o.dhcpClient == nil {
+		o.Logger.Infof("Skipping deleting DHCP servers because no service instance was found")
+		result := []cloudResource{}
+		return cloudResources{}.insert(result...), nil
+	}
 
 	dhcpServers, err = o.dhcpClient.GetAll()
 	if err != nil {
@@ -926,7 +1447,34 @@ func (o *ClusterUninstaller) listDHCPNetworks() (cloudResources, error) {
 			continue
 		}
 		if dhcpServer.Network.Name == nil {
+			// https://github.com/IBM-Cloud/power-go-client/blob/master/power/models/p_vm_instance.go#L22
+			var instance *models.PVMInstance
+
 			o.Logger.Debugf("listDHCPNetworks: DHCP has empty Network.Name: %s", *dhcpServer.ID)
+
+			instance, err = o.instanceClient.Get(*dhcpServer.ID)
+			o.Logger.Debugf("listDHCPNetworks: Getting instance %s %v", *dhcpServer.ID, err)
+			if err != nil {
+				continue
+			}
+
+			if instance.Status == nil {
+				continue
+			}
+			// If there is a backing DHCP VM and it has a status, then check for an ERROR state
+			o.Logger.Debugf("listDHCPNetworks: instance.Status: %s", *instance.Status)
+			if *instance.Status != "ERROR" {
+				continue
+			}
+
+			foundOne = true
+			result = append(result, cloudResource{
+				key:      *dhcpServer.ID,
+				name:     *dhcpServer.ID,
+				status:   "VM",
+				typeName: dhcpTypeName,
+				id:       *dhcpServer.ID,
+			})
 			continue
 		}
 
@@ -936,7 +1484,7 @@ func (o *ClusterUninstaller) listDHCPNetworks() (cloudResources, error) {
 			result = append(result, cloudResource{
 				key:      *dhcpServer.ID,
 				name:     *dhcpServer.Network.Name,
-				status:   "",
+				status:   "DHCP",
 				typeName: dhcpTypeName,
 				id:       *dhcpServer.ID,
 			})
@@ -982,6 +1530,30 @@ func (o *ClusterUninstaller) destroyDHCPNetwork(item cloudResource) error {
 	return nil
 }
 
+func (o *ClusterUninstaller) destroyDHCPVM(item cloudResource) error {
+	var err error
+
+	_, err = o.instanceClient.Get(item.id)
+	if err != nil {
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted DHCP VM %q", item.name)
+		return nil
+	}
+
+	o.Logger.Debugf("Deleting DHCP VM %q", item.name)
+
+	err = o.instanceClient.Delete(item.id)
+	if err != nil {
+		o.Logger.Infof("Error: DHCP o.instanceClient.Delete: %q", err)
+		return err
+	}
+
+	o.deletePendingItems(item.typeName, []cloudResource{item})
+	o.Logger.Infof("Deleted DHCP VM %q", item.name)
+
+	return nil
+}
+
 // destroyDHCPNetworks searches for DHCP networks that are in a previous list
 // the cluster's infra ID.
 func (o *ClusterUninstaller) destroyDHCPNetworks() error {
@@ -996,14 +1568,14 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 
 	items := o.insertPendingItems(dhcpTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyDHCPNetworks: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -1012,8 +1584,18 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-			err2 := o.destroyDHCPNetwork(item)
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+			var err2 error
+
+			switch item.status {
+			case "DHCP":
+				err2 = o.destroyDHCPNetwork(item)
+			case "VM":
+				err2 = o.destroyDHCPVM(item)
+			default:
+				err2 = fmt.Errorf("unknown DHCP item status %s", item.status)
+				return true, err2
+			}
 			if err2 == nil {
 				return true, err2
 			}
@@ -1029,7 +1611,7 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyDHCPNetworks: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyDHCPNetworks: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyDHCPNetworks: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -1037,7 +1619,7 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listDHCPNetworks()
 		if err2 != nil {
 			return false, err2
@@ -1058,7 +1640,6 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 	return nil
 }
 
-
 const (
 	cisDNSRecordTypeName = "cis dns record"
 )
@@ -1067,13 +1648,13 @@ const (
 func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 	o.Logger.Debugf("Listing DNS records")
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listDNSRecords: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -1081,7 +1662,7 @@ func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 		foundOne       = false
 		perPage  int64 = 20
 		page     int64 = 1
-		moreData bool  = true
+		moreData       = true
 	)
 
 	dnsRecordsOptions := o.dnsRecordsSvc.NewListAllDnsRecordsOptions()
@@ -1090,17 +1671,21 @@ func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 
 	result := []cloudResource{}
 
+	dnsMatcher, err := regexp.Compile(fmt.Sprintf(`.*\Q%s.%s\E$`, o.ClusterName, o.BaseDomain))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build DNS records matcher: %w", err)
+	}
+
 	for moreData {
 		dnsResources, detailedResponse, err := o.dnsRecordsSvc.ListAllDnsRecordsWithContext(ctx, dnsRecordsOptions)
 		if err != nil {
-			return nil, errors.Wrapf(err, "failed to list DNS records: %v and the response is: %s", err, detailedResponse)
+			return nil, fmt.Errorf("failed to list DNS records: %w and the response is: %s", err, detailedResponse)
 		}
 
 		for _, record := range dnsResources.Result {
 			// Match all of the cluster's DNS records
-			exp := fmt.Sprintf(`.*\Q%s.%s\E$`, o.ClusterName, o.BaseDomain)
-			nameMatches, _ := regexp.Match(exp, []byte(*record.Name))
-			contentMatches, _ := regexp.Match(exp, []byte(*record.Content))
+			nameMatches := dnsMatcher.Match([]byte(*record.Name))
+			contentMatches := dnsMatcher.Match([]byte(*record.Content))
 			if nameMatches || contentMatches {
 				foundOne = true
 				o.Logger.Debugf("listDNSRecords: FOUND: %v, %v", *record.ID, *record.Name)
@@ -1126,7 +1711,7 @@ func (o *ClusterUninstaller) listDNSRecords() (cloudResources, error) {
 		for moreData {
 			dnsResources, detailedResponse, err := o.dnsRecordsSvc.ListAllDnsRecordsWithContext(ctx, dnsRecordsOptions)
 			if err != nil {
-				return nil, errors.Wrapf(err, "failed to list DNS records: %v and the response is: %s", err, detailedResponse)
+				return nil, fmt.Errorf("failed to list DNS records: %w and the response is: %s", err, detailedResponse)
 			}
 			for _, record := range dnsResources.Result {
 				o.Logger.Debugf("listDNSRecords: FOUND: DNS: %v, %v", *record.ID, *record.Name)
@@ -1146,13 +1731,13 @@ func (o *ClusterUninstaller) destroyDNSRecord(item cloudResource) error {
 		err      error
 	)
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("destroyDNSRecord: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -1174,7 +1759,7 @@ func (o *ClusterUninstaller) destroyDNSRecord(item cloudResource) error {
 
 	_, _, err = o.dnsRecordsSvc.DeleteDnsRecordWithContext(ctx, deleteOptions)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete DNS record %s", item.name)
+		return fmt.Errorf("failed to delete DNS record %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted DNS Record %q", item.name)
@@ -1202,14 +1787,14 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 
 	items := o.insertPendingItems(cisDNSRecordTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyDNSRecords: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -1218,7 +1803,7 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.destroyDNSRecord(item)
 			if err2 == nil {
 				return true, err2
@@ -1235,7 +1820,7 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyDNSRecords: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyDNSRecords: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyDNSRecords: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -1243,7 +1828,7 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listDNSRecords()
 		if err2 != nil {
 			return false, err2
@@ -1264,7 +1849,6 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 	return nil
 }
 
-
 const (
 	ibmDNSRecordTypeName = "ibm dns record"
 )
@@ -1273,13 +1857,13 @@ const (
 func (o *ClusterUninstaller) listResourceRecords() (cloudResources, error) {
 	o.Logger.Debugf("Listing DNS resource records")
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listResourceRecords: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -1287,16 +1871,24 @@ func (o *ClusterUninstaller) listResourceRecords() (cloudResources, error) {
 
 	dnsCRN, err := crn.Parse(o.DNSInstanceCRN)
 	if err != nil {
-		return nil, errors.Wrap(err, "Failed to parse DNSInstanceCRN")
+		return nil, fmt.Errorf("failed to parse DNSInstanceCRN: %w", err)
 	}
 	records, _, err := o.resourceRecordsSvc.ListResourceRecords(&resourcerecordsv1.ListResourceRecordsOptions{
 		InstanceID: &dnsCRN.ServiceInstance,
 		DnszoneID:  &o.dnsZoneID,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list resource records: %w", err)
+	}
+
+	dnsMatcher, err := regexp.Compile(fmt.Sprintf(`.*\Q%s.%s\E$`, o.ClusterName, o.BaseDomain))
+	if err != nil {
+		return nil, fmt.Errorf("failed to build DNS records matcher: %w", err)
+	}
+
 	for _, record := range records.ResourceRecords {
 		// Match all of the cluster's DNS records
-		exp := fmt.Sprintf(`.*\Q%s.%s\E$`, o.ClusterName, o.BaseDomain)
-		nameMatches, _ := regexp.Match(exp, []byte(*record.Name))
+		nameMatches := dnsMatcher.Match([]byte(*record.Name))
 		if nameMatches {
 			o.Logger.Debugf("listResourceRecords: FOUND: %v, %v", *record.ID, *record.Name)
 			result = append(result, cloudResource{
@@ -1309,7 +1901,7 @@ func (o *ClusterUninstaller) listResourceRecords() (cloudResources, error) {
 		}
 	}
 	if err != nil {
-		return nil, errors.Wrap(err, "could not retrieve DNS records")
+		return nil, fmt.Errorf("could not retrieve DNS records: %w", err)
 	}
 	return cloudResources{}.insert(result...), nil
 }
@@ -1321,22 +1913,22 @@ func (o *ClusterUninstaller) destroyResourceRecord(item cloudResource) error {
 		err      error
 	)
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("destroyResourceRecord: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete DNS Resource record %s", item.name)
+		return fmt.Errorf("failed to delete DNS Resource record %s: %w", item.name, err)
 	}
 	dnsCRN, err := crn.Parse(o.DNSInstanceCRN)
 	if err != nil {
-		return errors.Wrap(err, "Failed to parse DNSInstanceCRN")
+		return fmt.Errorf("failed to parse DNSInstanceCRN: %w", err)
 	}
 	getOptions := o.resourceRecordsSvc.NewGetResourceRecordOptions(dnsCRN.ServiceInstance, o.dnsZoneID, item.id)
 	_, response, err = o.resourceRecordsSvc.GetResourceRecord(getOptions)
@@ -1356,7 +1948,7 @@ func (o *ClusterUninstaller) destroyResourceRecord(item cloudResource) error {
 
 	_, err = o.resourceRecordsSvc.DeleteResourceRecord(deleteOptions)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete DNS Resource record %s", item.name)
+		return fmt.Errorf("failed to delete DNS Resource record %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted DNS Resource Record %q", item.name)
@@ -1384,14 +1976,14 @@ func (o *ClusterUninstaller) destroyResourceRecords() error {
 
 	items := o.insertPendingItems(ibmDNSRecordTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyResourceRecords: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -1400,7 +1992,7 @@ func (o *ClusterUninstaller) destroyResourceRecords() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.destroyResourceRecord(item)
 			if err2 == nil {
 				return true, err2
@@ -1417,7 +2009,7 @@ func (o *ClusterUninstaller) destroyResourceRecords() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyResourceRecords: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyResourceRecords: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyResourceRecords: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -1425,7 +2017,7 @@ func (o *ClusterUninstaller) destroyResourceRecords() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listResourceRecords()
 		if err2 != nil {
 			return false, err2
@@ -1445,7 +2037,6 @@ func (o *ClusterUninstaller) destroyResourceRecords() error {
 
 	return nil
 }
-
 
 const (
 	suppressDuration = time.Minute * 5
@@ -1474,26 +2065,31 @@ func (o *errorTracker) suppressWarning(identifier string, err error, logger logr
 	}
 }
 
-
 const imageTypeName = "image"
 
 // listImages lists images in the vpc.
 func (o *ClusterUninstaller) listImages() (cloudResources, error) {
 	o.Logger.Debugf("Listing images")
 
-	ctx, cancel := o.contextWithTimeout()
+	if o.imageClient == nil {
+		o.Logger.Infof("Skipping deleting images because no service instance was found")
+		result := []cloudResource{}
+		return cloudResources{}.insert(result...), nil
+	}
+
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listImages: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
 	images, err := o.imageClient.GetAll()
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list images")
+		return nil, fmt.Errorf("failed to list images: %w", err)
 	}
 
 	var foundOne = false
@@ -1526,13 +2122,13 @@ func (o *ClusterUninstaller) deleteImage(item cloudResource) error {
 	var img *models.Image
 	var err error
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("deleteImage: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -1551,7 +2147,7 @@ func (o *ClusterUninstaller) deleteImage(item cloudResource) error {
 
 	err = o.imageClient.Delete(item.id)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete image %s", item.name)
+		return fmt.Errorf("failed to delete image %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted Image %q", item.name)
@@ -1577,14 +2173,14 @@ func (o *ClusterUninstaller) destroyImages() error {
 		o.Logger.Debugf("destroyImages: firstPassList: %v / %v", item.name, item.id)
 	}
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyImages: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -1593,7 +2189,7 @@ func (o *ClusterUninstaller) destroyImages() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.deleteImage(item)
 			if err2 == nil {
 				return true, err2
@@ -1610,7 +2206,7 @@ func (o *ClusterUninstaller) destroyImages() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyImages: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyImages: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyImages: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -1618,7 +2214,7 @@ func (o *ClusterUninstaller) destroyImages() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listImages()
 		if err2 != nil {
 			return false, err2
@@ -1639,7 +2235,6 @@ func (o *ClusterUninstaller) destroyImages() error {
 	return nil
 }
 
-
 const jobTypeName = "job"
 
 // listJobs lists jobs in the vpc.
@@ -1650,19 +2245,24 @@ func (o *ClusterUninstaller) listJobs() (cloudResources, error) {
 
 	o.Logger.Debugf("Listing jobs")
 
-	ctx, cancel := o.contextWithTimeout()
+	if o.jobClient == nil {
+		result := []cloudResource{}
+		return cloudResources{}.insert(result...), nil
+	}
+
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listJobs: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
 	jobs, err = o.jobClient.GetAll()
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list jobs")
+		return nil, fmt.Errorf("failed to list jobs: %w", err)
 	}
 
 	result := []cloudResource{}
@@ -1704,13 +2304,13 @@ func (o *ClusterUninstaller) deleteJob(item cloudResource) (DeleteJobResult, err
 	var job *models.Job
 	var err error
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("deleteJob: case <-ctx.Done()")
-		return DeleteJobError, o.Context.Err() // we're cancelled, abort
+		return DeleteJobError, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -1726,7 +2326,7 @@ func (o *ClusterUninstaller) deleteJob(item cloudResource) (DeleteJobResult, err
 	case "completed":
 		//		err = o.jobClient.Delete(item.id)
 		//		if err != nil {
-		//			return DeleteJobError, errors.Wrapf(err, "failed to delete job %s", item.name)
+		//			return DeleteJobError, fmt.Errorf("failed to delete job %s: %w", item.name, err)
 		//		}
 
 		o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -1739,8 +2339,8 @@ func (o *ClusterUninstaller) deleteJob(item cloudResource) (DeleteJobResult, err
 		return DeleteJobRunning, nil
 
 	case "failed":
-		err = errors.Errorf("@TODO we cannot query error message inside the job")
-		return DeleteJobError, errors.Wrapf(err, "job %v has failed", item.id)
+		err = fmt.Errorf("@TODO we cannot query error message inside the job")
+		return DeleteJobError, fmt.Errorf("job %v has failed: %w", item.id, err)
 
 	default:
 		o.Logger.Debugf("Default waiting for job %q to delete (status is %q)", item.name, *job.Status.State)
@@ -1762,14 +2362,14 @@ func (o *ClusterUninstaller) destroyJobs() error {
 
 	items := o.insertPendingItems(jobTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyJobs: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -1778,7 +2378,7 @@ func (o *ClusterUninstaller) destroyJobs() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			result, err2 := o.deleteJob(item)
 			switch result {
 			case DeleteJobSuccess:
@@ -1791,7 +2391,7 @@ func (o *ClusterUninstaller) destroyJobs() error {
 				o.Logger.Debugf("destroyJobs: deleteJob returns DeleteJobError: %v", err2)
 				return false, err2
 			default:
-				return false, errors.Errorf("destroyJobs: deleteJob unknown result enum %v", result)
+				return false, fmt.Errorf("destroyJobs: deleteJob unknown result enum %v", result)
 			}
 		})
 		if err != nil {
@@ -1803,7 +2403,7 @@ func (o *ClusterUninstaller) destroyJobs() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyJobs: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyJobs: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyJobs: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -1811,7 +2411,7 @@ func (o *ClusterUninstaller) destroyJobs() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listJobs()
 		if err2 != nil {
 			return false, err2
@@ -1832,20 +2432,19 @@ func (o *ClusterUninstaller) destroyJobs() error {
 	return nil
 }
 
-
 const loadBalancerTypeName = "load balancer"
 
 // listLoadBalancers lists load balancers in the vpc.
 func (o *ClusterUninstaller) listLoadBalancers() (cloudResources, error) {
 	o.Logger.Debugf("Listing load balancers")
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listLoadBalancers: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -1853,7 +2452,7 @@ func (o *ClusterUninstaller) listLoadBalancers() (cloudResources, error) {
 
 	resources, _, err := o.vpcSvc.ListLoadBalancersWithContext(ctx, options)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list load balancers")
+		return nil, fmt.Errorf("failed to list load balancers: %w", err)
 	}
 
 	var foundOne = false
@@ -1888,13 +2487,13 @@ func (o *ClusterUninstaller) deleteLoadBalancer(item cloudResource) error {
 	var response *core.DetailedResponse
 	var err error
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("deleteLoadBalancer: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -1931,7 +2530,7 @@ func (o *ClusterUninstaller) deleteLoadBalancer(item cloudResource) error {
 
 	_, err = o.vpcSvc.DeleteLoadBalancerWithContext(ctx, deleteOptions)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete load balancer %s", item.name)
+		return fmt.Errorf("failed to delete load balancer %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted Load Balancer %q", item.name)
@@ -1954,14 +2553,14 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 
 	items := o.insertPendingItems(loadBalancerTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyLoadBalancers: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -1970,7 +2569,7 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.deleteLoadBalancer(item)
 			if err2 == nil {
 				return true, err2
@@ -1987,7 +2586,7 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyLoadBalancers: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyLoadBalancers: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyLoadBalancers: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -1995,7 +2594,7 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listLoadBalancers()
 		if err2 != nil {
 			return false, err2
@@ -2016,7 +2615,6 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 	return nil
 }
 
-
 const (
 	powerInstanceTypeName = "powerInstance"
 )
@@ -2024,6 +2622,12 @@ const (
 // listPowerInstances lists instances in the power server.
 func (o *ClusterUninstaller) listPowerInstances() (cloudResources, error) {
 	o.Logger.Debugf("Listing virtual Power service instances (%s)", o.InfraID)
+
+	if o.instanceClient == nil {
+		o.Logger.Infof("Skipping deleting Power service instances because no service instance was found")
+		result := []cloudResource{}
+		return cloudResources{}.insert(result...), nil
+	}
 
 	instances, err := o.instanceClient.GetAll()
 	if err != nil {
@@ -2097,14 +2701,14 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 
 	items := o.insertPendingItems(powerInstanceTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyPowerInstances: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -2113,7 +2717,7 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.destroyPowerInstance(item)
 			if err2 == nil {
 				return true, err2
@@ -2130,7 +2734,7 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyPowerInstances: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyPowerInstances: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyPowerInstances: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -2138,7 +2742,7 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listPowerInstances()
 		if err2 != nil {
 			return false, err2
@@ -2159,20 +2763,25 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 	return nil
 }
 
-
 const powerSSHKeyTypeName = "powerSshKey"
 
 // listPowerSSHKeys lists ssh keys in the Power server.
 func (o *ClusterUninstaller) listPowerSSHKeys() (cloudResources, error) {
 	o.Logger.Debugf("Listing Power SSHKeys")
 
-	ctx, cancel := o.contextWithTimeout()
+	if o.keyClient == nil {
+		o.Logger.Infof("Skipping deleting Power sshkeys because no service instance was found")
+		result := []cloudResource{}
+		return cloudResources{}.insert(result...), nil
+	}
+
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listPowerSSHKeys: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -2181,7 +2790,7 @@ func (o *ClusterUninstaller) listPowerSSHKeys() (cloudResources, error) {
 
 	sshKeys, err = o.keyClient.GetAll()
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list Power sshkeys: %v", err)
+		return nil, fmt.Errorf("failed to list Power sshkeys: %w", err)
 	}
 
 	var sshKey *models.SSHKey
@@ -2214,13 +2823,13 @@ func (o *ClusterUninstaller) listPowerSSHKeys() (cloudResources, error) {
 func (o *ClusterUninstaller) deletePowerSSHKey(item cloudResource) error {
 	var err error
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("deletePowerSSHKey: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -2233,7 +2842,7 @@ func (o *ClusterUninstaller) deletePowerSSHKey(item cloudResource) error {
 
 	err = o.keyClient.Delete(item.id)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete Power sshKey %s", item.name)
+		return fmt.Errorf("failed to delete Power sshKey %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted Power SSHKey %q", item.name)
@@ -2256,14 +2865,14 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 
 	items := o.insertPendingItems(powerSSHKeyTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyPowerSSHKeys: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -2272,7 +2881,7 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.deletePowerSSHKey(item)
 			if err2 == nil {
 				return true, err2
@@ -2289,7 +2898,7 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyPowerSSHKeys: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyPowerSSHKeys: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyPowerSSHKeys: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -2297,7 +2906,7 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listPowerSSHKeys()
 		if err2 != nil {
 			return false, err2
@@ -2318,6 +2927,142 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 	return nil
 }
 
+const powerSubnetTypeName = "powerSubnet"
+
+// listPowerSubnets lists subnets in the Power Server.
+func (o *ClusterUninstaller) listPowerSubnets() (cloudResources, error) {
+	o.Logger.Debugf("Listing Power Server Subnets")
+
+	if o.instanceClient == nil {
+		o.Logger.Infof("Skipping deleting Power service subnets because no service instance was found")
+		result := []cloudResource{}
+		return cloudResources{}.insert(result...), nil
+	}
+
+	networks, err := o.networkClient.GetAll()
+	if err != nil {
+		o.Logger.Warnf("Error networkClient.GetAll: %v", err)
+		return nil, err
+	}
+
+	result := []cloudResource{}
+	for _, network := range networks.Networks {
+		if strings.Contains(*network.Name, o.InfraID) {
+			o.Logger.Debugf("listPowerSubnets: FOUND: %s, %s", *network.NetworkID, *network.Name)
+			result = append(result, cloudResource{
+				key:      *network.NetworkID,
+				name:     *network.Name,
+				status:   "",
+				typeName: powerSubnetTypeName,
+				id:       *network.NetworkID,
+			})
+		}
+	}
+	if len(result) == 0 {
+		o.Logger.Debugf("listPowerSubnets: NO matching subnet against: %s", o.InfraID)
+		for _, network := range networks.Networks {
+			o.Logger.Debugf("listPowerSubnets: network: %s", *network.Name)
+		}
+	}
+
+	return cloudResources{}.insert(result...), nil
+}
+
+func (o *ClusterUninstaller) deletePowerSubnet(item cloudResource) error {
+	if _, err := o.networkClient.Get(item.id); err != nil {
+		o.deletePendingItems(item.typeName, []cloudResource{item})
+		o.Logger.Infof("Deleted Power Network %q", item.name)
+		return nil
+	}
+
+	o.Logger.Debugf("Deleting Power Network %q", item.name)
+
+	if err := o.networkClient.Delete(item.id); err != nil {
+		o.Logger.Infof("Error: o.networkClient.Delete: %q", err)
+		return err
+	}
+
+	o.deletePendingItems(item.typeName, []cloudResource{item})
+	o.Logger.Infof("Deleted Power Network %q", item.name)
+
+	return nil
+}
+
+// destroyPowerSubnets removes all subnet resources that have a name prefixed
+// with the cluster's infra ID.
+func (o *ClusterUninstaller) destroyPowerSubnets() error {
+	firstPassList, err := o.listPowerSubnets()
+	if err != nil {
+		return err
+	}
+
+	if len(firstPassList.list()) == 0 {
+		return nil
+	}
+
+	items := o.insertPendingItems(powerSubnetTypeName, firstPassList.list())
+
+	ctx, cancel := contextWithTimeout()
+	defer cancel()
+
+	for _, item := range items {
+		select {
+		case <-ctx.Done():
+			o.Logger.Debugf("destroyPowerSubnets: case <-ctx.Done()")
+			return ctx.Err() // we're cancelled, abort
+		default:
+		}
+
+		backoff := wait.Backoff{
+			Duration: 15 * time.Second,
+			Factor:   1.1,
+			Cap:      leftInContext(ctx),
+			Steps:    math.MaxInt32}
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+			err2 := o.deletePowerSubnet(item)
+			if err2 == nil {
+				return true, err2
+			}
+			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
+			return false, err2
+		})
+		if err != nil {
+			o.Logger.Fatal("destroyPowerSubnets: ExponentialBackoffWithContext (destroy) returns ", err)
+		}
+	}
+
+	if items = o.getPendingItems(powerSubnetTypeName); len(items) > 0 {
+		for _, item := range items {
+			o.Logger.Debugf("destroyPowerSubnets: found %s in pending items", item.name)
+		}
+		return fmt.Errorf("destroyPowerSubnets: %d undeleted items pending", len(items))
+	}
+
+	backoff := wait.Backoff{
+		Duration: 15 * time.Second,
+		Factor:   1.1,
+		Cap:      leftInContext(ctx),
+		Steps:    math.MaxInt32}
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+		secondPassList, err2 := o.listPowerSubnets()
+		if err2 != nil {
+			return false, err2
+		}
+		if len(secondPassList) == 0 {
+			// We finally don't see any remaining instances!
+			return true, nil
+		}
+		for _, item := range secondPassList {
+			o.Logger.Debugf("destroyPowerSubnets: found %s in second pass", item.name)
+		}
+		return false, nil
+	})
+	if err != nil {
+		o.Logger.Fatal("destroyPowerSubnets: ExponentialBackoffWithContext (list) returns ", err)
+	}
+
+	return nil
+}
 
 const (
 	publicGatewayTypeName = "publicGateway"
@@ -2327,13 +3072,13 @@ const (
 func (o *ClusterUninstaller) listAttachedSubnets(publicGatewayID string) (cloudResources, error) {
 	o.Logger.Debugf("Finding subnets attached to public gateway %s", publicGatewayID)
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	options := o.vpcSvc.NewListSubnetsOptions()
 	resources, _, err := o.vpcSvc.ListSubnetsWithContext(ctx, options)
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list subnets")
+		return nil, fmt.Errorf("failed to list subnets: %w", err)
 	}
 
 	result := []cloudResource{}
@@ -2343,7 +3088,7 @@ func (o *ClusterUninstaller) listAttachedSubnets(publicGatewayID string) (cloudR
 				key:      *subnet.ID,
 				name:     *subnet.Name,
 				status:   *subnet.Status,
-				typeName: subnetTypeName,
+				typeName: publicGatewayTypeName,
 				id:       *subnet.ID,
 			})
 		}
@@ -2368,13 +3113,13 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 
 	o.Logger.Debugf("Listing publicGateways")
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listPublicGateways: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -2388,7 +3133,7 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 
 		publicGatewayCollection, detailedResponse, err = o.vpcSvc.ListPublicGatewaysWithContext(ctx, listPublicGatewaysOptions)
 		if err != nil {
-			return nil, errors.Wrapf(err, "Failed to list publicGateways and the response is: %s", detailedResponse)
+			return nil, fmt.Errorf("failed to list publicGateways and the response is: %s: %w", detailedResponse, err)
 		}
 
 		for _, publicGateway := range publicGatewayCollection.PublicGateways {
@@ -2412,12 +3157,19 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 			o.Logger.Debugf("listPublicGateways: Limit = %v", *publicGatewayCollection.Limit)
 		}
 		if publicGatewayCollection.Next != nil {
-			o.Logger.Debugf("listPublicGateways: Next = %v", *publicGatewayCollection.Next.Href)
-			listPublicGatewaysOptions.SetStart(*publicGatewayCollection.Next.Href)
+			start, err := publicGatewayCollection.GetNextStart()
+			if err != nil {
+				o.Logger.Debugf("listPublicGateways: err = %v", err)
+				return nil, fmt.Errorf("listPublicGateways: failed to GetNextStart: %w", err)
+			}
+			if start != nil {
+				o.Logger.Debugf("listPublicGateways: start = %v", *start)
+				listPublicGatewaysOptions.SetStart(*start)
+			}
+		} else {
+			o.Logger.Debugf("listPublicGateways: Next = nil")
+			moreData = false
 		}
-
-		moreData = publicGatewayCollection.Next != nil
-		o.Logger.Debugf("listPublicGateways: moreData = %v", moreData)
 	}
 	if !foundOne {
 		o.Logger.Debugf("listPublicGateways: NO matching publicGateway against: %s", o.InfraID)
@@ -2428,7 +3180,7 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 		for moreData {
 			publicGatewayCollection, detailedResponse, err = o.vpcSvc.ListPublicGatewaysWithContext(ctx, listPublicGatewaysOptions)
 			if err != nil {
-				return nil, errors.Wrapf(err, "Failed to list publicGateways and the response is: %s", detailedResponse)
+				return nil, fmt.Errorf("failed to list publicGateways and the response is: %s: %w", detailedResponse, err)
 			}
 
 			for _, publicGateway := range publicGatewayCollection.PublicGateways {
@@ -2441,11 +3193,19 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 				o.Logger.Debugf("listPublicGateways: Limit = %v", *publicGatewayCollection.Limit)
 			}
 			if publicGatewayCollection.Next != nil {
-				o.Logger.Debugf("listPublicGateways: Next = %v", *publicGatewayCollection.Next.Href)
-				listPublicGatewaysOptions.SetStart(*publicGatewayCollection.Next.Href)
+				start, err := publicGatewayCollection.GetNextStart()
+				if err != nil {
+					o.Logger.Debugf("listPublicGateways: err = %v", err)
+					return nil, fmt.Errorf("listPublicGateways: failed to GetNextStart: %w", err)
+				}
+				if start != nil {
+					o.Logger.Debugf("listPublicGateways: start = %v", *start)
+					listPublicGatewaysOptions.SetStart(*start)
+				}
+			} else {
+				o.Logger.Debugf("listPublicGateways: Next = nil")
+				moreData = false
 			}
-			moreData = publicGatewayCollection.Next != nil
-			o.Logger.Debugf("listPublicGateways: moreData = %v", moreData)
 		}
 	}
 
@@ -2453,13 +3213,13 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 }
 
 func (o *ClusterUninstaller) deletePublicGateway(item cloudResource) error {
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("deletePublicGateway: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -2476,14 +3236,14 @@ func (o *ClusterUninstaller) deletePublicGateway(item cloudResource) error {
 	// Detach gateway from any subnets using it
 	subnets, err := o.listAttachedSubnets(item.id)
 	if err != nil {
-		return errors.Wrapf(err, "failed to list subnets with gateway %s attached", item.name)
+		return fmt.Errorf("failed to list subnets with gateway %s attached: %w", item.name, err)
 	}
 	for _, subnet := range subnets {
 		unsetSubnetPublicGatewayOptions := o.vpcSvc.NewUnsetSubnetPublicGatewayOptions(subnet.id)
 
 		_, err = o.vpcSvc.UnsetSubnetPublicGatewayWithContext(ctx, unsetSubnetPublicGatewayOptions)
 		if err != nil {
-			return errors.Wrapf(err, "failed to detach publicGateway %s from subnet %s", item.name, subnet.id)
+			return fmt.Errorf("failed to detach publicGateway %s from subnet %s: %w", item.name, subnet.id, err)
 		}
 	}
 
@@ -2491,7 +3251,7 @@ func (o *ClusterUninstaller) deletePublicGateway(item cloudResource) error {
 
 	_, err = o.vpcSvc.DeletePublicGatewayWithContext(ctx, deletePublicGatewayOptions)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete publicGateway %s", item.name)
+		return fmt.Errorf("failed to delete publicGateway %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted Public Gateway %q", item.name)
@@ -2514,14 +3274,14 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 
 	items := o.insertPendingItems(publicGatewayTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyPublicGateways: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -2530,7 +3290,7 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.deletePublicGateway(item)
 			if err2 == nil {
 				return true, err2
@@ -2547,7 +3307,7 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyPublicGateways: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -2555,7 +3315,7 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listPublicGateways()
 		if err2 != nil {
 			return false, err2
@@ -2576,20 +3336,19 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 	return nil
 }
 
-
 const securityGroupTypeName = "security group"
 
 // listSecurityGroups lists security groups in the vpc.
 func (o *ClusterUninstaller) listSecurityGroups() (cloudResources, error) {
 	o.Logger.Debugf("Listing security groups")
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listSecurityGroups: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -2597,7 +3356,7 @@ func (o *ClusterUninstaller) listSecurityGroups() (cloudResources, error) {
 	resources, _, err := o.vpcSvc.ListSecurityGroupsWithContext(ctx, options)
 
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list security groups")
+		return nil, fmt.Errorf("failed to list security groups: %w", err)
 	}
 
 	var foundOne = false
@@ -2631,13 +3390,13 @@ func (o *ClusterUninstaller) deleteSecurityGroup(item cloudResource) error {
 	var response *core.DetailedResponse
 	var err error
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("deleteSecurityGroup: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -2659,7 +3418,7 @@ func (o *ClusterUninstaller) deleteSecurityGroup(item cloudResource) error {
 
 	_, err = o.vpcSvc.DeleteSecurityGroupWithContext(ctx, deleteOptions)
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete security group %s", item.name)
+		return fmt.Errorf("failed to delete security group %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted Security Group %q", item.name)
@@ -2682,14 +3441,14 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 
 	items := o.insertPendingItems(securityGroupTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroySecurityGroups: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -2698,7 +3457,7 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.deleteSecurityGroup(item)
 			if err2 == nil {
 				return true, err2
@@ -2715,7 +3474,7 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyServiceInstances: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroySecurityGroups: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroySecurityGroups: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -2723,7 +3482,7 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listSecurityGroups()
 		if err2 != nil {
 			return false, err2
@@ -2745,186 +3504,19 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 }
 
 
-const subnetTypeName = "subnet"
-
-// listSubnets lists subnets in the cloud.
-func (o *ClusterUninstaller) listSubnets() (cloudResources, error) {
-	o.Logger.Debugf("Listing Subnets")
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	select {
-	case <-ctx.Done():
-		o.Logger.Debugf("listSubnets: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
-	default:
-	}
-
-	options := o.vpcSvc.NewListSubnetsOptions()
-	subnets, detailedResponse, err := o.vpcSvc.ListSubnets(options)
-
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list subnets and the response is: %s", detailedResponse)
-	}
-
-	var foundOne = false
-
-	result := []cloudResource{}
-	for _, subnet := range subnets.Subnets {
-		if strings.Contains(*subnet.Name, o.InfraID) {
-			foundOne = true
-			o.Logger.Debugf("listSubnets: FOUND: %s, %s", *subnet.ID, *subnet.Name)
-			result = append(result, cloudResource{
-				key:      *subnet.ID,
-				name:     *subnet.Name,
-				status:   "",
-				typeName: subnetTypeName,
-				id:       *subnet.ID,
-			})
-		}
-	}
-	if !foundOne {
-		o.Logger.Debugf("listSubnets: NO matching subnet against: %s", o.InfraID)
-		for _, subnet := range subnets.Subnets {
-			o.Logger.Debugf("listSubnets: subnet: %s", *subnet.Name)
-		}
-	}
-
-	return cloudResources{}.insert(result...), nil
-}
-
-func (o *ClusterUninstaller) deleteSubnet(item cloudResource) error {
-	var getOptions *vpcv1.GetSubnetOptions
-	var response *core.DetailedResponse
-	var err error
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	select {
-	case <-ctx.Done():
-		o.Logger.Debugf("deleteSubnet: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
-	default:
-	}
-
-	getOptions = o.vpcSvc.NewGetSubnetOptions(item.id)
-	_, response, err = o.vpcSvc.GetSubnet(getOptions)
-
-	if err != nil && response != nil && response.StatusCode == gohttp.StatusNotFound {
-		// The resource is gone
-		o.deletePendingItems(item.typeName, []cloudResource{item})
-		o.Logger.Infof("Deleted Subnet %q", item.name)
-		return nil
-	}
-	if err != nil && response != nil && response.StatusCode == gohttp.StatusInternalServerError {
-		o.Logger.Infof("deleteSubnet: internal server error")
-		return nil
-	}
-
-	deleteOptions := o.vpcSvc.NewDeleteSubnetOptions(item.id)
-	_, err = o.vpcSvc.DeleteSubnetWithContext(ctx, deleteOptions)
-	if err != nil {
-		return errors.Wrapf(err, "failed to delete subnet %s", item.name)
-	}
-
-	o.Logger.Infof("Deleted Subnet %q", item.name)
-	o.deletePendingItems(item.typeName, []cloudResource{item})
-
-	return nil
-}
-
-// destroySubnets removes all subnet resources that have a name prefixed
-// with the cluster's infra ID.
-func (o *ClusterUninstaller) destroySubnets() error {
-	firstPassList, err := o.listSubnets()
-	if err != nil {
-		return err
-	}
-
-	if len(firstPassList.list()) == 0 {
-		return nil
-	}
-
-	items := o.insertPendingItems(subnetTypeName, firstPassList.list())
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	for _, item := range items {
-		select {
-		case <-ctx.Done():
-			o.Logger.Debugf("destroySubnets: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
-		default:
-		}
-
-		backoff := wait.Backoff{
-			Duration: 15 * time.Second,
-			Factor:   1.1,
-			Cap:      leftInContext(ctx),
-			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-			err2 := o.deleteSubnet(item)
-			if err2 == nil {
-				return true, err2
-			}
-			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-			return false, err2
-		})
-		if err != nil {
-			o.Logger.Fatal("destroySubnets: ExponentialBackoffWithContext (destroy) returns ", err)
-		}
-	}
-
-	if items = o.getPendingItems(subnetTypeName); len(items) > 0 {
-		for _, item := range items {
-			o.Logger.Debugf("destroySubnets: found %s in pending items", item.name)
-		}
-		return errors.Errorf("destroySubnets: %d undeleted items pending", len(items))
-	}
-
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-		secondPassList, err2 := o.listSubnets()
-		if err2 != nil {
-			return false, err2
-		}
-		if len(secondPassList) == 0 {
-			// We finally don't see any remaining instances!
-			return true, nil
-		}
-		for _, item := range secondPassList {
-			o.Logger.Debugf("destroySubnets: found %s in second pass", item.name)
-		}
-		return false, nil
-	})
-	if err != nil {
-		o.Logger.Fatal("destroySubnets: ExponentialBackoffWithContext (list) returns ", err)
-	}
-
-	return nil
-}
-
-
 const vpcTypeName = "vpc"
 
 // listVPCs lists VPCs in the cloud.
 func (o *ClusterUninstaller) listVPCs() (cloudResources, error) {
 	o.Logger.Debugf("Listing VPCs")
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("listVPCs: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -2932,7 +3524,7 @@ func (o *ClusterUninstaller) listVPCs() (cloudResources, error) {
 	vpcs, _, err := o.vpcSvc.ListVpcs(options)
 
 	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list vps")
+		return nil, fmt.Errorf("failed to list vps: %w", err)
 	}
 
 	var foundOne = false
@@ -2967,13 +3559,13 @@ func (o *ClusterUninstaller) deleteVPC(item cloudResource) error {
 	var deleteResponse *core.DetailedResponse
 	var err error
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
 	case <-ctx.Done():
 		o.Logger.Debugf("deleteVPC: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
 
@@ -3005,7 +3597,7 @@ func (o *ClusterUninstaller) deleteVPC(item cloudResource) error {
 	o.Logger.Debugf("deleteVPC: DeleteVPCWithContext returns %+v", deleteResponse)
 
 	if err != nil {
-		return errors.Wrapf(err, "failed to delete vpc %s", item.name)
+		return fmt.Errorf("failed to delete vpc %s: %w", item.name, err)
 	}
 
 	o.Logger.Infof("Deleted VPC %q", item.name)
@@ -3028,14 +3620,14 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 
 	items := o.insertPendingItems(vpcTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
 		case <-ctx.Done():
 			o.Logger.Debugf("destroyVPCs: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -3044,7 +3636,7 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 			err2 := o.deleteVPC(item)
 			if err2 == nil {
 				return true, err2
@@ -3061,7 +3653,7 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyVPCs: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyVPCs: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyVPCs: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -3069,7 +3661,7 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listVPCs()
 		if err2 != nil {
 			return false, err2
@@ -3089,454 +3681,130 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 
 	return nil
 }
-// listVPCInCloudConnections removes VPCs attached to CloudConnections and returs a list of jobs.
-func (o *ClusterUninstaller) listVPCInCloudConnections() (cloudResources, error) {
-	var (
-		ctx context.Context
 
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connections.go#L20-L25
-		cloudConnections *models.CloudConnections
+const (
+	serviceInstanceTypeName = "service instance"
 
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection.go#L20-L71
-		cloudConnection          *models.CloudConnection
-		cloudConnectionUpdateNew *models.CloudConnection
+	// resource ID for Power Systems Virtual Server in the Global catalog.
+	virtualServerResourceID = "abd259f0-9990-11e8-acc8-b9f54a8f1661"
+)
 
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/job_reference.go#L18-L27
-		jobReference *models.JobReference
+// convertResourceGroupNameToID converts a resource group name/id to an id.
+func (o *ClusterUninstaller) convertResourceGroupNameToID(resourceGroupID string) (string, error) {
+	listResourceGroupsOptions := o.managementSvc.NewListResourceGroupsOptions()
 
-		err error
-
-		cloudConnectionID string
-
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_endpoint_v_p_c.go#L19-L26
-		endpointVpc       *models.CloudConnectionEndpointVPC
-		endpointUpdateVpc models.CloudConnectionEndpointVPC
-
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_v_p_c.go#L18-L26
-		Vpc *models.CloudConnectionVPC
-
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_update.go#L20
-		cloudConnectionUpdate models.CloudConnectionUpdate
-
-		foundOne bool = false
-		foundVpc bool = false
-	)
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	o.Logger.Printf("Listing VPCs in Cloud Connections")
-
-	select {
-	case <-ctx.Done():
-		o.Logger.Printf("listVPCInCloudConnections: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
-	default:
-	}
-
-	cloudConnections, err = o.cloudConnectionClient.GetAll()
+	resourceGroups, _, err := o.managementSvc.ListResourceGroups(listResourceGroupsOptions)
 	if err != nil {
-		o.Logger.Fatalf("Failed to list cloud connections: %v", err)
+		return "", err
 	}
 
-	result := []cloudResource{}
-	for _, cloudConnection = range cloudConnections.CloudConnections {
-		select {
-		case <-ctx.Done():
-			o.Logger.Printf("listVPCInCloudConnections: case <-ctx.Done()")
-			return nil, o.Context.Err() // we're cancelled, abort
-		default:
-		}
-
-		if !strings.Contains(*cloudConnection.Name, o.InfraID) {
-			// Skip this one!
-			continue
-		}
-
-		foundOne = true
-
-		o.Logger.Printf("listVPCInCloudConnections: FOUND: %s (%s)", *cloudConnection.Name, *cloudConnection.CloudConnectionID)
-
-		cloudConnectionID = *cloudConnection.CloudConnectionID
-
-		cloudConnection, err = o.cloudConnectionClient.Get(cloudConnectionID)
-		if err != nil {
-			o.Logger.Fatalf("Failed to get cloud connection %s: %v", cloudConnectionID, err)
-		}
-
-		endpointVpc = cloudConnection.Vpc
-
-		o.Logger.Printf("listVPCInCloudConnections: endpointVpc = %+v", endpointVpc)
-
-		foundVpc = false
-		for _, Vpc = range endpointVpc.Vpcs {
-			o.Logger.Printf("listVPCInCloudConnections: Vpc = %+v", Vpc)
-			o.Logger.Printf("listVPCInCloudConnections: Vpc.Name = %v, o.InfraID = %v", Vpc.Name, o.InfraID)
-			if strings.Contains(Vpc.Name, o.InfraID) {
-				foundVpc = true
-			}
-		}
-		o.Logger.Printf("listVPCInCloudConnections: foundVpc = %v", foundVpc)
-		if !foundVpc {
-			continue
-		}
-
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/cloud_connection_v_p_c.go#L18
-		var vpcsUpdate []*models.CloudConnectionVPC
-
-		for _, Vpc = range endpointVpc.Vpcs {
-			if !strings.Contains(Vpc.Name, o.InfraID) {
-				vpcsUpdate = append (vpcsUpdate, Vpc)
-			}
-		}
-
-		if len(vpcsUpdate) > 0 {
-			endpointUpdateVpc.Enabled = true
-		} else {
-			endpointUpdateVpc.Enabled = false
-		}
-
-		endpointUpdateVpc.Vpcs = vpcsUpdate
-
-		cloudConnectionUpdate.Vpc = &endpointUpdateVpc
-
-		var vpcsStrings []string
-
-		for _, Vpc = range vpcsUpdate {
-			vpcsStrings = append (vpcsStrings, Vpc.Name)
-		}
-		o.Logger.Printf("listVPCInCloudConnections: vpcsUpdate = %v", vpcsStrings)
-		o.Logger.Printf("listVPCInCloudConnections: endpointUpdateVpc = %+v", endpointUpdateVpc)
-
-		if !shouldDelete {
-			o.Logger.Printf("Skipping updating the cloud connection %q since shouldDelete is false", *cloudConnection.Name)
-			continue
-		}
-
-		cloudConnectionUpdateNew, jobReference, err = o.cloudConnectionClient.Update(*cloudConnection.CloudConnectionID, &cloudConnectionUpdate)
-		if err != nil {
-			o.Logger.Fatalf("Failed to update cloud connection %v", err)
-		}
-
-		o.Logger.Printf("listVPCInCloudConnections: cloudConnectionUpdateNew = %+v", cloudConnectionUpdateNew)
-		o.Logger.Printf("listVPCInCloudConnections: jobReference = %+v", jobReference)
-
-		result = append(result, cloudResource{
-			key:      *jobReference.ID,
-			name:     *jobReference.ID,
-			status:   "",
-			typeName: jobTypeName,
-			id:       *jobReference.ID,
-		})
-	}
-
-	if !foundOne {
-		o.Logger.Printf("listVPCInCloudConnections: NO matching cloud connections")
-		for _, cloudConnection = range cloudConnections.CloudConnections {
-			o.Logger.Printf("listVPCInCloudConnections: only found cloud connection: %s", *cloudConnection.Name)
+	for _, resourceGroup := range resourceGroups.Resources {
+		if *resourceGroup.Name == resourceGroupID {
+			return *resourceGroup.ID, nil
+		} else if *resourceGroup.ID == resourceGroupID {
+			return resourceGroupID, nil
 		}
 	}
 
-	return cloudResources{}.insert(result...), nil
+	return "", fmt.Errorf("failed to find resource group %v", resourceGroupID)
 }
 
-// destroyVPCInCloudConnections removes all VPCs in cloud connections that have a name prefixed
-// with the cluster's infra ID.
-func (o *ClusterUninstaller) destroyVPCInCloudConnections() error {
-	firstPassList, err := o.listVPCInCloudConnections()
-	if err != nil {
-		return err
-	}
-
-	if len(firstPassList.list()) == 0 {
-		return nil
-	}
-
-	items := o.insertPendingItems(jobTypeName, firstPassList.list())
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	for _, item := range items {
-		select {
-		case <-o.Context.Done():
-			o.Logger.Debugf("destroyVPCInCloudConnections: case <-o.Context.Done()")
-			return o.Context.Err() // we're cancelled, abort
-		default:
-		}
-
-		backoff := wait.Backoff{
-			Duration: 15 * time.Second,
-			Factor:   1.1,
-			Cap:      leftInContext(ctx),
-			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-			result, err2 := o.deleteJob(item)
-			switch result {
-			case DeleteJobSuccess:
-				o.Logger.Debugf("destroyVPCInCloudConnections: deleteJob returns DeleteJobSuccess")
-				return true, nil
-			case DeleteJobRunning:
-				o.Logger.Debugf("destroyVPCInCloudConnections: deleteJob returns DeleteJobRunning")
-				return false, nil
-			case DeleteJobError:
-				o.Logger.Debugf("destroyVPCInCloudConnections: deleteJob returns DeleteJobError: %v", err2)
-				return false, err2
-			default:
-				return false, errors.Errorf("destroyVPCInCloudConnections: deleteJob unknown result enum %v", result)
-			}
-		})
-		if err != nil {
-			o.Logger.Fatal("destroyVPCInCloudConnections: ExponentialBackoffWithContext (destroy) returns ", err)
-		}
-	}
-
-	if items = o.getPendingItems(jobTypeName); len(items) > 0 {
-		for _, item := range items {
-			o.Logger.Debugf("destroyVPCInCloudConnections: found %s in pending items", item.name)
-		}
-		return errors.Errorf("destroyVPCInCloudConnections: %d undeleted items pending", len(items))
-	}
-
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-		secondPassList, err2 := o.listVPCInCloudConnections()
-		if err2 != nil {
-			return false, err2
-		}
-		if len(secondPassList) == 0 {
-			// We finally don't see any remaining instances!
-			return true, nil
-		}
-		for _, item := range secondPassList {
-			o.Logger.Debugf("destroyVPCInCloudConnections: found %s in second pass", item.name)
-		}
-		return false, nil
-	})
-	if err != nil {
-		o.Logger.Fatal("destroyVPCInCloudConnections: ExponentialBackoffWithContext (list) returns ", err)
-	}
-
-	return nil
-}
-
-const networkTypeName = "network"
-
-// listNetworks lists networks in the cloud.
-func (o *ClusterUninstaller) listNetworks() (cloudResources, error) {
-	var (
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/networks.go#L20
-		networks *models.Networks
-
-		// https://github.com/IBM-Cloud/power-go-client/blob/v1.0.88/power/models/network_reference.go#L20
-		networkRef *models.NetworkReference
-
-		err error
-	)
-
-	o.Logger.Debugf("Listing Networks")
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	select {
-	case <-ctx.Done():
-		o.Logger.Debugf("listNetworks: case <-ctx.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
-	default:
-	}
-
-	networks, err = o.networkClient.GetAll()
-	if err != nil {
-		return nil, errors.Wrapf(err, "failed to list networks")
-	}
-
-	var foundOne = false
-
-	result := []cloudResource{}
-	for _, networkRef = range networks.Networks {
-		if strings.Contains(*networkRef.Name, o.InfraID) {
-			foundOne = true
-			o.Logger.Debugf("listNetworks: FOUND: %s, %s", *networkRef.NetworkID, *networkRef.Name)
-			result = append(result, cloudResource{
-				key:      *networkRef.NetworkID,
-				name:     *networkRef.Name,
-				status:   "",
-				typeName: networkTypeName,
-				id:       *networkRef.NetworkID,
-			})
-		}
-	}
-	if !foundOne {
-		o.Logger.Debugf("listNetworks: NO matching subnet against: %s", o.InfraID)
-		for _, networkRef := range networks.Networks {
-			o.Logger.Debugf("listNetworks: network: %s", *networkRef.Name)
-		}
-	}
-
-	return cloudResources{}.insert(result...), nil
-}
-
-func (o *ClusterUninstaller) deleteNetwork(item cloudResource) error {
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	select {
-	case <-ctx.Done():
-		o.Logger.Debugf("deleteNetwork: case <-ctx.Done()")
-		return o.Context.Err() // we're cancelled, abort
-	default:
-	}
-
-	err := o.networkClient.Delete(item.id)
-	if err != nil {
-		return errors.Wrapf(err, "failed to delete network %s", item.name)
-	}
-
-	o.Logger.Debugf("Deleting Network %q", item.name)
-	o.deletePendingItems(item.typeName, []cloudResource{item})
-
-	return nil
-}
-
-// destroyNetworks removes all network resources that have a name prefixed
-// with the cluster's infra ID.
-func (o *ClusterUninstaller) destroyNetworks() error {
-	firstPassList, err := o.listNetworks()
-	if err != nil {
-		return err
-	}
-
-	if len(firstPassList.list()) == 0 {
-		return nil
-	}
-
-	items := o.insertPendingItems(networkTypeName, firstPassList.list())
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	for _, item := range items {
-		select {
-		case <-ctx.Done():
-			o.Logger.Debugf("destroyNetworks: case <-ctx.Done()")
-			return o.Context.Err() // we're cancelled, abort
-		default:
-		}
-
-		backoff := wait.Backoff{
-			Duration: 15 * time.Second,
-			Factor:   1.1,
-			Cap:      leftInContext(ctx),
-			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-			err2 := o.deleteNetwork(item)
-			if err2 == nil {
-				return true, err2
-			}
-			o.errorTracker.suppressWarning(item.key, err2, o.Logger)
-			return false, err2
-		})
-		if err != nil {
-			o.Logger.Fatal("destroyNetworks: ExponentialBackoffWithContext (destroy) returns ", err)
-		}
-	}
-
-	if items = o.getPendingItems(networkTypeName); len(items) > 0 {
-		for _, item := range items {
-			o.Logger.Debugf("destroyNetworks: found %s in pending items", item.name)
-		}
-		return errors.Errorf("destroyNetworks: %d undeleted items pending", len(items))
-	}
-
-	backoff := wait.Backoff{
-		Duration: 15 * time.Second,
-		Factor:   1.1,
-		Cap:      leftInContext(ctx),
-		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-		secondPassList, err2 := o.listNetworks()
-		if err2 != nil {
-			return false, err2
-		}
-		if len(secondPassList) == 0 {
-			// We finally don't see any remaining instances!
-			return true, nil
-		}
-		for _, item := range secondPassList {
-			o.Logger.Debugf("destroyNetworks: found %s in second pass", item.name)
-		}
-		return false, nil
-	})
-	if err != nil {
-		o.Logger.Fatal("destroyNetworks: ExponentialBackoffWithContext (list) returns ", err)
-	}
-
-	return nil
-}
-
-const serviceInstanceTypeName = "serviceInstance"
-
-// listServiceInstances lists serviceInstances in the cloud.
+// listServiceInstances list service instances for the cluster.
 func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
-	o.Logger.Debugf("Listing ServiceInstances")
+	o.Logger.Debugf("Listing service instances")
+
+	ctx, cancel := contextWithTimeout()
+	defer cancel()
 
 	select {
-	case <-o.Context.Done():
-		o.Logger.Debugf("listServiceInstances: case <-o.Context.Done()")
-		return nil, o.Context.Err() // we're cancelled, abort
+	case <-ctx.Done():
+		o.Logger.Debugf("listServiceInstances: case <-ctx.Done()")
+		return nil, ctx.Err() // we're cancelled, abort
 	default:
 	}
 
-	// https://raw.githubusercontent.com/IBM/platform-services-go-sdk/main/resourcecontrollerv2/resource_controller_v2.go
 	var (
-		ctx       context.Context
-		options   *resourcecontrollerv2.ListResourceInstancesOptions
-		resources *resourcecontrollerv2.ResourceInstancesList
-		err       error
-		perPage   int64   = 20
-		moreData  bool    = true
-		nextURL   *string
-		foundOne  bool    = false
+		resourceGroupID string
+		options         *resourcecontrollerv2.ListResourceInstancesOptions
+		resources       *resourcecontrollerv2.ResourceInstancesList
+		err             error
+		perPage         int64 = 10
+		moreData              = true
+		nextURL         *string
 	)
 
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	result := []cloudResource{}
+	resourceGroupID, err = o.convertResourceGroupNameToID(o.resourceGroupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert resourceGroupID: %w", err)
+	}
+	o.Logger.Debugf("listServiceInstances: converted %v to %v", o.resourceGroupID, resourceGroupID)
 
 	options = o.controllerSvc.NewListResourceInstancesOptions()
-	options.SetResourceGroupID(o.resourceGroupID)
-	// resource ID for Power Systems Virtual Server in the Global catalog
-	options.SetResourceID("abd259f0-9990-11e8-acc8-b9f54a8f1661")
+	// options.SetType("resource_instance")
+	options.SetResourceGroupID(resourceGroupID)
+	options.SetResourceID(virtualServerResourceID)
 	options.SetLimit(perPage)
 
-	for moreData {
+	result := []cloudResource{}
 
-		o.Logger.Debugf("options = %+v", options)
-		o.Logger.Debugf("options.Limit = %v", *options.Limit)
+	for moreData {
 		if options.Start != nil {
-			o.Logger.Debugf("optionsStart = %v", *options.Start)
+			o.Logger.Debugf("listServiceInstances: options = %+v, options.Limit = %v, options.Start = %v, options.ResourceGroupID = %v", options, *options.Limit, *options.Start, *options.ResourceGroupID)
+		} else {
+			o.Logger.Debugf("listServiceInstances: options = %+v, options.Limit = %v, options.ResourceGroupID = %v", options, *options.Limit, *options.ResourceGroupID)
 		}
+
 		resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
 		if err != nil {
-			o.Logger.Fatalf("Failed to list resource instances: %v", err)
+			return nil, fmt.Errorf("failed to list resource instances: %w", err)
 		}
 
-		o.Logger.Debugf("resources.RowsCount = %v", *resources.RowsCount)
+		o.Logger.Debugf("listServiceInstances: resources.RowsCount = %v", *resources.RowsCount)
 
 		for _, resource := range resources.Resources {
+			var (
+				getResourceOptions *resourcecontrollerv2.GetResourceInstanceOptions
+				resourceInstance   *resourcecontrollerv2.ResourceInstance
+				response           *core.DetailedResponse
+			)
+
+			o.Logger.Debugf("listServiceInstances: resource.Name = %s", *resource.Name)
+
+			getResourceOptions = o.controllerSvc.NewGetResourceInstanceOptions(*resource.ID)
+
+			resourceInstance, response, err = o.controllerSvc.GetResourceInstance(getResourceOptions)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get instance: %s: %w", response, err)
+			}
+			if response != nil && response.StatusCode == gohttp.StatusNotFound {
+				o.Logger.Debugf("listServiceInstances: gohttp.StatusNotFound")
+				continue
+			} else if response != nil && response.StatusCode == gohttp.StatusInternalServerError {
+				o.Logger.Debugf("listServiceInstances: gohttp.StatusInternalServerError")
+				continue
+			}
+
+			if resourceInstance.Type == nil {
+				o.Logger.Debugf("listServiceInstances: type: nil")
+			} else {
+				o.Logger.Debugf("listServiceInstances: type: %v", *resourceInstance.Type)
+			}
+
+			if resourceInstance.Type == nil || resourceInstance.GUID == nil {
+				continue
+			}
+			if *resourceInstance.Type != "service_instance" && *resourceInstance.Type != "composite_instance" {
+				continue
+			}
+			if !strings.Contains(*resource.Name, o.InfraID) {
+				continue
+			}
+
 			if strings.Contains(*resource.Name, o.InfraID) {
-				foundOne = true
-				o.Logger.Debugf("listServiceInstances: FOUND: %s, %s", *resource.ID, *resource.Name)
 				result = append(result, cloudResource{
 					key:      *resource.ID,
 					name:     *resource.Name,
-					status:   "",
+					status:   *resource.GUID,
 					typeName: serviceInstanceTypeName,
 					id:       *resource.ID,
 				})
@@ -3546,7 +3814,7 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 		// Based on: https://cloud.ibm.com/apidocs/resource-controller/resource-controller?code=go#list-resource-instances
 		nextURL, err = core.GetQueryParam(resources.NextURL, "start")
 		if err != nil {
-			o.Logger.Fatalf("Failed to GetQueryParam on start: %v", err)
+			return nil, fmt.Errorf("failed to GetQueryParam on start: %w", err)
 		}
 		if nextURL == nil {
 			o.Logger.Debugf("nextURL = nil")
@@ -3557,76 +3825,30 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 		}
 
 		moreData = *resources.RowsCount == perPage
-
-	}
-
-	if !foundOne {
-		o.Logger.Debugf("listServiceInstances: NO matching serviceInstance against: %s", o.InfraID)
-
-		options = o.controllerSvc.NewListResourceInstancesOptions()
-		options.SetType("service_instance")
-		options.SetLimit(perPage)
-
-		moreData = true
-
-		for moreData {
-
-			o.Logger.Debugf("options = %+v", options)
-			o.Logger.Debugf("options.Limit = %v", *options.Limit)
-			if options.Start != nil {
-				o.Logger.Debugf("optionsStart = %v", *options.Start)
-			}
-			resources, _, err = o.controllerSvc.ListResourceInstancesWithContext(ctx, options)
-			if err != nil {
-				o.Logger.Fatalf("Failed to list COS instances: %v", err)
-			}
-
-			o.Logger.Debugf("resources.RowsCount = %v", *resources.RowsCount)
-
-			for _, resource := range resources.Resources {
-				o.Logger.Debugf("listServiceInstances: FOUND: %s, %s", *resource.ID, *resource.Name)
-			}
-
-			// Based on: https://cloud.ibm.com/apidocs/resource-controller/resource-controller?code=go#list-resource-instances
-			nextURL, err = core.GetQueryParam(resources.NextURL, "start")
-			if err != nil {
-				o.Logger.Fatalf("Failed to GetQueryParam on start: %v", err)
-			}
-			if nextURL == nil {
-				o.Logger.Debugf("nextURL = nil")
-				options.SetStart("")
-			} else {
-				o.Logger.Debugf("nextURL = %v", *nextURL)
-				options.SetStart(*nextURL)
-			}
-
-			moreData = *resources.RowsCount == perPage
-
-		}
 	}
 
 	return cloudResources{}.insert(result...), nil
 }
 
-func (o *ClusterUninstaller) deleteServiceInstance(item cloudResource) error {
-	// https://raw.githubusercontent.com/IBM/platform-services-go-sdk/main/resourcecontrollerv2/resource_controller_v2.go
-	var (
-		ctx           context.Context
-		getOptions    *resourcecontrollerv2.GetResourceInstanceOptions
-		deleteOptions *resourcecontrollerv2.DeleteResourceInstanceOptions
-		response      *core.DetailedResponse
-		err           error
-	)
-
-	ctx, cancel := o.contextWithTimeout()
+// destroyServiceInstance destroys a service instance.
+func (o *ClusterUninstaller) destroyServiceInstance(item cloudResource) error {
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	select {
-	case <-o.Context.Done():
-		o.Logger.Debugf("deleteServiceInstance: case <-o.Context.Done()")
-		return o.Context.Err() // we're cancelled, abort
+	case <-ctx.Done():
+		o.Logger.Debugf("destroyServiceInstance: case <-ctx.Done()")
+		return ctx.Err() // we're cancelled, abort
 	default:
 	}
+
+	o.Logger.Debugf("destroyServiceInstance: Preparing to delete, item.name = %v", item.name)
+
+	var (
+		getOptions *resourcecontrollerv2.GetResourceInstanceOptions
+		response   *core.DetailedResponse
+		err        error
+	)
 
 	getOptions = o.controllerSvc.NewGetResourceInstanceOptions(item.id)
 
@@ -3639,31 +3861,27 @@ func (o *ClusterUninstaller) deleteServiceInstance(item cloudResource) error {
 		return nil
 	}
 	if err != nil && response != nil && response.StatusCode == gohttp.StatusInternalServerError {
-		o.Logger.Infof("deleteServiceInstance: internal server error")
+		o.Logger.Infof("destroyServiceInstance: internal server error")
 		return nil
 	}
 
-	if !shouldDelete {
-		o.Logger.Debugf("Skipping deleting serviceInstance %q since shouldDelete is false", item.name)
-		o.deletePendingItems(item.typeName, []cloudResource{item})
-		return nil
+	options := o.controllerSvc.NewDeleteResourceInstanceOptions(item.id)
+	options.SetRecursive(true)
+
+	response, err = o.controllerSvc.DeleteResourceInstanceWithContext(ctx, options)
+
+	if err != nil && response != nil && response.StatusCode != gohttp.StatusNotFound {
+		return fmt.Errorf("failed to delete service instance %s: %w", item.name, err)
 	}
 
-	deleteOptions = o.controllerSvc.NewDeleteResourceInstanceOptions(item.id)
-
-	_, err = o.controllerSvc.DeleteResourceInstanceWithContext(ctx, deleteOptions)
-	if err != nil {
-		return errors.Wrapf(err, "failed to delete serviceInstance %s", item.name)
-	}
-
-	o.Logger.Debugf("Deleting Service Instance %q", item.name)
+	o.Logger.Infof("Deleted Service Instance %q", item.name)
 	o.deletePendingItems(item.typeName, []cloudResource{item})
 
 	return nil
 }
 
-// destroyServiceInstances removes all serviceInstance resources that have a name prefixed
-// with the cluster's infra ID.
+// destroyServiceInstances removes all service instances have a name containing
+// the cluster's infra ID.
 func (o *ClusterUninstaller) destroyServiceInstances() error {
 	firstPassList, err := o.listServiceInstances()
 	if err != nil {
@@ -3676,14 +3894,14 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 
 	items := o.insertPendingItems(serviceInstanceTypeName, firstPassList.list())
 
-	ctx, cancel := o.contextWithTimeout()
+	ctx, cancel := contextWithTimeout()
 	defer cancel()
 
 	for _, item := range items {
 		select {
-		case <-o.Context.Done():
-			o.Logger.Debugf("destroyServiceInstances: case <-o.Context.Done()")
-			return o.Context.Err() // we're cancelled, abort
+		case <-ctx.Done():
+			o.Logger.Debugf("destroyServiceInstances: case <-ctx.Done()")
+			return ctx.Err() // we're cancelled, abort
 		default:
 		}
 
@@ -3692,8 +3910,8 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 			Factor:   1.1,
 			Cap:      leftInContext(ctx),
 			Steps:    math.MaxInt32}
-		err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
-			err2 := o.deleteServiceInstance(item)
+		err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
+			err2 := o.destroyServiceInstance(item)
 			if err2 == nil {
 				return true, err2
 			}
@@ -3709,7 +3927,7 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 		for _, item := range items {
 			o.Logger.Debugf("destroyServiceInstances: found %s in pending items", item.name)
 		}
-		return errors.Errorf("destroyServiceInstances: %d undeleted items pending", len(items))
+		return fmt.Errorf("destroyServiceInstances: %d undeleted items pending", len(items))
 	}
 
 	backoff := wait.Backoff{
@@ -3717,7 +3935,7 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 		Factor:   1.1,
 		Cap:      leftInContext(ctx),
 		Steps:    math.MaxInt32}
-	err = wait.ExponentialBackoffWithContext(ctx, backoff, func() (bool, error) {
+	err = wait.ExponentialBackoffWithContext(ctx, backoff, func(context.Context) (bool, error) {
 		secondPassList, err2 := o.listServiceInstances()
 		if err2 != nil {
 			return false, err2
@@ -3736,1387 +3954,4 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 	}
 
 	return nil
-}
-var (
-	defaultTimeout = 15 * time.Minute
-	stageTimeout   = 15 * time.Minute
-)
-
-const (
-	// cisServiceID is the Cloud Internet Services' catalog service ID.
-	cisServiceID = "75874a60-cb12-11e7-948e-37ac098eb1b9"
-)
-
-// User information.
-type User struct {
-	ID         string
-	Email      string
-	Account    string
-	cloudName  string `default:"bluemix"`
-	cloudType  string `default:"public"`
-	generation int    `default:"2"`
-}
-
-func fetchUserDetails(bxSession *bxsession.Session, generation int) (*User, error) {
-	config := bxSession.Config
-	user := User{}
-	var bluemixToken string
-
-	if strings.HasPrefix(config.IAMAccessToken, "Bearer") {
-		bluemixToken = config.IAMAccessToken[7:len(config.IAMAccessToken)]
-	} else {
-		bluemixToken = config.IAMAccessToken
-	}
-
-	token, err := jwt.Parse(bluemixToken, func(token *jwt.Token) (interface{}, error) {
-		return "", nil
-	})
-	if err != nil && !strings.Contains(err.Error(), "key is of invalid type") {
-		return &user, err
-	}
-
-	claims := token.Claims.(jwt.MapClaims)
-	if email, ok := claims["email"]; ok {
-		user.Email = email.(string)
-	}
-	user.ID = claims["id"].(string)
-	user.Account = claims["account"].(map[string]interface{})["bss"].(string)
-	iss := claims["iss"].(string)
-	if strings.Contains(iss, "https://iam.cloud.ibm.com") {
-		user.cloudName = "bluemix"
-	} else {
-		user.cloudName = "staging"
-	}
-	user.cloudType = "public"
-
-	user.generation = generation
-	return &user, nil
-}
-
-// GetRegion converts from a zone into a region.
-func GetRegion(zone string) (region string, err error) {
-	err = nil
-	switch {
-	case strings.HasPrefix(zone, "dal"), strings.HasPrefix(zone, "us-south"):
-		region = "us-south"
-	case strings.HasPrefix(zone, "sao"):
-		region = "sao"
-	case strings.HasPrefix(zone, "us-east"):
-		region = "us-east"
-	case strings.HasPrefix(zone, "tor"):
-		region = "tor"
-	case strings.HasPrefix(zone, "eu-de-"):
-		region = "eu-de"
-	case strings.HasPrefix(zone, "lon"):
-		region = "lon"
-	case strings.HasPrefix(zone, "syd"):
-		region = "syd"
-	case strings.HasPrefix(zone, "tok"):
-		region = "tok"
-	case strings.HasPrefix(zone, "osa"):
-		region = "osa"
-	case strings.HasPrefix(zone, "mon"):
-		region = "mon"
-	default:
-		return "", fmt.Errorf("region not found for the zone: %s", zone)
-	}
-	return
-}
-
-// ClusterUninstaller holds the various options for the cluster we want to delete.
-type ClusterUninstaller struct {
-	APIKey         string
-	BaseDomain     string
-	CISInstanceCRN string
-	ClusterName    string
-	Context        context.Context
-	DNSInstanceCRN string
-	DNSZone        string
-	InfraID        string
-	Logger         logrus.FieldLogger
-	Region         string
-	ServiceGUID    string
-	VPCRegion      string
-	Zone           string
-
-	managementSvc         *resourcemanagerv2.ResourceManagerV2
-	controllerSvc         *resourcecontrollerv2.ResourceControllerV2
-	vpcSvc                *vpcv1.VpcV1
-	zonesSvc              *zonesv1.ZonesV1
-	dnsRecordsSvc         *dnsrecordsv1.DnsRecordsV1
-	dnsZonesSvc           *dnszonesv1.DnsZonesV1
-	resourceRecordsSvc    *resourcerecordsv1.ResourceRecordsV1
-	piSession             *ibmpisession.IBMPISession
-	instanceClient        *instance.IBMPIInstanceClient
-	imageClient           *instance.IBMPIImageClient
-	jobClient             *instance.IBMPIJobClient
-	keyClient             *instance.IBMPIKeyClient
-	cloudConnectionClient *instance.IBMPICloudConnectionClient
-	dhcpClient            *instance.IBMPIDhcpClient
-	networkClient         *instance.IBMPINetworkClient
-
-	resourceGroupID string
-	cosInstanceID   string
-	dnsZoneID       string
-
-	errorTracker
-	pendingItemTracker
-}
-
-// New returns an IBMCloud destroyer from ClusterMetadata.
-func New(log logrus.FieldLogger,
-	apiKey string,
-	baseDomain string,
-	serviceInstanceGUID string,
-	clusterName string,
-	infraID string,
-	cisInstanceCRN string,
-	dnsInstanceCRN string,
-	region string,
-	zone string,
-	resourceGroupID string) (*ClusterUninstaller, error) {
-
-	var vpcRegion string
-	var err error
-
-	vpcRegion, err = VPCRegionForPowerVSZone(zone)
-	if err != nil {
-		return nil, err
-	}
-	log.Printf("vpcRegion = %v", vpcRegion)
-
-	return &ClusterUninstaller{
-		APIKey:             apiKey,
-		BaseDomain:         baseDomain,
-		ClusterName:        clusterName,
-		Context:            context.Background(),
-		Logger:             log,
-		InfraID:            infraID,
-		CISInstanceCRN:     cisInstanceCRN,
-		DNSInstanceCRN:     dnsInstanceCRN,
-		Region:             region,
-		ServiceGUID:        serviceInstanceGUID,
-		VPCRegion:          vpcRegion,
-		Zone:               zone,
-		pendingItemTracker: newPendingItemTracker(),
-		resourceGroupID:    resourceGroupID,
-	}, nil
-}
-
-// Run is the entrypoint to start the uninstall process.
-func (o *ClusterUninstaller) Run() (error) {
-	o.Logger.Debugf("powervs.Run")
-
-	var ctx context.Context
-	var deadline time.Time
-	var ok bool
-	var err error
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	if ctx == nil {
-		return errors.Wrap(err, "powervs.Run: contextWithTimeout returns nil")
-	}
-
-	deadline, ok = ctx.Deadline()
-	if !ok {
-		return errors.Wrap(err, "powervs.Run: failed to call ctx.Deadline")
-	}
-
-	var duration time.Duration = deadline.Sub(time.Now())
-
-	o.Logger.Debugf("powervs.Run: duration = %v", duration)
-
-	if duration <= 0 {
-		return fmt.Errorf("powervs.Run: duration is <= 0 (%v)", duration)
-	}
-
-	err = wait.PollImmediateInfinite(
-		duration,
-		o.PolledRun,
-	)
-
-	o.Logger.Debugf("powervs.Run: after wait.PollImmediateInfinite, err = %v", err)
-
-	return err
-}
-
-// PolledRun is the Run function which will be called with Polling.
-func (o *ClusterUninstaller) PolledRun() (bool, error) {
-	o.Logger.Debugf("powervs.PolledRun")
-
-	var err error
-
-	err = o.loadSDKServices()
-	if err != nil {
-		o.Logger.Debugf("powervs.PolledRun: Failed loadSDKServices")
-		return false, err
-	}
-
-	err = o.destroyCluster()
-	if err != nil {
-		o.Logger.Debugf("powervs.PolledRun: Failed destroyCluster")
-		return false, errors.Wrap(err, "failed to destroy cluster")
-	}
-
-	return true, nil
-}
-
-func (o *ClusterUninstaller) destroyCluster() error {
-	stagedFuncs := [][]struct {
-		name    string
-		execute func() error
-	}{{
-		{name: "Cloud Instances", execute: o.destroyCloudInstances},
-	}, {
-		{name: "Power Instances", execute: o.destroyPowerInstances},
-	}, {
-		{name: "Load Balancers", execute: o.destroyLoadBalancers},
-	}, {
-		{name: "Subnets", execute: o.destroySubnets},
-	}, {
-		{name: "Public Gateways", execute: o.destroyPublicGateways},
-	}, {
-		{name: "DHCPs", execute: o.destroyDHCPNetworks},
-	}, {
-		{name: "Images", execute: o.destroyImages},
-		{name: "Security Groups", execute: o.destroySecurityGroups},
-	}, {
-		{name: "VPC Cloud Connections", execute: o.destroyVPCInCloudConnections},
-	}, {
-		{name: "Cloud Connections", execute: o.destroyCloudConnections},
-	}, {
-		{name: "Networks", execute: o.destroyNetworks},
-	}, {
-		{name: "VPCs", execute: o.destroyVPCs},
-	}, {
-		{name: "Cloud Object Storage Instances", execute: o.destroyCOSInstances},
-		{name: "DNS Records", execute: o.destroyDNSRecords},
-		{name: "Cloud SSH Keys", execute: o.destroyCloudSSHKeys},
-		{name: "Power SSH Keys", execute: o.destroyPowerSSHKeys},
-	}, {
-		{name: "Service Instances", execute: o.destroyServiceInstances},
-	}}
-
-	for _, stage := range stagedFuncs {
-		var wg sync.WaitGroup
-		errCh := make(chan error)
-		wgDone := make(chan bool)
-
-		for _, f := range stage {
-			wg.Add(1)
-			// Start a parallel goroutine
-			go o.executeStageFunction(f, errCh, &wg)
-		}
-
-		// Start a parallel goroutine
-		go func() {
-			wg.Wait()
-			close(wgDone)
-		}()
-
-		select {
-		// Did the wait group goroutine finish?
-		case <-wgDone:
-			// On to the next stage
-			o.Logger.Debugf("destroyCluster: <-wgDone")
-			continue
-		// Have we taken too long?
-		case <-time.After(stageTimeout):
-			return fmt.Errorf("destroyCluster: timed out")
-		// Has an error been sent via the channel?
-		case err := <-errCh:
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (o *ClusterUninstaller) executeStageFunction(f struct {
-	name    string
-	execute func() error
-}, errCh chan error, wg *sync.WaitGroup) error {
-	o.Logger.Debugf("executeStageFunction: Adding: %s", f.name)
-
-	defer wg.Done()
-
-	var ctx context.Context
-	var deadline time.Time
-	var ok bool
-	var err error
-
-	ctx, cancel := o.contextWithTimeout()
-	defer cancel()
-
-	if ctx == nil {
-		return errors.Wrap(err, "executeStageFunction contextWithTimeout returns nil")
-	}
-
-	deadline, ok = ctx.Deadline()
-	if !ok {
-		return errors.Wrap(err, "executeStageFunction failed to call ctx.Deadline")
-	}
-
-	var duration time.Duration = deadline.Sub(time.Now())
-
-	o.Logger.Debugf("executeStageFunction: duration = %v", duration)
-	if duration <= 0 {
-		return fmt.Errorf("executeStageFunction: duration is <= 0 (%v)", duration)
-	}
-
-	err = wait.PollImmediateInfinite(
-		duration,
-		func() (bool, error) {
-			var err error
-
-			o.Logger.Debugf("executeStageFunction: Executing: %s", f.name)
-
-			err = f.execute()
-			if err != nil {
-				o.Logger.Debugf("ERROR: executeStageFunction: %s: %v", f.name, err)
-
-				return false, err
-			}
-
-			return true, nil
-		},
-	)
-
-	if err != nil {
-		errCh <- err
-	}
-	return nil
-}
-
-// GetCISInstanceCRN gets the CRN name for the specified base domain.
-func GetCISInstanceCRN(BaseDomain string) (string, error) {
-	var CISInstanceCRN string = ""
-	var APIKey string
-	var bxSession *bxsession.Session
-	var err error
-	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
-	var tokenRefresher *authentication.IAMAuthRepository
-	var authenticator *core.IamAuthenticator
-	var controllerSvc *resourcecontrollerv2.ResourceControllerV2
-	var listInstanceOptions *resourcecontrollerv2.ListResourceInstancesOptions
-	var listResourceInstancesResponse *resourcecontrollerv2.ResourceInstancesList
-	var instance resourcecontrollerv2.ResourceInstance
-	var zonesService *zonesv1.ZonesV1
-	var listZonesOptions *zonesv1.ListZonesOptions
-	var listZonesResponse *zonesv1.ListZonesResp
-
-	if APIKey = os.Getenv("IBMCLOUD_API_KEY"); len(APIKey) == 0 {
-		return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: environment variable IBMCLOUD_API_KEY not set")
-	}
-	bxSession, err = bxsession.New(&bluemix.Config{
-		BluemixAPIKey:         APIKey,
-		TokenProviderEndpoint: &tokenProviderEndpoint,
-		Debug:                 false,
-	})
-	if err != nil {
-		return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: bxsession.New: %v", err)
-	}
-	tokenRefresher, err = authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
-		DefaultHeader: gohttp.Header{
-			"User-Agent": []string{http.UserAgent()},
-		},
-	})
-	if err != nil {
-		return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: authentication.NewIAMAuthRepository: %v", err)
-	}
-	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
-	if err != nil {
-		return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: tokenRefresher.AuthenticateAPIKey: %v", err)
-	}
-	authenticator = &core.IamAuthenticator{
-		ApiKey: APIKey,
-	}
-	err = authenticator.Validate()
-	if err != nil {
-		return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: authenticator.Validate: %v", err)
-	}
-	// Instantiate the service with an API key based IAM authenticator
-	controllerSvc, err = resourcecontrollerv2.NewResourceControllerV2(&resourcecontrollerv2.ResourceControllerV2Options{
-		Authenticator: authenticator,
-		ServiceName:   "cloud-object-storage",
-		URL:           "https://resource-controller.cloud.ibm.com",
-	})
-	if err != nil {
-		return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: creating ControllerV2 Service: %v", err)
-	}
-	listInstanceOptions = controllerSvc.NewListResourceInstancesOptions()
-	listInstanceOptions.SetResourceID(cisServiceID)
-	listResourceInstancesResponse, _, err = controllerSvc.ListResourceInstances(listInstanceOptions)
-	if err != nil {
-		return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: ListResourceInstances: %v", err)
-	}
-	for _, instance = range listResourceInstancesResponse.Resources {
-		authenticator = &core.IamAuthenticator{
-			ApiKey: APIKey,
-		}
-
-		err = authenticator.Validate()
-		if err != nil {
-		}
-
-		zonesService, err = zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
-			Authenticator: authenticator,
-			Crn:           instance.CRN,
-		})
-		if err != nil {
-			return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: NewZonesV1: %v", err)
-		}
-		listZonesOptions = zonesService.NewListZonesOptions()
-		listZonesResponse, _, err = zonesService.ListZones(listZonesOptions)
-		if listZonesResponse == nil {
-			return CISInstanceCRN, fmt.Errorf("getCISInstanceCRN: ListZones: %v", err)
-		}
-		for _, zone := range listZonesResponse.Result {
-			if *zone.Status == "active" {
-				if *zone.Name == BaseDomain {
-					CISInstanceCRN = *instance.CRN
-				}
-			}
-		}
-	}
-
-	return CISInstanceCRN, nil
-}
-
-func (o *ClusterUninstaller) loadSDKServices() error {
-	var (
-		bxSession             *bxsession.Session
-		tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
-		tokenRefresher        *authentication.IAMAuthRepository
-		err                   error
-		ctrlv2                controllerv2.ResourceControllerAPIV2
-		resourceClientV2      controllerv2.ResourceServiceInstanceRepository
-		serviceInstance       bxmodels.ServiceInstanceV2
-	)
-
-	defer func() {
-		o.Logger.Debugf("loadSDKServices: bxSession = %v", bxSession)
-		o.Logger.Debugf("loadSDKServices: tokenRefresher = %v", tokenRefresher)
-		o.Logger.Debugf("loadSDKServices: ctrlv2 = %v", ctrlv2)
-		o.Logger.Debugf("loadSDKServices: resourceClientV2 = %v", resourceClientV2)
-		o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
-		o.Logger.Debugf("loadSDKServices: serviceInstance = %v", serviceInstance)
-		o.Logger.Debugf("loadSDKServices: o.piSession = %v", o.piSession)
-		o.Logger.Debugf("loadSDKServices: o.instanceClient = %v", o.instanceClient)
-		o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
-		o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
-		o.Logger.Debugf("loadSDKServices: o.keyClient = %v", o.keyClient)
-		o.Logger.Debugf("loadSDKServices: o.cloudConnectionClient = %v", o.cloudConnectionClient)
-		o.Logger.Debugf("loadSDKServices: o.dhcpClient = %v", o.dhcpClient)
-		o.Logger.Debugf("loadSDKServices: o.networkClient = %v", o.networkClient)
-		o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
-		o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
-		o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
-	}()
-
-	if o.APIKey == "" {
-		return fmt.Errorf("loadSDKServices: missing APIKey in metadata.json")
-	}
-
-	bxSession, err = bxsession.New(&bluemix.Config{
-		BluemixAPIKey:         o.APIKey,
-		TokenProviderEndpoint: &tokenProviderEndpoint,
-		Debug:                 false,
-	})
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: bxsession.New: %v", err)
-	}
-
-	tokenRefresher, err = authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
-		DefaultHeader: gohttp.Header{
-			"User-Agent": []string{http.UserAgent()},
-		},
-	})
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: authentication.NewIAMAuthRepository: %v", err)
-	}
-	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: tokenRefresher.AuthenticateAPIKey: %v", err)
-	}
-
-	user, err := fetchUserDetails(bxSession, 2)
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: fetchUserDetails: %v", err)
-	}
-
-	ctrlv2, err = controllerv2.New(bxSession)
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: controllerv2.New: %v", err)
-	}
-
-	resourceClientV2 = ctrlv2.ResourceServiceInstanceV2()
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: ctrlv2.ResourceServiceInstanceV2: %v", err)
-	}
-
-	if o.ServiceGUID == "" {
-		return fmt.Errorf("loadSDKServices: ServiceGUID is empty")
-	}
-	o.Logger.Debugf("loadSDKServices: o.ServiceGUID = %v", o.ServiceGUID)
-
-	serviceInstance, err = resourceClientV2.GetInstance(o.ServiceGUID)
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: resourceClientV2.GetInstance: %v", err)
-	}
-
-	region, err := GetRegion(serviceInstance.RegionID)
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: GetRegion: %v", err)
-	}
-
-	var authenticator core.Authenticator = &core.IamAuthenticator{
-		ApiKey: o.APIKey,
-	}
-
-	err = authenticator.Validate()
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: authenticator.Validate: %v", err)
-	}
-
-	var options *ibmpisession.IBMPIOptions = &ibmpisession.IBMPIOptions{
-		Authenticator: authenticator,
-		Debug:         false,
-		Region:        region,
-		UserAccount:   user.Account,
-		Zone:          serviceInstance.RegionID,
-	}
-
-	o.piSession, err = ibmpisession.NewIBMPISession(options)
-	if (err != nil) || (o.piSession == nil) {
-		if err != nil {
-			return fmt.Errorf("loadSDKServices: ibmpisession.New: %v", err)
-		}
-		return fmt.Errorf("loadSDKServices: loadSDKServices: o.piSession is nil")
-	}
-
-	o.instanceClient = instance.NewIBMPIInstanceClient(context.Background(), o.piSession, o.ServiceGUID)
-	if o.instanceClient == nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: o.instanceClient is nil")
-	}
-
-	o.imageClient = instance.NewIBMPIImageClient(context.Background(), o.piSession, o.ServiceGUID)
-	if o.imageClient == nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: o.imageClient is nil")
-	}
-
-	o.jobClient = instance.NewIBMPIJobClient(context.Background(), o.piSession, o.ServiceGUID)
-	if o.jobClient == nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: o.jobClient is nil")
-	}
-
-	o.keyClient = instance.NewIBMPIKeyClient(context.Background(), o.piSession, o.ServiceGUID)
-	if o.keyClient == nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: o.keyClient is nil")
-	}
-
-	o.cloudConnectionClient = instance.NewIBMPICloudConnectionClient(context.Background(), o.piSession, o.ServiceGUID)
-	if o.cloudConnectionClient == nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: o.cloudConnectionClient is nil")
-	}
-
-	o.dhcpClient = instance.NewIBMPIDhcpClient(context.Background(), o.piSession, o.ServiceGUID)
-	if o.dhcpClient == nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: o.dhcpClient is nil")
-	}
-
-	o.networkClient = instance.NewIBMPINetworkClient(context.Background(), o.piSession, o.ServiceGUID)
-	if o.networkClient == nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: o.networkClient is nil")
-	}
-
-	authenticator = &core.IamAuthenticator{
-		ApiKey: o.APIKey,
-	}
-
-	err = authenticator.Validate()
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: authenticator.Validate: %v", err)
-	}
-
-	// https://raw.githubusercontent.com/IBM/vpc-go-sdk/master/vpcv1/vpc_v1.go
-	o.vpcSvc, err = vpcv1.NewVpcV1(&vpcv1.VpcV1Options{
-		Authenticator: authenticator,
-		URL:           "https://" + o.VPCRegion + ".iaas.cloud.ibm.com/v1",
-	})
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: vpcv1.NewVpcV1: %v", err)
-	}
-
-	userAgentString := fmt.Sprintf("OpenShift/4.x Destroyer/%s", version.Raw)
-	o.vpcSvc.Service.SetUserAgent(userAgentString)
-
-	authenticator = &core.IamAuthenticator{
-		ApiKey: o.APIKey,
-	}
-
-	err = authenticator.Validate()
-	if err != nil {
-	}
-
-	// Instantiate the service with an API key based IAM authenticator
-	o.managementSvc, err = resourcemanagerv2.NewResourceManagerV2(&resourcemanagerv2.ResourceManagerV2Options{
-		Authenticator: authenticator,
-	})
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: creating ResourceManagerV2 Service: %v", err)
-	}
-
-	authenticator = &core.IamAuthenticator{
-		ApiKey: o.APIKey,
-	}
-
-	err = authenticator.Validate()
-	if err != nil {
-	}
-
-	// Instantiate the service with an API key based IAM authenticator
-	o.controllerSvc, err = resourcecontrollerv2.NewResourceControllerV2(&resourcecontrollerv2.ResourceControllerV2Options{
-		Authenticator: authenticator,
-		ServiceName:   "cloud-object-storage",
-		URL:           "https://resource-controller.cloud.ibm.com",
-	})
-	if err != nil {
-		return fmt.Errorf("loadSDKServices: loadSDKServices: creating ControllerV2 Service: %v", err)
-	}
-
-	// Either CISInstanceCRN is set or DNSInstanceCRN is set. Both should not be set at the same time,
-	// but check both just to be safe.
-	if len(o.CISInstanceCRN) > 0 {
-		authenticator = &core.IamAuthenticator{
-			ApiKey: o.APIKey,
-		}
-
-		err = authenticator.Validate()
-		if err != nil {
-		}
-
-		o.zonesSvc, err = zonesv1.NewZonesV1(&zonesv1.ZonesV1Options{
-			Authenticator: authenticator,
-			Crn:           &o.CISInstanceCRN,
-		})
-		if err != nil {
-			return fmt.Errorf("loadSDKServices: loadSDKServices: creating zonesSvc: %v", err)
-		}
-
-		ctx, cancel := o.contextWithTimeout()
-		defer cancel()
-
-		// Get the Zone ID
-		zoneOptions := o.zonesSvc.NewListZonesOptions()
-		zoneResources, detailedResponse, err := o.zonesSvc.ListZonesWithContext(ctx, zoneOptions)
-		if err != nil {
-			return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to list Zones: %v and the response is: %s", err, detailedResponse)
-		}
-
-		for _, zone := range zoneResources.Result {
-			o.Logger.Debugf("loadSDKServices: Zone: %v", *zone.Name)
-			if strings.Contains(o.BaseDomain, *zone.Name) {
-				o.dnsZoneID = *zone.ID
-			}
-		}
-		o.dnsRecordsSvc, err = dnsrecordsv1.NewDnsRecordsV1(&dnsrecordsv1.DnsRecordsV1Options{
-			Authenticator:  authenticator,
-			Crn:            &o.CISInstanceCRN,
-			ZoneIdentifier: &o.dnsZoneID,
-		})
-		if err != nil {
-			return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to instantiate dnsRecordsSvc: %v", err)
-		}
-	}
-
-	if len(o.DNSInstanceCRN) > 0 {
-		authenticator = &core.IamAuthenticator{
-			ApiKey: o.APIKey,
-		}
-
-		err = authenticator.Validate()
-		if err != nil {
-		}
-
-		o.dnsZonesSvc, err = dnszonesv1.NewDnsZonesV1(&dnszonesv1.DnsZonesV1Options{
-			Authenticator: authenticator,
-		})
-		if err != nil {
-			return fmt.Errorf("loadSDKServices: loadSDKServices: creating zonesSvc: %v", err)
-		}
-
-		// Get the Zone ID
-		dnsCRN, err := crn.Parse(o.DNSInstanceCRN)
-		if err != nil {
-			return errors.Wrap(err, "Failed to parse DNSInstanceCRN")
-		}
-		options := o.dnsZonesSvc.NewListDnszonesOptions(dnsCRN.ServiceInstance)
-		listZonesResponse, detailedResponse, err := o.dnsZonesSvc.ListDnszones(options)
-		if err != nil {
-			return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to list Zones: %v and the response is: %s", err, detailedResponse)
-		}
-
-		for _, zone := range listZonesResponse.Dnszones {
-			o.Logger.Debugf("loadSDKServices: Zone: %v", *zone.Name)
-			if strings.Contains(o.BaseDomain, *zone.Name) {
-				o.dnsZoneID = *zone.ID
-			}
-		}
-
-		o.resourceRecordsSvc, err = resourcerecordsv1.NewResourceRecordsV1(&resourcerecordsv1.ResourceRecordsV1Options{
-			Authenticator: authenticator,
-		})
-		if err != nil {
-			return fmt.Errorf("loadSDKServices: loadSDKServices: Failed to instantiate resourceRecordsSvc: %v", err)
-		}
-	}
-
-	return nil
-}
-
-func (o *ClusterUninstaller) contextWithTimeout() (context.Context, context.CancelFunc) {
-	return context.WithTimeout(o.Context, defaultTimeout)
-}
-
-func (o *ClusterUninstaller) timeout(ctx context.Context) bool {
-	var deadline time.Time
-	var ok bool
-
-	deadline, ok = ctx.Deadline()
-	if !ok {
-		o.Logger.Debugf("timeout: deadline, ok = %v, %v", deadline, ok)
-		return true
-	}
-
-	var after bool = time.Now().After(deadline)
-
-	if after {
-		// 01/02 03:04:05PM ‘06 -0700
-		o.Logger.Debugf("timeout: after deadline! (%v)", deadline.Format("2006-01-02 03:04:05PM"))
-	}
-
-	return after
-}
-
-type ibmError struct {
-	Status  int
-	Message string
-}
-
-func isNoOp(err *ibmError) bool {
-	if err == nil {
-		return false
-	}
-
-	return err.Status == gohttp.StatusNotFound
-}
-
-// aggregateError is a utility function that takes a slice of errors and an
-// optional pending argument, and returns an error or nil.
-func aggregateError(errs []error, pending ...int) error {
-	err := utilerrors.NewAggregate(errs)
-	if err != nil {
-		return err
-	}
-	if len(pending) > 0 && pending[0] > 0 {
-		return errors.Errorf("%d items pending", pending[0])
-	}
-	return nil
-}
-
-// pendingItemTracker tracks a set of pending item names for a given type of resource.
-type pendingItemTracker struct {
-	pendingItems map[string]cloudResources
-}
-
-func newPendingItemTracker() pendingItemTracker {
-	return pendingItemTracker{
-		pendingItems: map[string]cloudResources{},
-	}
-}
-
-// GetAllPendintItems returns a slice of all of the pending items across all types.
-func (t pendingItemTracker) GetAllPendingItems() []cloudResource {
-	var items []cloudResource
-	for _, is := range t.pendingItems {
-		for _, i := range is {
-			items = append(items, i)
-		}
-	}
-	return items
-}
-
-// getPendingItems returns the list of resources to be deleted.
-func (t pendingItemTracker) getPendingItems(itemType string) []cloudResource {
-	lastFound, exists := t.pendingItems[itemType]
-//	log.Debugf("getPendingItems: lastFound = %+v, exists = %v", lastFound, exists)
-	if !exists {
-		lastFound = cloudResources{}
-	}
-	return lastFound.list()
-}
-
-// insertPendingItems adds to the list of resources to be deleted.
-func (t pendingItemTracker) insertPendingItems(itemType string, items []cloudResource) []cloudResource {
-	lastFound, exists := t.pendingItems[itemType]
-//	log.Debugf("insertPendingItems: lastFound = %+v, exists = %v", lastFound, exists)
-	if !exists {
-		lastFound = cloudResources{}
-	}
-	lastFound = lastFound.insert(items...)
-	t.pendingItems[itemType] = lastFound
-//	l := lastFound.list()
-//	log.Debugf("insertPendingItems: l = %+v", l)
-//	return l
-	return lastFound.list()
-}
-
-// deletePendingItems removes from the list of resources to be deleted.
-func (t pendingItemTracker) deletePendingItems(itemType string, items []cloudResource) []cloudResource {
-	lastFound, exists := t.pendingItems[itemType]
-//	log.Debugf("deletePendingItems: lastFound = %+v, exists = %v", lastFound, exists)
-	if !exists {
-		lastFound = cloudResources{}
-	}
-	lastFound = lastFound.delete(items...)
-	t.pendingItems[itemType] = lastFound
-//	l := lastFound.list()
-//	log.Debugf("deletePendingItems: l = %+v", l)
-//	return l
-	return lastFound.list()
-}
-
-func isErrorStatus(code int64) bool {
-	return code != 0 && (code < 200 || code >= 300)
-}
-
-// Since there is no API to query these, we have to hard-code them here.
-
-// Region describes resources associated with a region in Power VS.
-// We're using a few items from the IBM Cloud VPC offering. The region names
-// for VPC are different so another function of this is to correlate those.
-type Region struct {
-	Description string
-	VPCRegion   string
-	Zones       []string
-}
-
-// Regions holds the regions for IBM Power VS, and descriptions used during the survey.
-var Regions = map[string]Region{
-	"dal": {
-		Description: "Dallas, USA",
-		VPCRegion:   "us-south",
-		Zones:       []string{"dal12"},
-	},
-	"eu-de": {
-		Description: "Frankfurt, Germany",
-		VPCRegion:   "eu-de",
-		Zones: []string{
-			"eu-de-1",
-			"eu-de-2",
-		},
-	},
-	"lon": {
-		Description: "London, UK.",
-		VPCRegion:   "eu-gb",
-		Zones: []string{
-			"lon04",
-			"lon06",
-		},
-	},
-	"osa": {
-		Description: "Osaka, Japan",
-		VPCRegion:   "jp-osa",
-		Zones:       []string{"osa21"},
-	},
-	"syd": {
-		Description: "Sydney, Australia",
-		VPCRegion:   "au-syd",
-		Zones:       []string{
-			"syd04",
-			"syd05",
-		},
-	},
-	"mon": {
-		Description: "Montreal, Canada",
-		VPCRegion:   "ca-tor",
-		Zones:       []string{"mon01"},
-	},
-	"sao": {
-		Description: "São Paulo, Brazil",
-		VPCRegion:   "br-sao",
-		Zones:       []string{"sao01"},
-	},
-	"tor": {
-		Description: "Toronto, Canada",
-		VPCRegion:   "ca-tor",
-		Zones:       []string{"tor01"},
-	},
-	"tok": {
-		Description: "Tokyo, Japan",
-		VPCRegion:   "jp-tok",
-		Zones:       []string{"tok04"},
-	},
-	"us-east": {
-		Description: "Washington DC, USA",
-		VPCRegion:   "us-east",
-		Zones:       []string{"us-east"},
-	},
-}
-
-// VPCRegionForPowerVSRegion returns the VPC region for the specified PowerVS region.
-func VPCRegionForPowerVSRegion(region string) (string, error) {
-	if r, ok := Regions[region]; ok {
-		return r.VPCRegion, nil
-	}
-
-	return "", fmt.Errorf("VPC region corresponding to a PowerVS region %s not found ", region)
-}
-
-// VPCRegionForPowerVSZone returns the VPC region for the specified PowerVS zone.
-func VPCRegionForPowerVSZone(zone string) (string, error) {
-	for _, currentRegion := range Regions {
-		for _, currentZone := range currentRegion.Zones {
-			if currentZone == zone {
-				return currentRegion.VPCRegion, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("VPC region corresponding to a PowerVS zone %s not found ", zone)
-}
-
-type PowerVSStruct struct {
-	CISInstanceCRN string `json:"cisInstanceCRN"`
-	DNSInstanceCRN string `json:"dnsInstanceCRN"`
-	Region         string `json:"region"`
-	Zone           string `json:"zone"`
-}
-type Metadata struct {
-	ClusterName string `json:"ClusterName"`
-	ClusterID   string `json:"ClusterID"`
-	InfraID     string `json:"InfraID"`
-	PowerVS *PowerVSStruct
-}
-
-func readMetadata(fileName string) (*Metadata, error) {
-	var data = Metadata{}
-	var err error
-
-	file, err := ioutil.ReadFile(fileName)
-	if err != nil {
-		return &data, fmt.Errorf("Error: ReadFile returns %v", err)
-	}
-
-	err = json.Unmarshal([]byte(file), &data)
-	if err != nil {
-		return &data, fmt.Errorf("Error: Unmarshal returns %v", err)
-	}
-
-	return &data, nil
-}
-
-func GetNext(next interface{}) string {
-
-	if reflect.ValueOf(next).IsNil() {
-		return ""
-	}
-
-	u, err := url.Parse(reflect.ValueOf(next).Elem().FieldByName("Href").Elem().String())
-	if err != nil {
-		return ""
-	}
-
-	q := u.Query()
-	return q.Get("start")
-
-}
-
-func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) (string, error) {
-
-	var bxSession *bxsession.Session
-	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
-	var err error
-	var serviceGuid string = ""
-
-	bxSession, err = bxsession.New(&bluemix.Config{
-		BluemixAPIKey:         *ptrApiKey,
-		TokenProviderEndpoint: &tokenProviderEndpoint,
-		Debug:                 false,
-	})
-	if err != nil {
-		return "", fmt.Errorf("Error bxsession.New: %v", err)
-	}
-	log.Printf("bxSession = %+v", bxSession)
-
-	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
-		DefaultHeader: gohttp.Header{
-			"User-Agent": []string{http.UserAgent()},
-		},
-	})
-	if err != nil {
-		return "", fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
-	}
-	log.Printf("tokenRefresher = %+v", tokenRefresher)
-	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
-	if err != nil {
-		return "", fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
-	}
-
-	ctrlv2, err := controllerv2.New(bxSession)
-	if err != nil {
-		return "", fmt.Errorf("Error controllerv2.New: %v", err)
-	}
-	log.Printf("ctrlv2 = %+v", ctrlv2)
-
-	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
-	if err != nil {
-		return "", fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
-	}
-	log.Printf("resourceClientV2 = %+v", resourceClientV2)
-
-	svcs, err := resourceClientV2.ListInstances(controllerv2.ServiceInstanceQuery{
-		Type: "service_instance",
-	})
-	if err != nil {
-		return "", fmt.Errorf("Error resourceClientV2.ListInstances: %v", err)
-	}
-
-	for _, svc := range svcs {
-		log.Printf("Guid = %v", svc.Guid)
-		log.Printf("RegionID = %v", svc.RegionID)
-		log.Printf("Name = %v", svc.Name)
-		log.Printf("Crn = %v", svc.Crn)
-		if (ptrServiceName != nil) && (svc.Name == *ptrServiceName) {
-			serviceGuid = svc.Guid
-			break
-		}
-		if (ptrZone != nil) && (svc.RegionID == *ptrZone) {
-			serviceGuid = svc.Guid
-			break
-		}
-	}
-
-	if serviceGuid == "" {
-		return "", fmt.Errorf("%s not found in list of service instances!", *ptrServiceName)
-	} else {
-		return serviceGuid, nil
-	}
-
-}
-
-func createPiSession(ptrApiKey *string, serviceGuid string, ptrZone *string, ptrServiceName *string) (*ibmpisession.IBMPISession, error) {
-
-	var bxSession *bxsession.Session
-	var tokenProviderEndpoint string = "https://iam.cloud.ibm.com"
-	var err error
-
-	bxSession, err = bxsession.New(&bluemix.Config{
-		BluemixAPIKey:         *ptrApiKey,
-		TokenProviderEndpoint: &tokenProviderEndpoint,
-		Debug:                 false,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("Error bxsession.New: %v", err)
-	}
-	log.Printf("bxSession = %+v", bxSession)
-
-	tokenRefresher, err := authentication.NewIAMAuthRepository(bxSession.Config, &rest.Client{
-		DefaultHeader: gohttp.Header{
-			"User-Agent": []string{http.UserAgent()},
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("Error authentication.NewIAMAuthRepository: %v", err)
-	}
-	log.Printf("tokenRefresher = %+v", tokenRefresher)
-	err = tokenRefresher.AuthenticateAPIKey(bxSession.Config.BluemixAPIKey)
-	if err != nil {
-		return nil, fmt.Errorf("Error tokenRefresher.AuthenticateAPIKey: %v", err)
-	}
-
-	user, err := fetchUserDetails(bxSession, 2)
-	if err != nil {
-		return nil, fmt.Errorf("Error fetchUserDetails: %v", err)
-	}
-
-	ctrlv2, err := controllerv2.New(bxSession)
-	if err != nil {
-		return nil, fmt.Errorf("Error controllerv2.New: %v", err)
-	}
-	log.Printf("ctrlv2 = %+v", ctrlv2)
-
-	resourceClientV2 := ctrlv2.ResourceServiceInstanceV2()
-	if err != nil {
-		return nil, fmt.Errorf("Error ctrlv2.ResourceServiceInstanceV2: %v", err)
-	}
-	log.Printf("resourceClientV2 = %+v", resourceClientV2)
-
-	serviceInstance, err := resourceClientV2.GetInstance(serviceGuid)
-	if err != nil {
-		return nil, fmt.Errorf("Error resourceClientV2.GetInstance: %v", err)
-	}
-	log.Printf("serviceInstance = %+v", serviceInstance)
-
-	region, err:= GetRegion(serviceInstance.RegionID)
-	if err != nil {
-		return nil, fmt.Errorf("Error GetRegion: %v", err)
-	}
-
-	var authenticator core.Authenticator = &core.IamAuthenticator{
-		ApiKey: *ptrApiKey,
-	}
-
-	var options *ibmpisession.IBMPIOptions = &ibmpisession.IBMPIOptions{
-		Authenticator: authenticator,
-		Debug:         false,
-		Region:        region,
-		UserAccount:   user.Account,
-		Zone:          serviceInstance.RegionID,
-	}
-
-	var piSession *ibmpisession.IBMPISession
-
-	piSession, err = ibmpisession.NewIBMPISession(options)
-	if err != nil {
-		return nil, fmt.Errorf("Error ibmpisession.New: %v", err)
-	}
-	log.Printf("piSession = %+v", piSession)
-
-	return piSession, nil
-
-}
-
-func main() {
-
-	var logMain *logrus.Logger = &logrus.Logger{
-		Out: os.Stderr,
-		Formatter: new(logrus.TextFormatter),
-		Level: logrus.DebugLevel,
-	}
-
-	var data *Metadata = nil
-	var err error
-
-//{
-//	"clusterName":"rdr-hamzy-test"
-//	"clusterID":"55f0b68e-de46-4088-a883-736538acbfdc"
-//	"infraID":"rdr-hamzy-test-zq782",
-//	"powervs":{
-//		"cisInstanceCRN":"crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::",
-//		"region":"syd",
-//		"zone":"syd05"
-//	}
-//}
-
-	// CLI parameters:
-	var ptrMetadaFilename *string
-	var ptrShouldDebug *string
-	var ptrShouldDelete *string
-	var ptrShouldDeleteDHCP *string
-
-	var ptrApiKey *string
-	var ptrBaseDomain *string
-	var ptrServiceInstanceGUID *string
-	var ptrClusterName *string		// In metadata.json
-	var ptrInfraID *string			// In metadata.json
-	var ptrCISInstanceCRN *string		// In metadata.json
-	var ptrDNSInstanceCRN *string		// In metadata.json
-	var ptrRegion *string			// In metadata.json
-	var ptrZone *string			// In metadata.json
-	var ptrResourceGroupID *string
-
-	var shouldDebug = false
-
-	var needAPIKey = true
-	var needBaseDomain = true
-	var needServiceInstanceGUID = true
-	var needClusterName = true
-	var needInfraID = true
-	var needCISInstanceCRN = true
-	var needDNSInstanceCRN = true
-	var needRegion = true
-	var needZone = true
-	var needResourceGroupID = true
-
-	ptrMetadaFilename = flag.String("metadata", "", "The filename containing cluster metadata")
-	ptrShouldDebug = flag.String("shouldDebug", "false", "Should output debug output")
-	ptrShouldDelete = flag.String("shouldDelete", "false", "Should delete matching records")
-	ptrShouldDeleteDHCP = flag.String("shouldDeleteDHCP", "false", "Should delete all DHCP records")
-
-	ptrApiKey = flag.String("apiKey", "", "Your IBM Cloud API key")
-	ptrBaseDomain = flag.String("baseDomain", "", "The DNS zone Ex: scnl-ibm.com")
-	ptrServiceInstanceGUID = flag.String("serviceInstanceGUID", "", "The GUID of the service instance")
-	ptrClusterName = flag.String("clusterName", "", "The cluster name")
-	ptrInfraID = flag.String("infraID", "", "The infra ID")
-	ptrCISInstanceCRN = flag.String("CISInstanceCRN", "", "ibmcloud cis instances --output json | jq -r '.[] | select (.name|test(\"powervs-ipi-cis\")) | .crn'")
-	ptrDNSInstanceCRN = flag.String("DNSInstanceCRN", "", "ibmcloud cis instances --output json | jq -r '.[] | select (.name|test(\"powervs-ipi-cis\")) | .crn'")
-	ptrRegion = flag.String("region", "", "The region to use")
-	ptrZone = flag.String("zone", "", "The zone to use")
-	ptrResourceGroupID = flag.String("resourceGroupID", "", "The resource group to use")
-
-	flag.Parse()
-
-	switch strings.ToLower(*ptrShouldDebug) {
-	case "true":
-		shouldDebug = true
-	case "false":
-		shouldDebug = false
-	default:
-		logMain.Fatalf("Error: shouldDebug is not true/false (%s)", *ptrShouldDebug)
-	}
-
-	var out io.Writer
-
-	if shouldDebug {
-		out = os.Stderr
-	} else {
-		out = io.Discard
-	}
-	log = &logrus.Logger{
-		Out: out,
-		Formatter: new(logrus.TextFormatter),
-		Level: logrus.DebugLevel,
-	}
-
-	if shouldDebug {
-		logMain.Printf("ptrMetadaFilename      = %v", *ptrMetadaFilename)
-		logMain.Printf("ptrShouldDebug         = %v", *ptrShouldDebug)
-		logMain.Printf("ptrShouldDelete        = %v", *ptrShouldDelete)
-		logMain.Printf("ptrShouldDeleteDHCP    = %v", *ptrShouldDeleteDHCP)
-		logMain.Printf("ptrApiKey              = %v", *ptrApiKey)
-		logMain.Printf("ptrBaseDomain          = %v", *ptrBaseDomain)
-		logMain.Printf("ptrServiceInstanceGUID = %v", *ptrServiceInstanceGUID)
-		logMain.Printf("ptrClusterName         = %v", *ptrClusterName)
-		logMain.Printf("ptrInfraID             = %v", *ptrInfraID)
-		logMain.Printf("ptrCISInstanceCRN      = %v", *ptrCISInstanceCRN)
-		logMain.Printf("ptrDNSInstanceCRN      = %v", *ptrDNSInstanceCRN)
-		logMain.Printf("ptrRegion              = %v", *ptrRegion)
-		logMain.Printf("ptrZone                = %v", *ptrZone)
-		logMain.Printf("ptrResourceGroupID     = %v", *ptrResourceGroupID)
-	}
-
-	switch strings.ToLower(*ptrShouldDeleteDHCP) {
-	case "true":
-		shouldDeleteDHCP = true
-	case "false":
-		shouldDeleteDHCP = false
-	default:
-		logMain.Fatalf("Error: shouldDeleteDHCP is not true/false (%s)", *ptrShouldDeleteDHCP)
-	}
-
-	if *ptrMetadaFilename != "" {
-		data, err = readMetadata(*ptrMetadaFilename)
-		if err != nil {
-			logMain.Fatal(err)
-		}
-
-		if shouldDebug {
-			logMain.Printf("ClusterName    = %v", data.ClusterName)
-			logMain.Printf("ClusterID      = %v", data.ClusterID)
-			logMain.Printf("InfraID        = %v", data.InfraID)
-			logMain.Printf("CISInstanceCRN = %v", data.PowerVS.CISInstanceCRN)
-			logMain.Printf("DNSInstanceCRN = %v", data.PowerVS.DNSInstanceCRN)
-			logMain.Printf("Region         = %v", data.PowerVS.Region)
-			logMain.Printf("Zone           = %v", data.PowerVS.Zone)
-		}
-
-		// Handle:
-		// {
-		//   "clusterName": "rdr-hamzy-test",
-		//   "clusterID": "ffbb8a77-1ae7-445b-83ad-44cae63a8679",
-		//   "infraID": "rdr-hamzy-test-rwmtj",
-		//   "powervs": {
-		//     "cisInstanceCRN": "crn:v1:bluemix:public:internet-svcs:global:a/65b64c1f1c29460e8c2e4bbfbd893c2c:453c4cff-2ee0-4309-95f1-2e9384d9bb96::",
-		//     "region": "lon",
-		//     "zone": "lon04"
-		//   }
-		// }
-
-		ptrInfraID = &data.InfraID
-		needInfraID = false
-
-		ptrCISInstanceCRN= &data.PowerVS.CISInstanceCRN
-		needCISInstanceCRN = false
-
-		ptrDNSInstanceCRN= &data.PowerVS.DNSInstanceCRN
-		needDNSInstanceCRN = false
-
-		ptrRegion = &data.PowerVS.Region
-		needRegion = false
-
-		ptrZone = &data.PowerVS.Zone
-		needZone = false
-	}
-	if needAPIKey && *ptrApiKey == "" {
-		logMain.Fatal("Error: No API key set, use -apiKey")
-	}
-	if needBaseDomain && *ptrBaseDomain == "" {
-		logMain.Fatal("Error: No base domain set, use -baseDomain")
-	}
-	if needServiceInstanceGUID && *ptrServiceInstanceGUID == "" {
-		logMain.Fatal("Error: No service instance GUID set, use -serviceInstanceGUID")
-	}
-	if needClusterName && *ptrClusterName == "" {
-		logMain.Fatal("Error: No cluster name set, use -clusterName")
-	}
-	if needInfraID && *ptrInfraID == "" {
-		logMain.Fatal("Error: No Infra ID set, use -infraID")
-	}
-	if *ptrCISInstanceCRN != "" {
-		needDNSInstanceCRN = false
-	}
-	if *ptrDNSInstanceCRN != "" {
-		needCISInstanceCRN = false
-	}
-	if needCISInstanceCRN && *ptrCISInstanceCRN == "" {
-		logMain.Fatal("Error: No CISInstanceCRN set, use -CISInstanceCRN")
-	}
-	if needDNSInstanceCRN && *ptrDNSInstanceCRN == "" {
-		logMain.Fatal("Error: No DNSInstanceCRN set, use -DNSInstanceCRN")
-	}
-	if needRegion && *ptrRegion == "" {
-		logMain.Fatal("Error: No region set, use -region")
-	}
-	if needZone && *ptrZone == "" {
-		logMain.Fatal("Error: No zone set, use -zone")
-	}
-	if needResourceGroupID && *ptrResourceGroupID == "" {
-		logMain.Fatal("Error: No resource group ID set, use -resourceGroupID")
-	}
-	switch strings.ToLower(*ptrShouldDelete) {
-	case "true":
-		shouldDelete = true
-	case "false":
-		shouldDelete = false
-	default:
-		logMain.Fatalf("Error: shouldDelete is not true/false (%s)", *ptrShouldDelete)
-	}
-
-	var clusterUninstaller *ClusterUninstaller
-
-	clusterUninstaller, err = New (log,
-		*ptrApiKey,
-		*ptrBaseDomain,
-		*ptrServiceInstanceGUID,
-		*ptrClusterName,
-		*ptrInfraID,
-		*ptrCISInstanceCRN,
-		*ptrDNSInstanceCRN,
-		*ptrRegion,
-		*ptrZone,
-		*ptrResourceGroupID)
-	if err != nil {
-		logMain.Fatalf("Error New: %v", err)
-	}
-	if shouldDebug { logMain.Printf("clusterUninstaller = %+v", clusterUninstaller) }
-
-	err = clusterUninstaller.Run ()
-	if err != nil {
-		logMain.Fatalf("Error clusterUninstaller.Run: %v", err)
-	}
-
 }
