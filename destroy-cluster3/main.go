@@ -352,6 +352,17 @@ func (o *ClusterUninstaller) PolledRun() (bool, error) {
 		return false, err
 	}
 
+	var resourceID string
+
+	o.Logger.Debugf("powervs.Run: o.resourceGroupID = %s", o.resourceGroupID)
+	resourceID, err = o.resourceNameToID(o.resourceGroupID)
+	if err != nil {
+		log.Fatalf("Error: resourceNameToID returns %v", err)
+	}
+	o.Logger.Debugf("powervs.Run: resourceID = %s", resourceID)
+	o.resourceGroupID = resourceID
+	o.Logger.Debugf("powervs.Run: o.resourceGroupID = %s", o.resourceGroupID)
+
 	err = o.destroyCluster()
 	if err != nil {
 		o.Logger.Debugf("powervs.PolledRun: Failed destroyCluster")
@@ -1286,6 +1297,44 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 
 }
 
+func (o *ClusterUninstaller) resourceNameToID(resourceGroupName string) (string, error) {
+
+	var (
+		listResourceGroupsOptions *resourcemanagerv2.ListResourceGroupsOptions
+		resourceGroups            *resourcemanagerv2.ResourceGroupList
+		resourceGroup             resourcemanagerv2.ResourceGroup
+		resourceGroupID           string
+		response                  *core.DetailedResponse
+		err                       error
+	)
+
+	user, err := FetchUserDetails(o.APIKey)
+	if err != nil {
+		return "", fmt.Errorf("resourceNameToID: fetchUserDetails: %w", err)
+	}
+
+	listResourceGroupsOptions = o.managementSvc.NewListResourceGroupsOptions()
+	listResourceGroupsOptions.SetAccountID(user.Account)
+	log.Debugf("resourceNameToID: listResourceGroupsOptions = %+v", listResourceGroupsOptions)
+	log.Debugf("resourceNameToID: listResourceGroupsOptions.AccountID = %s", *listResourceGroupsOptions.AccountID)
+
+	resourceGroups, response, err = o.managementSvc.ListResourceGroups(listResourceGroupsOptions)
+	if err != nil {
+		return "", fmt.Errorf("resourceNameToID: ListResourceGroups: err = %v, response = %s", err, response)
+	}
+
+	for _, resourceGroup = range resourceGroups.Resources {
+		if *resourceGroup.Name == resourceGroupName {
+			log.Debugf("resourceNameToID: resourceGroup FOUND: %s %s", *resourceGroup.ID, *resourceGroup.Name)
+			resourceGroupID = *resourceGroup.ID
+		} else {
+			log.Debugf("resourceNameToID: resourceGroup SKIP:  %s %s", *resourceGroup.ID, *resourceGroup.Name)
+		}
+	}
+
+	return resourceGroupID, err
+}
+
 func main() {
 
 	var (
@@ -1305,7 +1354,6 @@ func main() {
 		ptrShouldDebug *string
 		ptrShouldDelete *string
 		ptrShouldDeleteDHCP *string
-
 		ptrApiKey *string
 		ptrBaseDomain *string
 		ptrServiceInstanceGUID *string
