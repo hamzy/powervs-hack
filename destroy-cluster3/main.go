@@ -271,7 +271,8 @@ func New(log logrus.FieldLogger,
 	dnsInstanceCRN string,
 	region string,
 	zone string,
-	resourceGroupID string) (*ClusterUninstaller, error) {
+	resourceGroupID string,
+	transitGatewayName string) (*ClusterUninstaller, error) {
 
 	var vpcRegion string
 	var err error
@@ -292,7 +293,7 @@ func New(log logrus.FieldLogger,
 		DNSInstanceCRN:     dnsInstanceCRN,
 		Region:             region,
 		ServiceGUID:        serviceInstanceGUID,
-		TransitGatewayName: "", // @TODO
+		TransitGatewayName: transitGatewayName,
 		VPCRegion:          vpcRegion,
 		Zone:               zone,
 		pendingItemTracker: newPendingItemTracker(),
@@ -524,6 +525,9 @@ func (o *ClusterUninstaller) loadSDKServices() error {
 		o.Logger.Debugf("loadSDKServices: o.imageClient = %v", o.imageClient)
 		o.Logger.Debugf("loadSDKServices: o.jobClient = %v", o.jobClient)
 		o.Logger.Debugf("loadSDKServices: o.keyClient = %v", o.keyClient)
+		o.Logger.Debugf("loadSDKServices: o.dhcpClient = %v", o.dhcpClient)
+		o.Logger.Debugf("loadSDKServices: o.networkClient = %v", o.networkClient)
+		o.Logger.Debugf("loadSDKServices: o.tgClient = %v", o.tgClient)
 		o.Logger.Debugf("loadSDKServices: o.vpcSvc = %v", o.vpcSvc)
 		o.Logger.Debugf("loadSDKServices: o.managementSvc = %v", o.managementSvc)
 		o.Logger.Debugf("loadSDKServices: o.controllerSvc = %v", o.controllerSvc)
@@ -1310,8 +1314,9 @@ func main() {
 		ptrCISInstanceCRN *string		// In metadata.json
 		ptrDNSInstanceCRN *string		// In metadata.json
 		ptrRegion *string			// In metadata.json
-		ptrZone *string			// In metadata.json
+		ptrZone *string				// In metadata.json
 		ptrResourceGroupID *string
+		ptrTransitGateway *string		// In metadata.json
 
 		needAPIKey              = true
 		needBaseDomain          = true
@@ -1323,6 +1328,7 @@ func main() {
 		needRegion              = true
 		needZone                = true
 		needResourceGroupID     = true
+		needTransitGateway      = true
 
 		clusterUninstaller *ClusterUninstaller
 	)
@@ -1353,6 +1359,7 @@ func main() {
 	ptrRegion = flag.String("region", "", "The region to use")
 	ptrZone = flag.String("zone", "", "The zone to use")
 	ptrResourceGroupID = flag.String("resourceGroupID", "", "The resource group to use")
+	ptrTransitGateway = flag.String("transitGateway", "", "The transit gateway to use")
 
 	flag.Parse()
 
@@ -1391,6 +1398,7 @@ func main() {
 		log.Printf("ptrRegion              = %v", *ptrRegion)
 		log.Printf("ptrZone                = %v", *ptrZone)
 		log.Printf("ptrResourceGroupID     = %v", *ptrResourceGroupID)
+		log.Printf("ptrTransitGateway      = %v", *ptrTransitGateway)
 	}
 
 	switch strings.ToLower(*ptrShouldDeleteDHCP) {
@@ -1463,6 +1471,9 @@ func main() {
 
 		ptrServiceInstanceGUID = &data.PowerVS.ServiceInstanceGUID
 		needServiceInstanceGUID = false
+
+		ptrTransitGateway = &data.PowerVS.TransitGatewayName
+		needTransitGateway = false
 	}
 	if needAPIKey && *ptrApiKey == "" {
 		log.Fatal("Error: No API key set, use -apiKey")
@@ -1500,6 +1511,9 @@ func main() {
 	if needResourceGroupID && *ptrResourceGroupID == "" {
 		log.Fatal("Error: No resource group ID set, use -resourceGroupID")
 	}
+	if needTransitGateway && *ptrTransitGateway == "" {
+		log.Fatal("Error: No transit gateway set, use -transitGateway")
+	}
 	switch strings.ToLower(*ptrShouldDelete) {
 	case "true":
 		shouldDelete = true
@@ -1519,7 +1533,8 @@ func main() {
 		*ptrDNSInstanceCRN,
 		*ptrRegion,
 		*ptrZone,
-		*ptrResourceGroupID)
+		*ptrResourceGroupID,
+		*ptrTransitGateway)
 	if err != nil {
 		log.Fatalf("Error New: %v", err)
 	}
