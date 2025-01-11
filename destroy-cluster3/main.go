@@ -1284,14 +1284,48 @@ func getServiceGuid(ptrApiKey *string, ptrZone *string, ptrServiceName *string) 
 
 func main() {
 
-	var logMain *logrus.Logger = &logrus.Logger{
-		Out: os.Stderr,
-		Formatter: new(logrus.TextFormatter),
-		Level: logrus.DebugLevel,
-	}
+	var (
+		logMain *logrus.Logger = &logrus.Logger{
+			Out: os.Stderr,
+			Formatter: new(logrus.TextFormatter),
+			Level: logrus.DebugLevel,
+		}
 
-	var data *Metadata = nil
-	var err error
+		out  io.Writer
+
+		data *Metadata = nil
+		err  error
+
+		// CLI parameters:
+		ptrMetadaFilename *string
+		ptrShouldDebug *string
+		ptrShouldDelete *string
+		ptrShouldDeleteDHCP *string
+
+		ptrApiKey *string
+		ptrBaseDomain *string
+		ptrServiceInstanceGUID *string
+		ptrClusterName *string			// In metadata.json
+		ptrInfraID *string			// In metadata.json
+		ptrCISInstanceCRN *string		// In metadata.json
+		ptrDNSInstanceCRN *string		// In metadata.json
+		ptrRegion *string			// In metadata.json
+		ptrZone *string			// In metadata.json
+		ptrResourceGroupID *string
+
+		needAPIKey              = true
+		needBaseDomain          = true
+		needServiceInstanceGUID = true
+		needClusterName         = true
+		needInfraID             = true
+		needCISInstanceCRN      = true
+		needDNSInstanceCRN      = true
+		needRegion              = true
+		needZone                = true
+		needResourceGroupID     = true
+
+		clusterUninstaller *ClusterUninstaller
+	)
 
 //{
 //	"clusterName":"rdr-hamzy-test"
@@ -1303,34 +1337,6 @@ func main() {
 //		"zone":"syd05"
 //	}
 //}
-
-	// CLI parameters:
-	var ptrMetadaFilename *string
-	var ptrShouldDebug *string
-	var ptrShouldDelete *string
-	var ptrShouldDeleteDHCP *string
-
-	var ptrApiKey *string
-	var ptrBaseDomain *string
-	var ptrServiceInstanceGUID *string
-	var ptrClusterName *string		// In metadata.json
-	var ptrInfraID *string			// In metadata.json
-	var ptrCISInstanceCRN *string		// In metadata.json
-	var ptrDNSInstanceCRN *string		// In metadata.json
-	var ptrRegion *string			// In metadata.json
-	var ptrZone *string			// In metadata.json
-	var ptrResourceGroupID *string
-
-	var needAPIKey = true
-	var needBaseDomain = true
-	var needServiceInstanceGUID = true
-	var needClusterName = true
-	var needInfraID = true
-	var needCISInstanceCRN = true
-	var needDNSInstanceCRN = true
-	var needRegion = true
-	var needZone = true
-	var needResourceGroupID = true
 
 	ptrMetadaFilename = flag.String("metadata", "", "The filename containing cluster metadata")
 	ptrShouldDebug = flag.String("shouldDebug", "false", "Should output debug output")
@@ -1358,8 +1364,6 @@ func main() {
 	default:
 		logMain.Fatalf("Error: shouldDebug is not true/false (%s)", *ptrShouldDebug)
 	}
-
-	var out io.Writer
 
 	if shouldDebug {
 		out = os.Stderr
@@ -1504,10 +1508,6 @@ func main() {
 	default:
 		log.Fatalf("Error: shouldDelete is not true/false (%s)", *ptrShouldDelete)
 	}
-
-	os.Exit(1)
-
-	var clusterUninstaller *ClusterUninstaller
 
 	clusterUninstaller, err = New (log,
 		*ptrApiKey,

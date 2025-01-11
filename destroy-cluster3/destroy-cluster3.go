@@ -91,10 +91,12 @@ func (o *ClusterUninstaller) destroyCloudInstance(item cloudResource) error {
 
 	deleteInstanceOptions = o.vpcSvc.NewDeleteInstanceOptions(item.id)
 
+	if shouldDelete {
 	response, err = o.vpcSvc.DeleteInstanceWithContext(ctx, deleteInstanceOptions)
 	if err != nil {
 		o.Logger.Infof("Error: o.vpcSvc.DeleteInstanceWithContext: %q %q", err, response)
 		return err
+	}
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -151,6 +153,7 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 		return fmt.Errorf("destroyCloudInstances: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -172,6 +175,7 @@ func (o *ClusterUninstaller) destroyCloudInstances() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyCloudInstances: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -375,6 +379,7 @@ func (o *ClusterUninstaller) destroyCOSInstance(item cloudResource) error {
 
 	response, err = o.controllerSvc.DeleteResourceInstanceWithContext(ctx, options)
 
+	if shouldDelete {
 	if err != nil && response != nil && response.StatusCode != gohttp.StatusNotFound {
 		return fmt.Errorf("failed to delete COS instance %s: %w", item.name, err)
 	}
@@ -391,6 +396,7 @@ func (o *ClusterUninstaller) destroyCOSInstance(item cloudResource) error {
 		if err != nil {
 			return fmt.Errorf("failed RunReclamationActionWithContext: %w", err)
 		}
+	}
 	}
 
 	o.Logger.Infof("Deleted COS Instance %q", item.name)
@@ -449,6 +455,7 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 		return fmt.Errorf("destroyCOSInstances: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -470,6 +477,7 @@ func (o *ClusterUninstaller) destroyCOSInstances() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyCOSInstances: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -682,9 +690,11 @@ func (o *ClusterUninstaller) deleteCloudSSHKey(item cloudResource) error {
 
 	deleteKeyOptions = o.vpcSvc.NewDeleteKeyOptions(item.id)
 
+	if shouldDelete {
 	_, err = o.vpcSvc.DeleteKeyWithContext(ctx, deleteKeyOptions)
 	if err != nil {
 		return fmt.Errorf("failed to delete sshKey %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted Cloud SSHKey %q", item.name)
@@ -743,6 +753,7 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 		return fmt.Errorf("destroyCloudSSHKeys: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -764,6 +775,7 @@ func (o *ClusterUninstaller) destroyCloudSSHKeys() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyCloudSSHKeys: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -846,10 +858,12 @@ func (o *ClusterUninstaller) deleteCloudSubnet(item cloudResource) error {
 		return nil
 	}
 
+	if shouldDelete {
 	deleteOptions := o.vpcSvc.NewDeleteSubnetOptions(item.id)
 	_, err = o.vpcSvc.DeleteSubnetWithContext(ctx, deleteOptions)
 	if err != nil {
 		return fmt.Errorf("failed to delete subnet %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted Subnet %q", item.name)
@@ -908,6 +922,7 @@ func (o *ClusterUninstaller) destroyCloudSubnets() error {
 		return fmt.Errorf("destroyCloudSubnets: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -929,6 +944,7 @@ func (o *ClusterUninstaller) destroyCloudSubnets() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyCloudSubnets: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -1073,9 +1089,11 @@ func (o *ClusterUninstaller) destroyTransitGateway(item cloudResource) error {
 	// We can delete the transit gateway now!
 	deleteTransitGatewayOptions = o.tgClient.NewDeleteTransitGatewayOptions(item.id)
 
+	if shouldDelete {
 	response, err = o.tgClient.DeleteTransitGatewayWithContext(ctx, deleteTransitGatewayOptions)
 	if err != nil {
 		o.Logger.Fatalf("destroyTransitGateway: DeleteTransitGatewayWithContext returns %v with response %v", err, response)
+	}
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -1137,6 +1155,7 @@ func (o *ClusterUninstaller) destroyTransitGatewayConnections(item cloudResource
 		return fmt.Errorf("destroyTransitGateway: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff = wait.Backoff{Duration: 15 * time.Second,
 		Factor: 1.5,
 		Cap:    10 * time.Minute,
@@ -1164,6 +1183,7 @@ func (o *ClusterUninstaller) destroyTransitGatewayConnections(item cloudResource
 	if err != nil {
 		o.Logger.Fatalf("destroyTransitGateway: ExponentialBackoffWithContext (list) returns %v", err)
 	}
+	}
 
 	return err
 }
@@ -1186,9 +1206,11 @@ func (o *ClusterUninstaller) destroyTransitConnection(item cloudResource) error 
 	// NOTE: item.status is reused as the parent transit gateway id!
 	deleteTransitGatewayConnectionOptions = o.tgClient.NewDeleteTransitGatewayConnectionOptions(item.status, item.id)
 
+	if shouldDelete {
 	response, err = o.tgClient.DeleteTransitGatewayConnectionWithContext(ctx, deleteTransitGatewayConnectionOptions)
 	if err != nil {
 		o.Logger.Fatalf("destroyTransitConnection: DeleteTransitGatewayConnectionWithContext returns %v with response %v", err, response)
+	}
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -1382,6 +1404,7 @@ func (o *ClusterUninstaller) innerDestroyTransitGateways() error {
 		return fmt.Errorf("destroyTransitGateways: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff = wait.Backoff{Duration: 15 * time.Second,
 		Factor: 1.5,
 		Cap:    10 * time.Minute,
@@ -1408,6 +1431,7 @@ func (o *ClusterUninstaller) innerDestroyTransitGateways() error {
 	})
 	if err != nil {
 		o.Logger.Fatalf("destroyTransitGateways: ExponentialBackoffWithContext (list) returns %v", err)
+	}
 	}
 
 	return nil
@@ -1518,10 +1542,12 @@ func (o *ClusterUninstaller) destroyDHCPNetwork(item cloudResource) error {
 
 	o.Logger.Debugf("Deleting DHCP network %q", item.name)
 
+	if shouldDelete {
 	err = o.dhcpClient.Delete(item.id)
 	if err != nil {
 		o.Logger.Infof("Error: o.dhcpClient.Delete: %q", err)
 		return err
+	}
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -1542,10 +1568,12 @@ func (o *ClusterUninstaller) destroyDHCPVM(item cloudResource) error {
 
 	o.Logger.Debugf("Deleting DHCP VM %q", item.name)
 
+	if shouldDelete {
 	err = o.instanceClient.Delete(item.id)
 	if err != nil {
 		o.Logger.Infof("Error: DHCP o.instanceClient.Delete: %q", err)
 		return err
+	}
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -1614,6 +1642,7 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 		return fmt.Errorf("destroyDHCPNetworks: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -1635,6 +1664,7 @@ func (o *ClusterUninstaller) destroyDHCPNetworks() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyDHCPNetworks: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -1757,9 +1787,11 @@ func (o *ClusterUninstaller) destroyDNSRecord(item cloudResource) error {
 
 	deleteOptions := o.dnsRecordsSvc.NewDeleteDnsRecordOptions(item.id)
 
+	if shouldDelete {
 	_, _, err = o.dnsRecordsSvc.DeleteDnsRecordWithContext(ctx, deleteOptions)
 	if err != nil {
 		return fmt.Errorf("failed to delete DNS record %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted DNS Record %q", item.name)
@@ -1823,6 +1855,7 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 		return fmt.Errorf("destroyDNSRecords: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -1844,6 +1877,7 @@ func (o *ClusterUninstaller) destroyDNSRecords() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyDNSRecords: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -1946,9 +1980,11 @@ func (o *ClusterUninstaller) destroyResourceRecord(item cloudResource) error {
 
 	deleteOptions := o.resourceRecordsSvc.NewDeleteResourceRecordOptions(dnsCRN.ServiceInstance, o.dnsZoneID, item.id)
 
+	if shouldDelete {
 	_, err = o.resourceRecordsSvc.DeleteResourceRecord(deleteOptions)
 	if err != nil {
 		return fmt.Errorf("failed to delete DNS Resource record %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted DNS Resource Record %q", item.name)
@@ -2012,6 +2048,7 @@ func (o *ClusterUninstaller) destroyResourceRecords() error {
 		return fmt.Errorf("destroyResourceRecords: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -2033,6 +2070,7 @@ func (o *ClusterUninstaller) destroyResourceRecords() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyResourceRecords: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -2145,9 +2183,11 @@ func (o *ClusterUninstaller) deleteImage(item cloudResource) error {
 		return nil
 	}
 
+	if shouldDelete {
 	err = o.imageClient.Delete(item.id)
 	if err != nil {
 		return fmt.Errorf("failed to delete image %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted Image %q", item.name)
@@ -2209,6 +2249,7 @@ func (o *ClusterUninstaller) destroyImages() error {
 		return fmt.Errorf("destroyImages: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -2230,6 +2271,7 @@ func (o *ClusterUninstaller) destroyImages() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyImages: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -2406,6 +2448,7 @@ func (o *ClusterUninstaller) destroyJobs() error {
 		return fmt.Errorf("destroyJobs: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -2427,6 +2470,7 @@ func (o *ClusterUninstaller) destroyJobs() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyJobs: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -2528,9 +2572,11 @@ func (o *ClusterUninstaller) deleteLoadBalancer(item cloudResource) error {
 
 	deleteOptions := o.vpcSvc.NewDeleteLoadBalancerOptions(item.id)
 
+	if shouldDelete {
 	_, err = o.vpcSvc.DeleteLoadBalancerWithContext(ctx, deleteOptions)
 	if err != nil {
 		return fmt.Errorf("failed to delete load balancer %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted Load Balancer %q", item.name)
@@ -2589,6 +2635,7 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 		return fmt.Errorf("destroyLoadBalancers: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -2610,6 +2657,7 @@ func (o *ClusterUninstaller) destroyLoadBalancers() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyLoadBalancers: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -2675,10 +2723,12 @@ func (o *ClusterUninstaller) destroyPowerInstance(item cloudResource) error {
 
 	o.Logger.Debugf("Deleting Power instance %q", item.name)
 
+	if shouldDelete {
 	err = o.instanceClient.Delete(item.id)
 	if err != nil {
 		o.Logger.Infof("Error: o.instanceClient.Delete: %q", err)
 		return err
+	}
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -2737,6 +2787,7 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 		return fmt.Errorf("destroyPowerInstances: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -2758,6 +2809,7 @@ func (o *ClusterUninstaller) destroyPowerInstances() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyPowerInstances: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -2840,9 +2892,11 @@ func (o *ClusterUninstaller) deletePowerSSHKey(item cloudResource) error {
 		return nil
 	}
 
+	if shouldDelete {
 	err = o.keyClient.Delete(item.id)
 	if err != nil {
 		return fmt.Errorf("failed to delete Power sshKey %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted Power SSHKey %q", item.name)
@@ -2901,6 +2955,7 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 		return fmt.Errorf("destroyPowerSSHKeys: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -2922,6 +2977,7 @@ func (o *ClusterUninstaller) destroyPowerSSHKeys() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyPowerSSHKeys: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -2977,9 +3033,11 @@ func (o *ClusterUninstaller) deletePowerSubnet(item cloudResource) error {
 
 	o.Logger.Debugf("Deleting Power Network %q", item.name)
 
+	if shouldDelete {
 	if err := o.networkClient.Delete(item.id); err != nil {
 		o.Logger.Infof("Error: o.networkClient.Delete: %q", err)
 		return err
+	}
 	}
 
 	o.deletePendingItems(item.typeName, []cloudResource{item})
@@ -3038,6 +3096,7 @@ func (o *ClusterUninstaller) destroyPowerSubnets() error {
 		return fmt.Errorf("destroyPowerSubnets: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -3059,6 +3118,7 @@ func (o *ClusterUninstaller) destroyPowerSubnets() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyPowerSubnets: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -3249,9 +3309,11 @@ func (o *ClusterUninstaller) deletePublicGateway(item cloudResource) error {
 
 	deletePublicGatewayOptions := o.vpcSvc.NewDeletePublicGatewayOptions(item.id)
 
+	if shouldDelete {
 	_, err = o.vpcSvc.DeletePublicGatewayWithContext(ctx, deletePublicGatewayOptions)
 	if err != nil {
 		return fmt.Errorf("failed to delete publicGateway %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted Public Gateway %q", item.name)
@@ -3310,6 +3372,7 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 		return fmt.Errorf("destroyPublicGateways: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -3331,6 +3394,7 @@ func (o *ClusterUninstaller) destroyPublicGateways() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyPublicGateways: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -3416,9 +3480,11 @@ func (o *ClusterUninstaller) deleteSecurityGroup(item cloudResource) error {
 
 	deleteOptions := o.vpcSvc.NewDeleteSecurityGroupOptions(item.id)
 
+	if shouldDelete {
 	_, err = o.vpcSvc.DeleteSecurityGroupWithContext(ctx, deleteOptions)
 	if err != nil {
 		return fmt.Errorf("failed to delete security group %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted Security Group %q", item.name)
@@ -3477,6 +3543,7 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 		return fmt.Errorf("destroySecurityGroups: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -3498,6 +3565,7 @@ func (o *ClusterUninstaller) destroySecurityGroups() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroySecurityGroups: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -3593,11 +3661,13 @@ func (o *ClusterUninstaller) deleteVPC(item cloudResource) error {
 	}
 
 	deleteOptions := o.vpcSvc.NewDeleteVPCOptions(item.id)
+	if shouldDelete {
 	deleteResponse, err = o.vpcSvc.DeleteVPCWithContext(ctx, deleteOptions)
 	o.Logger.Debugf("deleteVPC: DeleteVPCWithContext returns %+v", deleteResponse)
 
 	if err != nil {
 		return fmt.Errorf("failed to delete vpc %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted VPC %q", item.name)
@@ -3656,6 +3726,7 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 		return fmt.Errorf("destroyVPCs: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -3677,6 +3748,7 @@ func (o *ClusterUninstaller) destroyVPCs() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyVPCs: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
@@ -3868,10 +3940,12 @@ func (o *ClusterUninstaller) destroyServiceInstance(item cloudResource) error {
 	options := o.controllerSvc.NewDeleteResourceInstanceOptions(item.id)
 	options.SetRecursive(true)
 
+	if shouldDelete {
 	response, err = o.controllerSvc.DeleteResourceInstanceWithContext(ctx, options)
 
 	if err != nil && response != nil && response.StatusCode != gohttp.StatusNotFound {
 		return fmt.Errorf("failed to delete service instance %s: %w", item.name, err)
+	}
 	}
 
 	o.Logger.Infof("Deleted Service Instance %q", item.name)
@@ -3930,6 +4004,7 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 		return fmt.Errorf("destroyServiceInstances: %d undeleted items pending", len(items))
 	}
 
+	if shouldDelete {
 	backoff := wait.Backoff{
 		Duration: 15 * time.Second,
 		Factor:   1.1,
@@ -3951,6 +4026,7 @@ func (o *ClusterUninstaller) destroyServiceInstances() error {
 	})
 	if err != nil {
 		o.Logger.Fatal("destroyServiceInstances: ExponentialBackoffWithContext (list) returns ", err)
+	}
 	}
 
 	return nil
