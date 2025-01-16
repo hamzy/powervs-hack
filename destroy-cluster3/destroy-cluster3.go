@@ -31,6 +31,7 @@ func (o *ClusterUninstaller) listCloudInstances() (cloudResources, error) {
 	defer cancel()
 
 	options := o.vpcSvc.NewListInstancesOptions()
+	options.SetResourceGroupID(o.resourceGroupID)
 
 	// https://raw.githubusercontent.com/IBM/vpc-go-sdk/master/vpcv1/vpc_v1.go
 	resources, _, err := o.vpcSvc.ListInstancesWithContext(ctx, options)
@@ -213,6 +214,7 @@ func (o *ClusterUninstaller) listCOSInstances() (cloudResources, error) {
 	options = o.controllerSvc.NewListResourceInstancesOptions()
 	options.Limit = &perPage
 	options.SetResourceID(cosResourceID)
+	options.SetResourceGroupID(o.resourceGroupID)
 	options.SetType("service_instance")
 
 	result := []cloudResource{}
@@ -264,6 +266,7 @@ func (o *ClusterUninstaller) listCOSInstances() (cloudResources, error) {
 		options = o.controllerSvc.NewListResourceInstancesOptions()
 		options.Limit = &perPage
 		options.SetResourceID(cosResourceID)
+		options.SetResourceGroupID(o.resourceGroupID)
 		options.SetType("service_instance")
 
 		moreData = true
@@ -575,6 +578,7 @@ func (o *ClusterUninstaller) listCloudSSHKeys() (cloudResources, error) {
 
 	listKeysOptions = o.vpcSvc.NewListKeysOptions()
 	listKeysOptions.SetLimit(perPage)
+	listKeysOptions.SetResourceGroupID(o.resourceGroupID)
 
 	result := []cloudResource{}
 
@@ -624,6 +628,7 @@ func (o *ClusterUninstaller) listCloudSSHKeys() (cloudResources, error) {
 
 		listKeysOptions = o.vpcSvc.NewListKeysOptions()
 		listKeysOptions.SetLimit(perPage)
+		listKeysOptions.SetResourceGroupID(o.resourceGroupID)
 		moreData = true
 
 		for moreData {
@@ -797,8 +802,9 @@ func (o *ClusterUninstaller) listCloudSubnets() (cloudResources, error) {
 	}
 
 	options := o.vpcSvc.NewListSubnetsOptions()
-	subnets, detailedResponse, err := o.vpcSvc.ListSubnets(options)
+	options.SetResourceGroupID(o.resourceGroupID)
 
+	subnets, detailedResponse, err := o.vpcSvc.ListSubnets(options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list subnets and the response is: %s: %w", detailedResponse, err)
 	}
@@ -3136,6 +3142,8 @@ func (o *ClusterUninstaller) listAttachedSubnets(publicGatewayID string) (cloudR
 	defer cancel()
 
 	options := o.vpcSvc.NewListSubnetsOptions()
+	options.SetResourceGroupID(o.resourceGroupID)
+
 	resources, _, err := o.vpcSvc.ListSubnetsWithContext(ctx, options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list subnets: %w", err)
@@ -3184,8 +3192,8 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 	}
 
 	listPublicGatewaysOptions = o.vpcSvc.NewListPublicGatewaysOptions()
-
 	listPublicGatewaysOptions.SetLimit(perPage)
+	listPublicGatewaysOptions.SetResourceGroupID(o.resourceGroupID)
 
 	result := []cloudResource{}
 
@@ -3236,6 +3244,7 @@ func (o *ClusterUninstaller) listPublicGateways() (cloudResources, error) {
 
 		listPublicGatewaysOptions = o.vpcSvc.NewListPublicGatewaysOptions()
 		listPublicGatewaysOptions.SetLimit(perPage)
+		listPublicGatewaysOptions.SetResourceGroupID(o.resourceGroupID)
 
 		for moreData {
 			publicGatewayCollection, detailedResponse, err = o.vpcSvc.ListPublicGatewaysWithContext(ctx, listPublicGatewaysOptions)
@@ -3417,8 +3426,9 @@ func (o *ClusterUninstaller) listSecurityGroups() (cloudResources, error) {
 	}
 
 	options := o.vpcSvc.NewListSecurityGroupsOptions()
-	resources, _, err := o.vpcSvc.ListSecurityGroupsWithContext(ctx, options)
+	options.SetResourceGroupID(o.resourceGroupID)
 
+	resources, _, err := o.vpcSvc.ListSecurityGroupsWithContext(ctx, options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list security groups: %w", err)
 	}
@@ -3589,8 +3599,9 @@ func (o *ClusterUninstaller) listVPCs() (cloudResources, error) {
 	}
 
 	options := o.vpcSvc.NewListVpcsOptions()
-	vpcs, _, err := o.vpcSvc.ListVpcs(options)
+	options.SetResourceGroupID(o.resourceGroupID)
 
+	vpcs, _, err := o.vpcSvc.ListVpcs(options)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list vps: %w", err)
 	}
@@ -3761,26 +3772,6 @@ const (
 	virtualServerResourceID = "abd259f0-9990-11e8-acc8-b9f54a8f1661"
 )
 
-// convertResourceGroupNameToID converts a resource group name/id to an id.
-func (o *ClusterUninstaller) convertResourceGroupNameToID(resourceGroupID string) (string, error) {
-	listResourceGroupsOptions := o.managementSvc.NewListResourceGroupsOptions()
-
-	resourceGroups, _, err := o.managementSvc.ListResourceGroups(listResourceGroupsOptions)
-	if err != nil {
-		return "", err
-	}
-
-	for _, resourceGroup := range resourceGroups.Resources {
-		if *resourceGroup.Name == resourceGroupID {
-			return *resourceGroup.ID, nil
-		} else if *resourceGroup.ID == resourceGroupID {
-			return resourceGroupID, nil
-		}
-	}
-
-	return "", fmt.Errorf("failed to find resource group %v", resourceGroupID)
-}
-
 // listServiceInstances list service instances for the cluster.
 func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 	o.Logger.Debugf("Listing service instances")
@@ -3796,7 +3787,6 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 	}
 
 	var (
-		resourceGroupID string
 		options         *resourcecontrollerv2.ListResourceInstancesOptions
 		resources       *resourcecontrollerv2.ResourceInstancesList
 		err             error
@@ -3805,17 +3795,12 @@ func (o *ClusterUninstaller) listServiceInstances() (cloudResources, error) {
 		nextURL         *string
 	)
 
-	resourceGroupID, err = o.convertResourceGroupNameToID(o.resourceGroupID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert resourceGroupID: %w", err)
-	}
-	o.Logger.Debugf("listServiceInstances: converted %v to %v", o.resourceGroupID, resourceGroupID)
-
 	options = o.controllerSvc.NewListResourceInstancesOptions()
 	// options.SetType("resource_instance")
-	options.SetResourceGroupID(resourceGroupID)
+	options.SetResourceGroupID(o.resourceGroupID)
 	options.SetResourceID(virtualServerResourceID)
 	options.SetLimit(perPage)
+	options.SetResourceGroupID(o.resourceGroupID)
 
 	result := []cloudResource{}
 
