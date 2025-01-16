@@ -4,11 +4,11 @@ go 1.21.4
 
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
-	github.com/IBM-Cloud/bluemix-go v0.0.0-20240314082800-4e02a69b84b2
+	github.com/IBM-Cloud/bluemix-go v0.0.0-20240402122236-5c5b994a3f1a
 	github.com/IBM-Cloud/power-go-client v1.6.0
-	github.com/IBM/go-sdk-core/v5 v5.16.3
+	github.com/IBM/go-sdk-core/v5 v5.16.5
 	github.com/IBM/networking-go-sdk v0.45.0
-	github.com/IBM/platform-services-go-sdk v0.62.0
+	github.com/IBM/platform-services-go-sdk v0.62.5
 	github.com/IBM/vpc-go-sdk v0.50.0
 	github.com/form3tech-oss/jwt-go v3.2.5+incompatible
 	github.com/sirupsen/logrus v1.9.3
@@ -33,7 +33,7 @@ require (
 	github.com/go-openapi/validate v0.22.4 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
 	github.com/go-playground/universal-translator v0.18.1 // indirect
-	github.com/go-playground/validator/v10 v10.18.0 // indirect
+	github.com/go-playground/validator/v10 v10.19.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-cleanhttp v0.5.2 // indirect
 	github.com/hashicorp/go-retryablehttp v0.7.5 // indirect
@@ -50,11 +50,12 @@ require (
 	go.mongodb.org/mongo-driver v1.14.0 // indirect
 	go.opentelemetry.io/otel v1.14.0 // indirect
 	go.opentelemetry.io/otel/trace v1.14.0 // indirect
-	golang.org/x/crypto v0.19.0 // indirect
-	golang.org/x/net v0.21.0 // indirect
-	golang.org/x/sys v0.17.0 // indirect
-	golang.org/x/term v0.17.0 // indirect
+	golang.org/x/crypto v0.21.0 // indirect
+	golang.org/x/net v0.23.0 // indirect
+	golang.org/x/sys v0.18.0 // indirect
+	golang.org/x/term v0.18.0 // indirect
 	golang.org/x/text v0.14.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
+	k8s.io/klog/v2 v2.110.1 // indirect
 )
