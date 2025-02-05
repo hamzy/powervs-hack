@@ -24,6 +24,7 @@ import (
 	"github.com/IBM/platform-services-go-sdk/globalsearchv2"
 //	"github.com/IBM/platform-services-go-sdk/globaltaggingv1"
 	"github.com/IBM/go-sdk-core/v5/core"
+	"github.com/IBM-Cloud/bluemix-go/crn"
 	"github.com/sirupsen/logrus"
 	"k8s.io/utils/ptr"
 	"math"
@@ -127,6 +128,7 @@ func main() {
 		result              *globalsearchv2.ScanResult
 		response            *core.DetailedResponse
 		properties          map[string]interface{}
+		crnStruct           crn.CRN
 		err                 error
 	)
 
@@ -162,7 +164,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if shouldDebug { logMain.Printf("Begin") }
+	if shouldDebug { logMain.Printf("Begin\n") }
 
 	ctx, cancel := context.WithTimeout(context.TODO(), 15*time.Minute)
 	defer cancel()
@@ -173,7 +175,7 @@ func main() {
 
 	err = authenticator.Validate()
 	if err != nil {
-		fmt.Printf("Error: authenticator.Validate: %v", err)
+		fmt.Printf("Error: authenticator.Validate: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -181,41 +183,55 @@ func main() {
 		URL:           globalsearchv2.DefaultServiceURL,
 		Authenticator: authenticator,
 	}
-	if shouldDebug { logMain.Printf("globalSearchOptions = %+v", globalSearchOptions) }
+	if shouldDebug { logMain.Printf("globalSearchOptions = %+v\n", globalSearchOptions) }
 
 	searchService, err = globalsearchv2.NewGlobalSearchV2(globalSearchOptions)
 	if err != nil {
-		fmt.Printf("Error: globalsearchv2.NewGlobalSearchV2: %v", err)
+		fmt.Printf("Error: globalsearchv2.NewGlobalSearchV2: %v\n", err)
 		os.Exit(1)
 	}
 
 	for moreData {
 		searchOptions = &globalsearchv2.SearchOptions{
-			Query:        ptr.To("tags:hamzy-test"),
-			Limit:        ptr.To(perPage),
+			Query: ptr.To("tags:hamzy-test"),
+			Limit: ptr.To(perPage),
 		}
 		if searchCursor != "" {
 			searchOptions.SetSearchCursor(searchCursor)
 		}
-		if shouldDebug { logMain.Printf("searchOptions = %+v", searchOptions) }
+		if shouldDebug { logMain.Printf("searchOptions = %+v\n", searchOptions) }
 
 		result, response, err = searchService.SearchWithContext(ctx, searchOptions)
 		if err != nil {
-			fmt.Printf("Error: globalsearchv2.SearchWithContext: err = %v, response = %v", err, response)
+			fmt.Printf("Error: globalsearchv2.SearchWithContext: err = %v, response = %v\n", err, response)
 			os.Exit(1)
 		}
 		if shouldDebug {
-			logMain.Printf("result = %+v", result)
+			logMain.Printf("result = %+v\n", result)
 			if result.SearchCursor != nil {
-				logMain.Printf("result.SearchCursor = %+v", *result.SearchCursor)
+				logMain.Printf("result.SearchCursor = %+v\n", *result.SearchCursor)
 			} else {
-				logMain.Printf("result.SearchCursor = nil")
+				logMain.Printf("result.SearchCursor = nil\n")
 			}
-			logMain.Printf("len result.Items = %d", len(result.Items))
+			logMain.Printf("len result.Items = %d\n", len(result.Items))
 		}
 
 		for _, item := range result.Items {
 			properties = item.GetProperties()
+
+			fmt.Printf("8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
+			for keyProp, valProp := range properties {
+				fmt.Printf("listByTag: keyProp = %v, valProp = %v\n", keyProp, valProp)
+			}
+			fmt.Printf("8<--------8<--------8<--------8<--------8<--------8<--------8<--------\n")
+
+			fmt.Printf("crn = %s\n", *item.CRN)
+			crnStruct, err = crn.Parse(*item.CRN)
+			if err != nil {
+				fmt.Printf("Error: could not parse CRN property\n")
+				os.Exit(1)
+			}
+			fmt.Printf("crnStruct = %v\n", crnStruct)
 
 			var (
 				propertyFamily string
@@ -227,31 +243,29 @@ func main() {
 
 			propertyFamily, ok = properties["family"].(string)
 			if !ok {
-				fmt.Printf("Error: %v is not a string?", properties["family"])
+				fmt.Printf("Error: %v is not a string?\n", properties["family"])
 				os.Exit(1)
 			}
 
 			propertyName, ok = properties["name"].(string)
 			if !ok {
-				fmt.Printf("Error: %v is not a string?", properties["name"])
+				fmt.Printf("Error: %v is not a string?\n", properties["name"])
 				os.Exit(1)
 			}
 
 			propertyType, ok = properties["type"].(string)
 			if !ok {
-				fmt.Printf("Error: %v is not a string?", properties["type"])
+				fmt.Printf("Error: %v is not a string?\n", properties["type"])
 				os.Exit(1)
 			}
 
 			resourceType = determineResourceType (propertyFamily, propertyName, propertyType, *item.CRN)
 
-//			fmt.Printf("%+v\n", item)
 			fmt.Printf("CRN:          %s\n", *item.CRN)
 			fmt.Printf("Family:       %s\n", properties["family"])
 			fmt.Printf("Name:         %s\n", properties["name"])
 			fmt.Printf("Type:         %s\n", properties["type"])
 			fmt.Printf("ResourceType: %d\n", resourceType)
-			fmt.Printf("\n")
 		}
 
 		moreData = int64(len(result.Items)) == perPage
