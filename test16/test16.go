@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// Based on:
+// ibmcloud pi datacenter get dal10
+//
 // How to run:
-// (cd test16/; echo "vet:"; go vet || exit 1; echo "build:"; go build *.go || exit 1; ./test15 --apiKey "${IBMCLOUD_API_KEY}" -shouldDebug false)
+// (cd test16/; echo "vet:"; go vet || exit 1; echo "build:"; go build *.go || exit 1; ./test15 --apiKey "${IBMCLOUD_API_KEY}" -region lon -zone lon06)
 
 package main
 
