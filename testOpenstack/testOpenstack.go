@@ -335,16 +335,34 @@ func UploadBaseImage(ctx context.Context, cloud string, rhcosImage string, image
 		return err
 	}
 
+	// @TODO - HAMZY BEGIN
 	// By default we use "qcow2" disk format, but if the file extension is "raw",
 	// then we set the disk format as "raw".
-	diskFormat := "qcow2"
-	if extension := filepath.Ext(localFilePath); extension == "raw" {
+	extension := filepath.Ext(localFilePath)
+	var diskFormat, containerFormat string
+	switch extension {
+	case ".qcow2":
+		containerFormat = "bare"
+		diskFormat = "qcow2"
+	case ".raw":
+		containerFormat = "bare"
 		diskFormat = "raw"
+	case ".ova.gz":
+		containerFormat = "ova"
+		diskFormat = "raw"
+	case ".ova":
+		containerFormat = "ova"
+		diskFormat = "raw"
+	default:
+		return fmt.Errorf("unsupported file extension: %q", extension)
 	}
+	fmt.Printf("extension = %s\n", extension)
+	fmt.Printf("diskFormat = %s\n", diskFormat)
+	fmt.Printf("containerFormat = %s\n", containerFormat)
 
 	img, err := images.Create(ctx, conn, images.CreateOpts{
 		Name:            imageName,
-		ContainerFormat: "bare",
+		ContainerFormat: containerFormat,
 		DiskFormat:      diskFormat,
 		Tags:            []string{"openshiftClusterID=" + infraID},
 		Properties:      imageProperties,
