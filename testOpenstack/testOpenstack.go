@@ -17,6 +17,9 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"io"
@@ -27,7 +30,10 @@ import (
 	"strings"
 	"time"
 
+	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/gophercloud/gophercloud/v2"
+	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imagedata"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v2/volumes"
@@ -37,7 +43,9 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/thedevsaddam/retry"
 	"github.com/ulikunitz/xz"
+	"github.com/vincent-petithory/dataurl"
 	"golang.org/x/sys/unix"
+	"k8s.io/utils/ptr"
 )
 
 // urlWithIntegrity pairs a URL with an optional expected sha256 checksum (after decompression, if any)
@@ -359,6 +367,7 @@ func UploadBaseImage(ctx context.Context, cloud string, rhcosImage string, image
 	fmt.Printf("extension = %s\n", extension)
 	fmt.Printf("diskFormat = %s\n", diskFormat)
 	fmt.Printf("containerFormat = %s\n", containerFormat)
+	// @TODO - HAMZY END
 
 	img, err := images.Create(ctx, conn, images.CreateOpts{
 		Name:            imageName,
@@ -382,6 +391,204 @@ func UploadBaseImage(ctx context.Context, cloud string, rhcosImage string, image
 	logrus.Debugf("RHCOS image upload completed.")
 
 	return nil
+}
+
+// UploadIgnitionAndBuildShim uploads the bootstrap Ignition config in Glance.
+func UploadIgnitionAndBuildShim(ctx context.Context, cloud string, infraID string, imageName string, bootstrapIgn []byte) ([]byte, error) {
+	opts := DefaultClientOpts(cloud)
+	conn, err := NewServiceClient(ctx, "image", opts)
+	if err != nil {
+		return nil, err
+	}
+
+	var userCA []byte
+	{
+		cloudConfig, err := clientconfig.GetCloudFromYAML(opts)
+		if err != nil {
+			return nil, err
+		}
+		// Get the ca-cert-bundle key if there is a value for cacert in clouds.yaml
+		if caPath := cloudConfig.CACertFile; caPath != "" {
+			userCA, err = os.ReadFile(caPath)
+			if err != nil {
+				return nil, fmt.Errorf("failed to read clouds.yaml ca-cert from disk: %w", err)
+			}
+		}
+	}
+	fmt.Printf("userCA = %v\n", userCA)
+
+	// we need to obtain Glance public endpoint that will be used by Ignition to download bootstrap ignition files.
+	// By design this should be done by using https://www.terraform.io/docs/providers/openstack/d/identity_endpoint_v3.html
+	// but OpenStack default policies forbid to use this API for regular users.
+	// On the other hand when a user authenticates in OpenStack (i.e. gets a token), it includes the whole service
+	// catalog in the output json. So we are able to parse the data and get the endpoint from there
+	// https://docs.openstack.org/api-ref/identity/v3/?expanded=token-authentication-with-scoped-authorization-detail#token-authentication-with-scoped-authorization
+	// Unfortunately this feature is not currently supported by Terraform, so we had to implement it here.
+	var glancePublicURL string
+	{
+		// Authenticate in OpenStack, get the token and extract the service catalog
+		var serviceCatalog *tokens.ServiceCatalog
+		{
+			authResult := conn.GetAuthResult()
+			auth, ok := authResult.(tokens.CreateResult)
+			if !ok {
+				return nil, fmt.Errorf("unable to extract service catalog")
+			}
+
+			var err error
+			serviceCatalog, err = auth.ExtractServiceCatalog()
+			if err != nil {
+				return nil, err
+			}
+		}
+		clientConfigCloud, err := clientconfig.GetCloudFromYAML(DefaultClientOpts(cloud))
+		if err != nil {
+			return nil, err
+		}
+		glancePublicURL, err = openstack.V3EndpointURL(serviceCatalog, gophercloud.EndpointOpts{
+			Type:         "image",
+			Availability: gophercloud.AvailabilityPublic,
+			Region:       clientConfigCloud.RegionName,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("cannot retrieve Glance URL from the service catalog: %w", err)
+		}
+	}
+	fmt.Printf("glancePublicURL = %v\n", glancePublicURL)
+
+	// upload the bootstrap Ignition config in Glance and save its location
+	var bootstrapConfigURL string
+	{
+		img, err := images.Create(ctx, conn, images.CreateOpts{
+			Name:            imageName,
+			ContainerFormat: "bare",
+			DiskFormat:      "raw",
+			Tags:            []string{"openshiftClusterID=" + infraID},
+		}).Extract()
+		if err != nil {
+			return nil, fmt.Errorf("unable to create a Glance image for the bootstrap server's Ignition file: %w", err)
+		}
+
+		if res := imagedata.Upload(ctx, conn, img.ID, bytes.NewReader(bootstrapIgn)); res.Err != nil {
+			return nil, fmt.Errorf("unable to upload a Glance image for the bootstrap server's Ignition file: %w", res.Err)
+		}
+
+		bootstrapConfigURL = glancePublicURL + img.File
+	}
+	fmt.Printf("bootstrapConfigURL = %v\n", bootstrapConfigURL)
+
+	// To allow Ignition to download its config on the bootstrap machine from a location secured by a
+	// self-signed certificate, we have to provide it a valid custom ca bundle.
+	// To do so we generate a small ignition config that contains just Security section with the bundle
+	// and later append it to the main ignition config.
+	tokenID, err := conn.GetAuthResult().ExtractTokenID()
+	if err != nil {
+		return nil, fmt.Errorf("unable to extract an OpenStack token: %w", err)
+	}
+	fmt.Printf("tokenID = %v\n", tokenID)
+
+	caRefs, err := parseCertificateBundle(userCA)
+	if err != nil {
+		return nil, err
+	}
+
+	var ignProxy igntypes.Proxy
+
+	data, err := Marshal(igntypes.Config{
+		Ignition: igntypes.Ignition{
+			Version: igntypes.MaxVersion.String(),
+			Timeouts: igntypes.Timeouts{
+				HTTPResponseHeaders: ptr.To(120),
+			},
+			Security: igntypes.Security{
+				TLS: igntypes.TLS{
+					CertificateAuthorities: caRefs,
+				},
+			},
+			Config: igntypes.IgnitionConfig{
+				Merge: []igntypes.Resource{
+					{
+						Source: &bootstrapConfigURL,
+						HTTPHeaders: []igntypes.HTTPHeader{
+							{
+								Name:  "X-Auth-Token",
+								Value: &tokenID,
+							},
+						},
+					},
+				},
+			},
+			Proxy: ignProxy,
+		},
+		Storage: igntypes.Storage{
+			Files: []igntypes.File{
+				{
+					Node: igntypes.Node{
+						Path:      "/etc/hostname",
+						Overwrite: ptr.To(true),
+					},
+					FileEmbedded1: igntypes.FileEmbedded1{
+						Mode: ptr.To(420),
+						Contents: igntypes.Resource{
+							Source: ptr.To(dataurl.EncodeBytes([]byte(infraID + "bootstrap"))),
+						},
+					},
+				},
+				{
+					Node: igntypes.Node{
+						Path:      "/opt/openshift/tls/cloud-ca-cert.pem",
+						Overwrite: ptr.To(true),
+					},
+					FileEmbedded1: igntypes.FileEmbedded1{
+						Mode: ptr.To(420),
+						Contents: igntypes.Resource{
+							Source: ptr.To(dataurl.EncodeBytes(userCA)),
+						},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode the Ignition shim: %w", err)
+	}
+	fmt.Printf("data = %v\n", data)
+
+	// Check the size of the base64-rendered ignition shim isn't to big for nova
+	// https://docs.openstack.org/nova/latest/user/metadata.html#user-data
+	if len(base64.StdEncoding.EncodeToString(data)) > 65535 {
+		return nil, fmt.Errorf("rendered bootstrap ignition shim exceeds the 64KB limit for nova user data -- try reducing the size of your CA cert bundle")
+	}
+	return data, nil
+}
+
+// ParseCertificateBundle loads each certificate in the bundle to the Ignition
+// carrier type, ignoring any invisible character before, after and in between
+// certificates.
+func parseCertificateBundle(userCA []byte) ([]igntypes.Resource, error) {
+	var caRefs []igntypes.Resource
+	userCA = bytes.TrimSpace(userCA)
+	for len(userCA) > 0 {
+		var block *pem.Block
+		block, userCA = pem.Decode(userCA)
+		if block == nil {
+			return nil, fmt.Errorf("unable to parse certificate, please check the cacert section of clouds.yaml")
+		}
+		caRefs = append(caRefs, igntypes.Resource{Source: ptr.To(dataurl.EncodeBytes(pem.EncodeToMemory(block)))})
+		userCA = bytes.TrimSpace(userCA)
+	}
+	return caRefs, nil
+}
+
+// Marshal is a helper function to use the marshaler function from "github.com/clarketm/json".
+// It supports zero values of structs with the omittempty annotation.
+// In effect this excludes empty pointer struct fields from the marshaled data,
+// instead of inserting nil values into them.
+// This is necessary for ignition configs to pass openAPI validation on fields
+// that are not supposed to contain nil pointers, but e.g. strings.
+// It can be used as a dropin replacement for "encoding/json".Marshal
+func Marshal(input interface{}) ([]byte, error) {
+	return json.Marshal(input)
 }
 
 // getUserAgent generates a Gophercloud UserAgent to help cloud operators
@@ -503,6 +710,65 @@ func imageUploadCommand (imageUploadFlags *flag.FlagSet, args []string) error {
 	return UploadBaseImage(ctx, *ptrCloud, *ptrRhcosImage, *ptrImageName, *ptrInfraID, imageProperties)
 }
 
+func bootstrapUploadCommand (bootstrapUploadFlags *flag.FlagSet, args []string) error {
+
+	var (
+		ptrCloud            *string
+		ptrImageName        *string
+		ptrInfraID          *string
+		ptrIgnitionFile     *string
+
+		ctx                 context.Context
+		cancel              context.CancelFunc
+
+		bootstrapIgnIn      []byte
+		bootstrapIgnOut     []byte
+		err                 error
+	)
+
+	ptrCloud = bootstrapUploadFlags.String("cloud", "", "The cloud to use in clouds.yaml")
+	ptrImageName = bootstrapUploadFlags.String("imageName", "", "The image name to save into")
+	ptrInfraID = bootstrapUploadFlags.String("infraID", "", "The infrastructure ID to tag with")
+	ptrIgnitionFile = bootstrapUploadFlags.String("ignitionFile", "", "The location of the ignition file")
+
+	bootstrapUploadFlags.Parse(args)
+
+	if ptrCloud == nil || *ptrCloud == "" {
+		fmt.Println("Error: --cloud not specified")
+		os.Exit(1)
+	}
+	if ptrImageName == nil || *ptrImageName == "" {
+		fmt.Println("Error: --imageName not specified")
+		os.Exit(1)
+	}
+	if ptrInfraID == nil || *ptrInfraID == "" {
+		fmt.Println("Error: --infraID not specified")
+		os.Exit(1)
+	}
+	if ptrIgnitionFile == nil || *ptrIgnitionFile == "" {
+		fmt.Println("Error: --ignitionFile not specified")
+		os.Exit(1)
+	}
+	if len(bootstrapUploadFlags.Args()) != 0 {
+		fmt.Printf("Error: extra options specified: %v\n", bootstrapUploadFlags.Args())
+		os.Exit(1)
+	}
+
+	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
+	defer cancel()
+
+	bootstrapIgnIn, err = os.ReadFile(*ptrIgnitionFile)
+	if err != nil {
+		return err
+	}
+
+	bootstrapIgnOut, err = UploadIgnitionAndBuildShim(ctx, *ptrCloud, *ptrInfraID, *ptrImageName, bootstrapIgnIn)
+
+	fmt.Printf("bootstrapIgnOut = %v\n", bootstrapIgnOut)
+
+	return err
+}
+
 func volumeCreateCommand (volumeCreateFlags *flag.FlagSet, args []string) error {
 
 	var (
@@ -558,17 +824,22 @@ func volumeCreateCommand (volumeCreateFlags *flag.FlagSet, args []string) error 
 func main () {
 
 	var (
-		imageUploadFlags  *flag.FlagSet
-		volumeCreateFlags *flag.FlagSet
-		err               error
+		imageUploadFlags     *flag.FlagSet
+		bootstrapUploadFlags *flag.FlagSet
+		volumeCreateFlags    *flag.FlagSet
+		err                  error
 	)
 
 	imageUploadFlags = flag.NewFlagSet("image-upload", flag.ExitOnError)
+	bootstrapUploadFlags = flag.NewFlagSet("bootstrap-upload", flag.ExitOnError)
 	volumeCreateFlags = flag.NewFlagSet("volume-create", flag.ExitOnError)
 
 	switch strings.ToLower(os.Args[1]) {
 	case "image-upload":
 		err = imageUploadCommand(imageUploadFlags, os.Args[2:])
+
+	case "bootstrap-upload":
+		err = bootstrapUploadCommand(bootstrapUploadFlags, os.Args[2:])
 
 	case "volume-create":
 		err = volumeCreateCommand(volumeCreateFlags, os.Args[2:])
