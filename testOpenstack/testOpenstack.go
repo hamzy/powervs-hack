@@ -33,10 +33,12 @@ import (
 	igntypes "github.com/coreos/ignition/v2/config/v3_2/types"
 	"github.com/gophercloud/gophercloud/v2"
 	"github.com/gophercloud/gophercloud/v2/openstack"
+	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v2/volumes"
+	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imagedata"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
-	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v2/volumes"
+	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 	"github.com/h2non/filetype/matchers"
 	"github.com/pkg/errors"
@@ -662,6 +664,137 @@ func createVolume (ctx context.Context, cloud string, volumeName string, volumeS
 	return nil
 }
 
+func createServer (ctx context.Context, cloud string) error {
+
+	var (
+		addressPairs []ports.AddressPair
+		builder      ports.CreateOptsBuilder
+		portCreateOpts = ports.CreateOpts{
+			Name:                  "hamzy-test-rhcos-port",
+			NetworkID:             "1762f355-b17e-4d13-9bca-d5b53c929ab0",
+			Description:           "hamzy test",
+			AdminStateUp:          nil,
+			MACAddress:            ptr.Deref(nil, ""),
+			AllowedAddressPairs:   addressPairs,
+			ValueSpecs:            nil,
+			PropagateUplinkStatus: nil,
+		}
+	)
+
+	var (
+		tags             = [...]string{ "openshiftClusterID=rdr-hamzy-openstack-abcdef" }
+
+		portList         []servers.Network
+		userData         []byte
+
+		serverCreateOpts  servers.CreateOptsBuilder
+
+		schedulerHintOpts servers.SchedulerHintOptsBuilder
+	)
+	fmt.Printf("tags = %+v\n", tags)
+
+	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloud))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("connNetwork = %+v\n", connNetwork)
+
+	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloud))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("connCompute = %+v\n", connCompute)
+
+	builder = portCreateOpts
+	fmt.Printf("builder = %+v\n", builder)
+
+	port, err := ports.Create(ctx, connNetwork, builder).Extract()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("port = %+v\n", port)
+	fmt.Printf("port.ID = %v\n", port.ID)
+
+	portList = []servers.Network{
+		{ Port: port.ID, },
+	}
+
+	userData, err = bootstrapIgnitionFile ()
+	if err != nil {
+		return err
+	}
+
+	serverCreateOpts = servers.CreateOpts{
+		Name:             "hamzy-test-rhcos",
+		ImageRef:         "0cc93e4b-48c1-4167-b8af-64f218b25fb6",
+		FlavorRef:        "9b4818ba-edf7-41e3-a516-53ee08b760fe",
+		AvailabilityZone: "e980",
+		Networks:         portList,
+		UserData:         userData,
+		// Additional properties are not allowed ('tags' was unexpected)
+//		Tags:             tags[:],
+//		Metadata:         instanceSpec.Metadata,
+//		ConfigDrive:      &instanceSpec.ConfigDrive,
+//		BlockDevice:      blockDevices,
+	}
+	fmt.Printf("serverCreateOpts = %+v\n", serverCreateOpts)
+
+	fmt.Printf("schedulerHintOpts = %+v\n", schedulerHintOpts)
+
+	server, err := servers.Create(ctx, connCompute, serverCreateOpts, schedulerHintOpts).Extract()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("server = %+v\n", server)
+
+	return err
+}
+
+func bootstrapIgnitionFile () ([]byte, error) {
+
+	var (
+		byteData []byte
+		strData  string
+		err      error
+	)
+
+	byteData, err = Marshal(igntypes.Config{
+		Ignition: igntypes.Ignition{
+			Version: igntypes.MaxVersion.String(),
+			Timeouts: igntypes.Timeouts{
+				HTTPResponseHeaders: ptr.To(120),
+			},
+		},
+		Passwd: igntypes.Passwd{
+			Users: []igntypes.PasswdUser{
+				igntypes.PasswdUser{
+					Name:             "core",
+					PasswordHash:      ptr.To("$1$nt2LMmfV$gHmLQRT0xNm86H.iW7DIi0"),
+					SSHAuthorizedKeys: []igntypes.SSHAuthorizedKey{
+						"ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAACAQCfrxxUx9MKdEWDStyVVkVTnxPQRHjQU7Gnu+USEbGCq3gb1t4Hs863mkJ3cgH9h4TsXxY7SofDu1MNw3QMt+S2BiUN6RlaQbkhJ41bzdCvy4tg3NiJdiUY0EtiLV5rXR+/wQbEIlkThhXCYEXxOcBA+0GMkAGuyAM2zZekpWh9xmkex1KQy0A8FEgS+gC8d0ok3u1ozZ85hlGxrKT2pxWhS9P2KdAx5Vrt5lsCZyif6HucAjp5EYoZbaJLHmOP3F7f+Rbf+yIxXTCZfcOQN/nf6wz5L4VPCvSjmV4GauVLcbOZCADdRDdE71ky8owHSxoxfjr6ukkU8btecF/JLJeZoaQWGCd6XrkvCjFTS6n2PEckR80UF4j7TGthSmZcI1ach5GROyyb9Oajeciwq6zJeNvDJAcvXLi5fQYbvAOhjTEkqYtlLvcyNCwp8vexPA5G8n381t/3F5kxkrrRYcbQf+N21Mo10CecaO86peV+sIpPPsYCgbE9QVG07okY1XrKkfBrtOoMwn12n1DX/UJbYeiqY3sI+QikbDgL+kDRP4tn4VYLs9uNDaKlBNDrRNwniWO8YKOZQGsonG1JeuU2UMbNfDnR7BzVUkAjMKFfZKA/yfOuIC09BoxmkQ7wDMwb10QNZ7/Y5XDRAKN6o0SFqsBq4FnBQ31+wPd3HBSpGw== hamzy@li-3d08e84c-2e1c-11b2-a85c-e2db7bb078fc.ibm.com",
+					},
+				},
+			},
+		},
+	})
+	fmt.Printf("byteData = %v\n", byteData)
+
+	if err != nil {
+		return nil, fmt.Errorf("unable to encode the Ignition: %w", err)
+	}
+
+	strData = base64.StdEncoding.EncodeToString(byteData)
+	fmt.Printf("strData = %v\n", strData)
+
+	// Check the size of the base64-rendered ignition shim isn't to big for nova
+	// https://docs.openstack.org/nova/latest/user/metadata.html#user-data
+	if len(strData) > 65535 {
+		return nil, fmt.Errorf("rendered bootstrap ignition shim exceeds the 64KB limit for nova user data")
+	}
+
+	return byteData, nil
+}
+
 func imageUploadCommand (imageUploadFlags *flag.FlagSet, args []string) error {
 
 	var (
@@ -723,6 +856,7 @@ func bootstrapUploadCommand (bootstrapUploadFlags *flag.FlagSet, args []string) 
 
 		bootstrapIgnIn      []byte
 		bootstrapIgnOut     []byte
+
 		err                 error
 	)
 
@@ -821,18 +955,44 @@ func volumeCreateCommand (volumeCreateFlags *flag.FlagSet, args []string) error 
 	return createVolume (ctx, *ptrCloud, *ptrVolumeName, *ptrVolumeSize, *ptrAvailabilityZone, *ptrImageID)
 }
 
+func serverCreateCommand (serverCreateFlags *flag.FlagSet, args []string) error {
+
+	var (
+		ptrCloud            *string
+
+		ctx                 context.Context
+		cancel              context.CancelFunc
+	)
+
+	ptrCloud = serverCreateFlags.String("cloud", "", "The cloud to use in clouds.yaml")
+
+	serverCreateFlags.Parse(args)
+
+	if ptrCloud == nil || *ptrCloud == "" {
+		fmt.Println("Error: --cloud not specified")
+		os.Exit(1)
+	}
+
+	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
+	defer cancel()
+
+	return createServer (ctx, *ptrCloud)
+}
+
 func main () {
 
 	var (
 		imageUploadFlags     *flag.FlagSet
 		bootstrapUploadFlags *flag.FlagSet
 		volumeCreateFlags    *flag.FlagSet
+		serverCreateFlags    *flag.FlagSet
 		err                  error
 	)
 
 	imageUploadFlags = flag.NewFlagSet("image-upload", flag.ExitOnError)
 	bootstrapUploadFlags = flag.NewFlagSet("bootstrap-upload", flag.ExitOnError)
 	volumeCreateFlags = flag.NewFlagSet("volume-create", flag.ExitOnError)
+	serverCreateFlags = flag.NewFlagSet("server-create", flag.ExitOnError)
 
 	switch strings.ToLower(os.Args[1]) {
 	case "image-upload":
@@ -843,6 +1003,9 @@ func main () {
 
 	case "volume-create":
 		err = volumeCreateCommand(volumeCreateFlags, os.Args[2:])
+
+	case "server-create":
+		err = serverCreateCommand(serverCreateFlags, os.Args[2:])
 
 	default:
 		fmt.Printf("Error: Unknown command %s\n", os.Args[1])
