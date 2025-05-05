@@ -39,6 +39,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imagedata"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
 	"github.com/gophercloud/gophercloud/v2/openstack/networking/v2/ports"
+	"github.com/gophercloud/gophercloud/v2/pagination"
 	"github.com/gophercloud/utils/v2/openstack/clientconfig"
 	"github.com/h2non/filetype/matchers"
 	"github.com/pkg/errors"
@@ -665,12 +666,13 @@ func createVolume (ctx context.Context, cloud string, volumeName string, volumeS
 }
 
 func createServer (ctx context.Context, cloud string) error {
-
 	var (
-		addressPairs []ports.AddressPair
-		builder      ports.CreateOptsBuilder
-		portCreateOpts = ports.CreateOpts{
+		addressPairs      []ports.AddressPair
+		builder           ports.CreateOptsBuilder
+		portCreateOpts    = ports.CreateOpts{
 			Name:                  "hamzy-test-rhcos-port",
+			// openstack --os-cloud=... network list --format csv
+			// "1762f355-b17e-4d13-9bca-d5b53c929ab0","vlan...","['ae643a65-d0fc-4408-90c6-a820340bfade']"
 			NetworkID:             "1762f355-b17e-4d13-9bca-d5b53c929ab0",
 			Description:           "hamzy test",
 			AdminStateUp:          nil,
@@ -679,18 +681,17 @@ func createServer (ctx context.Context, cloud string) error {
 			ValueSpecs:            nil,
 			PropagateUplinkStatus: nil,
 		}
-	)
+		tags              [1]string // @TBD
 
-	var (
-		tags             = [...]string{ "openshiftClusterID=rdr-hamzy-openstack-abcdef" }
-
-		portList         []servers.Network
-		userData         []byte
+		portList          []servers.Network
+		userData          []byte
 
 		serverCreateOpts  servers.CreateOptsBuilder
 
 		schedulerHintOpts servers.SchedulerHintOptsBuilder
 	)
+
+	tags = [...]string{ "openshiftClusterID=rdr-hamzy-openstack-abcdef" }
 	fmt.Printf("tags = %+v\n", tags)
 
 	connNetwork, err := NewServiceClient(ctx, "network", DefaultClientOpts(cloud))
@@ -726,7 +727,11 @@ func createServer (ctx context.Context, cloud string) error {
 
 	serverCreateOpts = servers.CreateOpts{
 		Name:             "hamzy-test-rhcos",
+		// openstack --os-cloud=... image list --format csv
+		// "0cc93e4b-48c1-4167-b8af-64f218b25fb6","...","active"
 		ImageRef:         "0cc93e4b-48c1-4167-b8af-64f218b25fb6",
+		// openstack --os-cloud=powervc flavor list --format csv
+		// "9b4818ba-edf7-41e3-a516-53ee08b760fe","...",16384,25,0,4,True
 		FlavorRef:        "9b4818ba-edf7-41e3-a516-53ee08b760fe",
 		AvailabilityZone: "e980",
 		Networks:         portList,
@@ -751,7 +756,6 @@ func createServer (ctx context.Context, cloud string) error {
 }
 
 func bootstrapIgnitionFile () ([]byte, error) {
-
 	var (
 		byteData []byte
 		strData  string
@@ -795,8 +799,79 @@ func bootstrapIgnitionFile () ([]byte, error) {
 	return byteData, nil
 }
 
-func imageUploadCommand (imageUploadFlags *flag.FlagSet, args []string) error {
+func fixServer (ctx context.Context, cloud string, serverName string) error {
+	var (
+		pager             pagination.Page
+		allServers        []servers.Server
+		server            servers.Server
+		found             = false
+		imageRef          string
+		flavorRef         string
+		ok                bool
+		serverCreateOpts  servers.CreateOptsBuilder
+		err               error
+	)
 
+	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloud))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("connCompute = %+v\n", connCompute)
+
+	pager, err = servers.List(connCompute, nil).AllPages(ctx)
+	if err != nil {
+		return err
+	}
+//	fmt.Printf("pager = %+v\n", pager)
+
+	allServers, err = servers.ExtractServers(pager)
+	if err != nil {
+		return err
+	}
+//	fmt.Printf("allServers = %+v\n", allServers)
+
+	for _, server = range allServers {
+		if !strings.EqualFold(server.Name, serverName) {
+			continue
+		}
+		fmt.Printf("server = %+v\n", server)
+		found = true
+	}
+	if !found {
+		return fmt.Errorf("Error: did not find server named %s", serverName)
+	}
+
+	imageRef, ok = server.Image["id"].(string)
+	if !ok {
+		return fmt.Errorf("Error: did not find image id in %+v", server.Image)
+	}
+
+	flavorRef, ok = server.Flavor["id"].(string)
+	if !ok {
+		return fmt.Errorf("Error: did not find image id in %+v", server.Image)
+	}
+
+	// @TODO - server.Tags:<nil> for some reason
+
+	serverCreateOpts = servers.CreateOpts{
+		Name:             server.Name,
+		ImageRef:         imageRef,
+		FlavorRef:        flavorRef,
+		AvailabilityZone: server.AvailabilityZone,
+//		Networks:         portList,
+//		UserData:         userData,
+		// @TODO - Additional properties are not allowed ('tags' was unexpected)
+//		Tags:             tags[:],
+//		Metadata:         instanceSpec.Metadata,
+//		ConfigDrive:      &instanceSpec.ConfigDrive,
+//		BlockDevice:      blockDevices,
+	}
+	fmt.Printf("serverCreateOpts = %+v\n", serverCreateOpts)
+
+	return nil
+}
+
+func imageUploadCommand (imageUploadFlags *flag.FlagSet, args []string) error {
 	var (
 		ptrCloud            *string
 		ptrRhcosImage       *string
@@ -844,7 +919,6 @@ func imageUploadCommand (imageUploadFlags *flag.FlagSet, args []string) error {
 }
 
 func bootstrapUploadCommand (bootstrapUploadFlags *flag.FlagSet, args []string) error {
-
 	var (
 		ptrCloud            *string
 		ptrImageName        *string
@@ -904,7 +978,6 @@ func bootstrapUploadCommand (bootstrapUploadFlags *flag.FlagSet, args []string) 
 }
 
 func volumeCreateCommand (volumeCreateFlags *flag.FlagSet, args []string) error {
-
 	var (
 		ptrCloud            *string
 		ptrVolumeName       *string
@@ -956,7 +1029,6 @@ func volumeCreateCommand (volumeCreateFlags *flag.FlagSet, args []string) error 
 }
 
 func serverCreateCommand (serverCreateFlags *flag.FlagSet, args []string) error {
-
 	var (
 		ptrCloud            *string
 
@@ -979,13 +1051,42 @@ func serverCreateCommand (serverCreateFlags *flag.FlagSet, args []string) error 
 	return createServer (ctx, *ptrCloud)
 }
 
-func main () {
+func serverFixCommand (serverFixFlags *flag.FlagSet, args []string) error {
+	var (
+		ptrCloud            *string
+		ptrServerName       *string
 
+		ctx                 context.Context
+		cancel              context.CancelFunc
+	)
+
+	ptrCloud = serverFixFlags.String("cloud", "", "The cloud to use in clouds.yaml")
+	ptrServerName = serverFixFlags.String("serverName", "", "The name of the server to copy")
+
+	serverFixFlags.Parse(args)
+
+	if ptrCloud == nil || *ptrCloud == "" {
+		fmt.Println("Error: --cloud not specified")
+		os.Exit(1)
+	}
+	if ptrServerName == nil || *ptrServerName == "" {
+		fmt.Println("Error: --serverName not specified")
+		os.Exit(1)
+	}
+
+	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
+	defer cancel()
+
+	return fixServer (ctx, *ptrCloud, *ptrServerName)
+}
+
+func main () {
 	var (
 		imageUploadFlags     *flag.FlagSet
 		bootstrapUploadFlags *flag.FlagSet
 		volumeCreateFlags    *flag.FlagSet
 		serverCreateFlags    *flag.FlagSet
+		serverFixFlags       *flag.FlagSet
 		err                  error
 	)
 
@@ -993,6 +1094,7 @@ func main () {
 	bootstrapUploadFlags = flag.NewFlagSet("bootstrap-upload", flag.ExitOnError)
 	volumeCreateFlags = flag.NewFlagSet("volume-create", flag.ExitOnError)
 	serverCreateFlags = flag.NewFlagSet("server-create", flag.ExitOnError)
+	serverFixFlags = flag.NewFlagSet("server-fix", flag.ExitOnError)
 
 	switch strings.ToLower(os.Args[1]) {
 	case "image-upload":
@@ -1006,6 +1108,9 @@ func main () {
 
 	case "server-create":
 		err = serverCreateCommand(serverCreateFlags, os.Args[2:])
+
+	case "server-fix":
+		err = serverFixCommand(serverFixFlags, os.Args[2:])
 
 	default:
 		fmt.Printf("Error: Unknown command %s\n", os.Args[1])
