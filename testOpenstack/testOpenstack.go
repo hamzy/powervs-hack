@@ -902,10 +902,47 @@ func macsServer (ctx context.Context, cloud string, serverSearch string) error {
 	}
 //	fmt.Printf("allServers = %+v\n", allServers)
 
+	fmt.Printf("#\n")
+	fmt.Printf("# DHCP Server Configuration file.\n")
+	fmt.Printf("#   see /usr/share/doc/dhcp-server/dhcpd.conf.example\n")
+	fmt.Printf("#   see dhcpd.conf(5) man page\n")
+	fmt.Printf("#\n")
+	fmt.Printf("\n")
+	fmt.Printf("# Persist interface configuration when dhcpcd exits.\n")
+	fmt.Printf("persistent;\n")
+	fmt.Printf("\n")
+	fmt.Printf("default-lease-time 2678400;\n")
+	fmt.Printf("max-lease-time 2678400;\n")
+	fmt.Printf("\n")
+	fmt.Printf("subnet 10.20.176.0 netmask 255.255.240.0 {\n")
+	fmt.Printf("   interface env2;\n")
+	fmt.Printf("   option routers 10.20.176.1;\n")
+	fmt.Printf("   option subnet-mask 255.255.240.0;\n")
+	fmt.Printf("   option domain-name-servers 10.0.10.4, 9.9.9.9;\n")
+	fmt.Printf("#  option domain-name \"poughkeepsie.lab.domain\";\n")
+	fmt.Printf("   option domain-name \"powervs-openshift-ipi.cis.ibm.net\";\n")
+	fmt.Printf("   ignore unknown-clients;\n")
+	fmt.Printf("#  update-static-leases true;\n")
+	fmt.Printf("}\n")
+	fmt.Printf("\n")
+	fmt.Printf("host hamzy-test-centos {\n")
+	fmt.Printf("    hardware ethernet    fa:cd:76:47:3b:20;\n")
+	fmt.Printf("    fixed-address        10.20.176.157;\n")
+	fmt.Printf("    max-lease-time       84600;\n")
+	fmt.Printf("}\n")
+	fmt.Printf("\n")
+	fmt.Printf("host hamzy-test-rhcos {\n")
+	fmt.Printf("    hardware ethernet    fa:16:3e:11:90:1b;\n")
+	fmt.Printf("    fixed-address        10.20.176.158;\n")
+	fmt.Printf("    max-lease-time       84600;\n")
+	fmt.Printf("}\n")
+	fmt.Printf("\n")
+
 	for _, server = range allServers {
 		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
 			continue
 		}
+//		fmt.Printf("server = %+v\n", server)
 
 		for key := range server.Addresses {
 //			fmt.Printf("key = %+v\n", key)
@@ -932,6 +969,7 @@ func macsServer (ctx context.Context, cloud string, serverSearch string) error {
 					return fmt.Errorf("Error: mapSubNetwork did not contain \"OS-EXT-IPS-MAC:mac_addr\": %v", mapSubNetwork)
 				}
 
+/*
 				if strings.Contains(strings.ToLower(server.Name), "bootstrap") {
 					ipAddress = "10.20.176.159";
 				} else if strings.Contains(strings.ToLower(server.Name), "master-0") {
@@ -940,6 +978,15 @@ func macsServer (ctx context.Context, cloud string, serverSearch string) error {
 					ipAddress = "10.20.176.161";
 				} else if strings.Contains(strings.ToLower(server.Name), "master-2") {
 					ipAddress = "10.20.176.162";
+				}
+*/
+				ipAddressI, ok := mapSubNetwork["addr"]
+				if !ok {
+					return fmt.Errorf("Error: mapSubNetwork did not contain \"addr\": %v", mapSubNetwork)
+				}
+				ipAddress, ok = ipAddressI.(string)
+				if !ok {
+					return fmt.Errorf("Error: ipAddressI was not a string: %v", ipAddressI)
 				}
 
 				fmt.Printf("host %s {\n", server.Name)
