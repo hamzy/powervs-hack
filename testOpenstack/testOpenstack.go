@@ -1008,6 +1008,231 @@ func dhcpdConf (ctx context.Context, cloud string, serverSearch string) error {
 	return nil
 }
 
+func haproxyCfg (ctx context.Context, cloud string, serverSearch string) error {
+	var (
+		pager             pagination.Page
+		allServers        []servers.Server
+		server            servers.Server
+		subnetContents    []interface {}
+		mapSubNetwork     map[string]interface{}
+		ok                bool
+		ipAddress         string
+		err               error
+	)
+
+	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloud))
+	if err != nil {
+		return err
+	}
+//	fmt.Printf("connCompute = %+v\n", connCompute)
+
+	pager, err = servers.List(connCompute, nil).AllPages(ctx)
+	if err != nil {
+		return err
+	}
+//	fmt.Printf("pager = %+v\n", pager)
+
+	allServers, err = servers.ExtractServers(pager)
+	if err != nil {
+		return err
+	}
+//	fmt.Printf("allServers = %+v\n", allServers)
+
+	fmt.Printf("#\n")
+	fmt.Printf("global\n")
+	fmt.Printf("daemon\n")
+	fmt.Printf("\n")
+	fmt.Printf("defaults\n")
+	fmt.Printf("log global\n")
+	fmt.Printf("timeout connect 5s\n")
+	fmt.Printf("timeout client 50s\n")
+	fmt.Printf("timeout server 50s\n")
+	fmt.Printf("\n")
+	fmt.Printf("listen stats # Define a listen section called \"stats\"\n")
+	fmt.Printf("  bind :9000 # Listen on localhost:9000\n")
+	fmt.Printf("  mode http\n")
+	fmt.Printf("  stats enable  # Enable stats page\n")
+	fmt.Printf("  stats hide-version  # Hide HAProxy version\n")
+	fmt.Printf("  stats realm Haproxy\\ Statistics  # Title text for popup window\n")
+	fmt.Printf("  stats uri /haproxy_stats  # Stats URI\n")
+	fmt.Printf("  stats auth Username:Password  # Authentication credentials\n")
+	fmt.Printf("\n")
+/*
+listen api
+bind *:6443
+mode tcp
+server bootstrap 10.20.179.192:6443 check
+server master0 10.20.179.64:6443 check
+server master1 10.20.179.131:6443 check
+server master2 10.20.184.150:6443 check
+
+listen machine-config-server
+bind *:22623
+mode tcp
+server bootstrap 10.20.179.192:22623 check
+server master0 10.20.179.64:22623 check
+server master1 10.20.179.131:22623 check
+server master2 10.20.184.150:22623 check
+*/
+
+	// listen ingress-http
+	fmt.Printf("listen ingress-http\n")
+	fmt.Printf("bind *:80\n")
+	fmt.Printf("mode tcp\n")
+	for _, server = range allServers {
+		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(server.Name), "worker") {
+			continue
+		}
+
+		for key := range server.Addresses {
+			subnetContents, ok = server.Addresses[key].([]interface {})
+			if !ok {
+				return fmt.Errorf("Error: did not convert to [] of interface {}: %v", server.Addresses)
+			}
+
+			for _, subnetValue := range subnetContents {
+				mapSubNetwork, ok = subnetValue.(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("Error: did not convert to map[string] of interface {}: %v", server.Addresses)
+				}
+
+				ipAddressI, ok := mapSubNetwork["addr"]
+				if !ok {
+					return fmt.Errorf("Error: mapSubNetwork did not contain \"addr\": %v", mapSubNetwork)
+				}
+				ipAddress, ok = ipAddressI.(string)
+				if !ok {
+					return fmt.Errorf("Error: ipAddressI was not a string: %v", ipAddressI)
+				}
+
+				fmt.Printf("server %s %s:80 check\n", server.Name, ipAddress)
+			}
+		}
+	}
+	fmt.Printf("\n")
+
+	// listen ingress-https
+	fmt.Printf("listen ingress-https\n")
+	fmt.Printf("bind *:443\n")
+	fmt.Printf("mode tcp\n")
+	for _, server = range allServers {
+		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(server.Name), "worker") {
+			continue
+		}
+
+		for key := range server.Addresses {
+			subnetContents, ok = server.Addresses[key].([]interface {})
+			if !ok {
+				return fmt.Errorf("Error: did not convert to [] of interface {}: %v", server.Addresses)
+			}
+
+			for _, subnetValue := range subnetContents {
+				mapSubNetwork, ok = subnetValue.(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("Error: did not convert to map[string] of interface {}: %v", server.Addresses)
+				}
+
+				ipAddressI, ok := mapSubNetwork["addr"]
+				if !ok {
+					return fmt.Errorf("Error: mapSubNetwork did not contain \"addr\": %v", mapSubNetwork)
+				}
+				ipAddress, ok = ipAddressI.(string)
+				if !ok {
+					return fmt.Errorf("Error: ipAddressI was not a string: %v", ipAddressI)
+				}
+
+				fmt.Printf("server %s %s:443 check\n", server.Name, ipAddress)
+			}
+		}
+	}
+	fmt.Printf("\n")
+
+	// listen api
+	fmt.Printf("listen api\n")
+	fmt.Printf("bind *:6443\n")
+	fmt.Printf("mode tcp\n")
+	for _, server = range allServers {
+		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
+			continue
+		}
+		if !(strings.Contains(strings.ToLower(server.Name), "bootstrap") || strings.Contains(strings.ToLower(server.Name), "master")) {
+			continue
+		}
+
+		for key := range server.Addresses {
+			subnetContents, ok = server.Addresses[key].([]interface {})
+			if !ok {
+				return fmt.Errorf("Error: did not convert to [] of interface {}: %v", server.Addresses)
+			}
+
+			for _, subnetValue := range subnetContents {
+				mapSubNetwork, ok = subnetValue.(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("Error: did not convert to map[string] of interface {}: %v", server.Addresses)
+				}
+
+				ipAddressI, ok := mapSubNetwork["addr"]
+				if !ok {
+					return fmt.Errorf("Error: mapSubNetwork did not contain \"addr\": %v", mapSubNetwork)
+				}
+				ipAddress, ok = ipAddressI.(string)
+				if !ok {
+					return fmt.Errorf("Error: ipAddressI was not a string: %v", ipAddressI)
+				}
+
+				fmt.Printf("server %s %s:6443 check\n", server.Name, ipAddress)
+			}
+		}
+	}
+	fmt.Printf("\n")
+
+	// listen machine-config-server
+	fmt.Printf("listen machine-config-server\n")
+	fmt.Printf("bind *:22623\n")
+	fmt.Printf("mode tcp\n")
+	for _, server = range allServers {
+		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
+			continue
+		}
+		if !(strings.Contains(strings.ToLower(server.Name), "bootstrap") || strings.Contains(strings.ToLower(server.Name), "master")) {
+			continue
+		}
+
+		for key := range server.Addresses {
+			subnetContents, ok = server.Addresses[key].([]interface {})
+			if !ok {
+				return fmt.Errorf("Error: did not convert to [] of interface {}: %v", server.Addresses)
+			}
+
+			for _, subnetValue := range subnetContents {
+				mapSubNetwork, ok = subnetValue.(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("Error: did not convert to map[string] of interface {}: %v", server.Addresses)
+				}
+
+				ipAddressI, ok := mapSubNetwork["addr"]
+				if !ok {
+					return fmt.Errorf("Error: mapSubNetwork did not contain \"addr\": %v", mapSubNetwork)
+				}
+				ipAddress, ok = ipAddressI.(string)
+				if !ok {
+					return fmt.Errorf("Error: ipAddressI was not a string: %v", ipAddressI)
+				}
+
+				fmt.Printf("server %s %s:22623 check\n", server.Name, ipAddress)
+			}
+		}
+	}
+
+	return nil
+}
+
 func imageUploadCommand (imageUploadFlags *flag.FlagSet, args []string) error {
 	var (
 		ptrCloud            *string
@@ -1246,14 +1471,44 @@ func createDhcpdConf (createDhcpdConfFlags *flag.FlagSet, args []string) error {
 	return dhcpdConf (ctx, *ptrCloud, *ptrServerSearch)
 }
 
+func createHaproxyCfg (createHaproxyCfgFlags *flag.FlagSet, args []string) error {
+	var (
+		ptrCloud            *string
+		ptrServerSearch     *string
+
+		ctx                 context.Context
+		cancel              context.CancelFunc
+	)
+
+	ptrCloud = createHaproxyCfgFlags.String("cloud", "", "The cloud to use in clouds.yaml")
+	ptrServerSearch = createHaproxyCfgFlags.String("serverSearch", "", "The name of the servers to show MACs")
+
+	createHaproxyCfgFlags.Parse(args)
+
+	if ptrCloud == nil || *ptrCloud == "" {
+		fmt.Println("Error: --cloud not specified")
+		os.Exit(1)
+	}
+	if ptrServerSearch == nil || *ptrServerSearch == "" {
+		fmt.Println("Error: --serverSearch not specified")
+		os.Exit(1)
+	}
+
+	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
+	defer cancel()
+
+	return haproxyCfg (ctx, *ptrCloud, *ptrServerSearch)
+}
+
 func main () {
 	var (
-		imageUploadFlags     *flag.FlagSet
-		bootstrapUploadFlags *flag.FlagSet
-		volumeCreateFlags    *flag.FlagSet
-		serverCreateFlags    *flag.FlagSet
-		serverFixFlags       *flag.FlagSet
-		createDhcpdConfFlags *flag.FlagSet
+		imageUploadFlags      *flag.FlagSet
+		bootstrapUploadFlags  *flag.FlagSet
+		volumeCreateFlags     *flag.FlagSet
+		serverCreateFlags     *flag.FlagSet
+		serverFixFlags        *flag.FlagSet
+		createDhcpdConfFlags  *flag.FlagSet
+		createHaproxyCfgFlags *flag.FlagSet
 		err                  error
 	)
 
@@ -1263,6 +1518,7 @@ func main () {
 	serverCreateFlags = flag.NewFlagSet("server-create", flag.ExitOnError)
 	serverFixFlags = flag.NewFlagSet("server-fix", flag.ExitOnError)
 	createDhcpdConfFlags = flag.NewFlagSet("create-dhcpd-conf", flag.ExitOnError)
+	createHaproxyCfgFlags = flag.NewFlagSet("create-dhcpd-conf", flag.ExitOnError)
 
 	switch strings.ToLower(os.Args[1]) {
 	case "image-upload":
@@ -1282,6 +1538,9 @@ func main () {
 
 	case "create-dhcpd-conf":
 		err = createDhcpdConf(createDhcpdConfFlags, os.Args[2:])
+
+	case "create-haproxy-cfg":
+		err = createHaproxyCfg(createHaproxyCfgFlags, os.Args[2:])
 
 	default:
 		fmt.Printf("Error: Unknown command %s\n", os.Args[1])
