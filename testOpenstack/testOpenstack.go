@@ -1233,6 +1233,86 @@ server master2 10.20.184.150:22623 check
 	return nil
 }
 
+func dnsRecords (ctx context.Context, cloud string, serverSearch string, dnsDomain string) error {
+	var (
+		pager             pagination.Page
+		allServers        []servers.Server
+		server            servers.Server
+		clusterName       string
+		subnetContents    []interface {}
+		mapSubNetwork     map[string]interface{}
+		ok                bool
+		ipAddress         string
+		err               error
+	)
+
+	connCompute, err := NewServiceClient(ctx, "compute", DefaultClientOpts(cloud))
+	if err != nil {
+		return err
+	}
+//	fmt.Printf("connCompute = %+v\n", connCompute)
+
+	pager, err = servers.List(connCompute, nil).AllPages(ctx)
+	if err != nil {
+		return err
+	}
+//	fmt.Printf("pager = %+v\n", pager)
+
+	allServers, err = servers.ExtractServers(pager)
+	if err != nil {
+		return err
+	}
+//	fmt.Printf("allServers = %+v\n", allServers)
+
+	for _, server = range allServers {
+		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
+			continue
+		}
+
+		idx := strings.Index(server.Name, serverSearch)
+		clusterName = server.Name[0:idx-1]
+		break
+	}
+
+	fmt.Printf("ibmcloud cis dns-record-create %s --json '{ \"name\": \"api.%s.powervs-openshift-ipi.cis.ibm.net\", \"type\": \"A\", \"content\": \"10.20.184.56\", \"ttl\": 60 }'\n", dnsDomain, clusterName)
+	fmt.Printf("ibmcloud cis dns-record-create %s --json '{ \"name\": \"api-int.%s.powervs-openshift-ipi.cis.ibm.net\", \"type\": \"A\", \"content\": \"10.20.184.56\", \"ttl\": 60 }'\n", dnsDomain, clusterName)
+	fmt.Printf("ibmcloud cis dns-record-create %s --json '{ \"name\": \"*.apps.%s.powervs-openshift-ipi.cis.ibm.net\", \"type\": \"CNAME\", \"content\": \"api.%s.powervs-openshift-ipi.cis.ibm.net\" }'\n", dnsDomain, clusterName, clusterName)
+
+
+	for _, server = range allServers {
+		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
+			continue
+		}
+
+		for key := range server.Addresses {
+			subnetContents, ok = server.Addresses[key].([]interface {})
+			if !ok {
+				return fmt.Errorf("Error: did not convert to [] of interface {}: %v", server.Addresses)
+			}
+
+			for _, subnetValue := range subnetContents {
+				mapSubNetwork, ok = subnetValue.(map[string]interface{})
+				if !ok {
+					return fmt.Errorf("Error: did not convert to map[string] of interface {}: %v", server.Addresses)
+				}
+
+				ipAddressI, ok := mapSubNetwork["addr"]
+				if !ok {
+					return fmt.Errorf("Error: mapSubNetwork did not contain \"addr\": %v", mapSubNetwork)
+				}
+				ipAddress, ok = ipAddressI.(string)
+				if !ok {
+					return fmt.Errorf("Error: ipAddressI was not a string: %v", ipAddressI)
+				}
+
+				fmt.Printf("ibmcloud cis dns-record-create %s --json '{ \"name\": \"%s.powervs-openshift-ipi.cis.ibm.net\", \"type\": \"A\", \"content\": \"%s\", \"ttl\": 60 }'\n", dnsDomain, server.Name, ipAddress)
+			}
+		}
+	}
+
+	return nil
+}
+
 func imageUploadCommand (imageUploadFlags *flag.FlagSet, args []string) error {
 	var (
 		ptrCloud            *string
@@ -1500,6 +1580,41 @@ func createHaproxyCfg (createHaproxyCfgFlags *flag.FlagSet, args []string) error
 	return haproxyCfg (ctx, *ptrCloud, *ptrServerSearch)
 }
 
+func createDnsRecords (createDnsRecordsFlags *flag.FlagSet, args []string) error {
+	var (
+		ptrCloud        *string
+		ptrServerSearch *string
+		ptrDnsDomain    *string
+
+		ctx             context.Context
+		cancel          context.CancelFunc
+	)
+
+	ptrCloud = createDnsRecordsFlags.String("cloud", "", "The cloud to use in clouds.yaml")
+	ptrServerSearch = createDnsRecordsFlags.String("serverSearch", "", "The name of the servers to show MACs")
+	ptrDnsDomain = createDnsRecordsFlags.String("dnsDomain", "", "The DNS domain to use")
+
+	createDnsRecordsFlags.Parse(args)
+
+	if ptrCloud == nil || *ptrCloud == "" {
+		fmt.Println("Error: --cloud not specified")
+		os.Exit(1)
+	}
+	if ptrServerSearch == nil || *ptrServerSearch == "" {
+		fmt.Println("Error: --serverSearch not specified")
+		os.Exit(1)
+	}
+	if ptrDnsDomain == nil || *ptrDnsDomain == "" {
+		fmt.Println("Error: --dnsDomain not specified")
+		os.Exit(1)
+	}
+
+	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
+	defer cancel()
+
+	return dnsRecords (ctx, *ptrCloud, *ptrServerSearch, *ptrDnsDomain)
+}
+
 func main () {
 	var (
 		imageUploadFlags      *flag.FlagSet
@@ -1509,6 +1624,7 @@ func main () {
 		serverFixFlags        *flag.FlagSet
 		createDhcpdConfFlags  *flag.FlagSet
 		createHaproxyCfgFlags *flag.FlagSet
+		createDnsRecordsFlags *flag.FlagSet
 		err                  error
 	)
 
@@ -1519,6 +1635,7 @@ func main () {
 	serverFixFlags = flag.NewFlagSet("server-fix", flag.ExitOnError)
 	createDhcpdConfFlags = flag.NewFlagSet("create-dhcpd-conf", flag.ExitOnError)
 	createHaproxyCfgFlags = flag.NewFlagSet("create-dhcpd-conf", flag.ExitOnError)
+	createDnsRecordsFlags = flag.NewFlagSet("dns-record-create", flag.ExitOnError)
 
 	switch strings.ToLower(os.Args[1]) {
 	case "image-upload":
@@ -1541,6 +1658,9 @@ func main () {
 
 	case "create-haproxy-cfg":
 		err = createHaproxyCfg(createHaproxyCfgFlags, os.Args[2:])
+
+	case "dns-record-create":
+		err = createDnsRecords(createDnsRecordsFlags, os.Args[2:])
 
 	default:
 		fmt.Printf("Error: Unknown command %s\n", os.Args[1])
