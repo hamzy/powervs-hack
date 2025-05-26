@@ -872,7 +872,7 @@ func fixServer (ctx context.Context, cloud string, serverName string) error {
 	return nil
 }
 
-func macsServer (ctx context.Context, cloud string, serverSearch string) error {
+func dhcpdConf (ctx context.Context, cloud string, serverSearch string) error {
 	var (
 		pager             pagination.Page
 		allServers        []servers.Server
@@ -1217,7 +1217,7 @@ func serverFixCommand (serverFixFlags *flag.FlagSet, args []string) error {
 	return fixServer (ctx, *ptrCloud, *ptrServerName)
 }
 
-func serverMacsCommand (serverMacsFlags *flag.FlagSet, args []string) error {
+func createDhcpdConf (createDhcpdConfFlags *flag.FlagSet, args []string) error {
 	var (
 		ptrCloud            *string
 		ptrServerSearch     *string
@@ -1226,10 +1226,10 @@ func serverMacsCommand (serverMacsFlags *flag.FlagSet, args []string) error {
 		cancel              context.CancelFunc
 	)
 
-	ptrCloud = serverMacsFlags.String("cloud", "", "The cloud to use in clouds.yaml")
-	ptrServerSearch = serverMacsFlags.String("serverSearch", "", "The name of the servers to show MACs")
+	ptrCloud = createDhcpdConfFlags.String("cloud", "", "The cloud to use in clouds.yaml")
+	ptrServerSearch = createDhcpdConfFlags.String("serverSearch", "", "The name of the servers to show MACs")
 
-	serverMacsFlags.Parse(args)
+	createDhcpdConfFlags.Parse(args)
 
 	if ptrCloud == nil || *ptrCloud == "" {
 		fmt.Println("Error: --cloud not specified")
@@ -1243,7 +1243,7 @@ func serverMacsCommand (serverMacsFlags *flag.FlagSet, args []string) error {
 	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
 	defer cancel()
 
-	return macsServer (ctx, *ptrCloud, *ptrServerSearch)
+	return dhcpdConf (ctx, *ptrCloud, *ptrServerSearch)
 }
 
 func main () {
@@ -1253,7 +1253,7 @@ func main () {
 		volumeCreateFlags    *flag.FlagSet
 		serverCreateFlags    *flag.FlagSet
 		serverFixFlags       *flag.FlagSet
-		serverMacsFlags      *flag.FlagSet
+		createDhcpdConfFlags *flag.FlagSet
 		err                  error
 	)
 
@@ -1262,7 +1262,7 @@ func main () {
 	volumeCreateFlags = flag.NewFlagSet("volume-create", flag.ExitOnError)
 	serverCreateFlags = flag.NewFlagSet("server-create", flag.ExitOnError)
 	serverFixFlags = flag.NewFlagSet("server-fix", flag.ExitOnError)
-	serverMacsFlags = flag.NewFlagSet("server-macs", flag.ExitOnError)
+	createDhcpdConfFlags = flag.NewFlagSet("create-dhcpd-conf", flag.ExitOnError)
 
 	switch strings.ToLower(os.Args[1]) {
 	case "image-upload":
@@ -1280,8 +1280,8 @@ func main () {
 	case "server-fix":
 		err = serverFixCommand(serverFixFlags, os.Args[2:])
 
-	case "server-macs":
-		err = serverMacsCommand(serverMacsFlags, os.Args[2:])
+	case "create-dhcpd-conf":
+		err = createDhcpdConf(createDhcpdConfFlags, os.Args[2:])
 
 	default:
 		fmt.Printf("Error: Unknown command %s\n", os.Args[1])
