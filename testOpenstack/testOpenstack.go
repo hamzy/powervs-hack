@@ -1628,13 +1628,18 @@ func main () {
 		err                  error
 	)
 
+	if len(os.Args) == 1 {
+		fmt.Println("Error: testOpenstack [ image-upload | bootstrap-upload | volume-create | server-create | server-fix | create-dhcpd-conf | create-haproxy-cfg | dns-record-create ]")
+		os.Exit(1)
+	}
+
 	imageUploadFlags = flag.NewFlagSet("image-upload", flag.ExitOnError)
 	bootstrapUploadFlags = flag.NewFlagSet("bootstrap-upload", flag.ExitOnError)
 	volumeCreateFlags = flag.NewFlagSet("volume-create", flag.ExitOnError)
 	serverCreateFlags = flag.NewFlagSet("server-create", flag.ExitOnError)
 	serverFixFlags = flag.NewFlagSet("server-fix", flag.ExitOnError)
 	createDhcpdConfFlags = flag.NewFlagSet("create-dhcpd-conf", flag.ExitOnError)
-	createHaproxyCfgFlags = flag.NewFlagSet("create-dhcpd-conf", flag.ExitOnError)
+	createHaproxyCfgFlags = flag.NewFlagSet("create-haproxy-cfg", flag.ExitOnError)
 	createDnsRecordsFlags = flag.NewFlagSet("dns-record-create", flag.ExitOnError)
 
 	switch strings.ToLower(os.Args[1]) {
