@@ -1264,6 +1264,9 @@ func dnsRecords (ctx context.Context, cloud string, serverSearch string, dnsDoma
 	}
 //	fmt.Printf("allServers = %+v\n", allServers)
 
+	fmt.Printf("\n")
+	fmt.Printf(`(set -e; FILE=$(mktemp); trap "/bin/rm -rf ${FILE}" EXIT; ibmcloud cis instance-set $(ibmcloud cis instances --output json | jq -r '.[].id'); export DNS_DOMAIN_ID=$(ibmcloud cis domains --output json | jq -r '.[].id'); echo "DNS_DOMAIN_ID=${DNS_DOMAIN_ID}"; PAGE=1; while true; do ibmcloud cis dns-records ${DNS_DOMAIN_ID} --page ${PAGE} --output json > ${FILE}; if (( $(jq -r 'length' < ${FILE}) == 0 )); then break; fi; (while read UUID NAME; do echo "Deleting: ${NAME}"; ibmcloud cis dns-record-delete ${DNS_DOMAIN_ID} ${UUID}; done) < <(jq -r '.[] | select (.name|test("rdr-hamzy-openstack")) | "\(.id) \(.name)"' < ${FILE}); PAGE=$((PAGE+1)); done)`)
+
 	for _, server = range allServers {
 		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
 			continue
