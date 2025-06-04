@@ -919,7 +919,6 @@ func dhcpdConf (ctx context.Context, cloud string, serverSearch string) error {
 	fmt.Printf("   option routers 10.20.176.1;\n")
 	fmt.Printf("   option subnet-mask 255.255.240.0;\n")
 	fmt.Printf("   option domain-name-servers 10.0.10.4, 9.9.9.9;\n")
-	fmt.Printf("#  option domain-name \"pokprv.stglabs.ibm.com\";\n")
 	fmt.Printf("   option domain-name \"powervs-openshift-ipi.cis.ibm.net\";\n")
 	fmt.Printf("   ignore unknown-clients;\n")
 	fmt.Printf("#  update-static-leases true;\n")
@@ -1266,6 +1265,7 @@ func dnsRecords (ctx context.Context, cloud string, serverSearch string, dnsDoma
 
 	fmt.Printf("\n")
 	fmt.Printf(`(set -e; FILE=$(mktemp); trap "/bin/rm -rf ${FILE}" EXIT; ibmcloud cis instance-set $(ibmcloud cis instances --output json | jq -r '.[].id'); export DNS_DOMAIN_ID=$(ibmcloud cis domains --output json | jq -r '.[].id'); echo "DNS_DOMAIN_ID=${DNS_DOMAIN_ID}"; PAGE=1; while true; do ibmcloud cis dns-records ${DNS_DOMAIN_ID} --page ${PAGE} --output json > ${FILE}; if (( $(jq -r 'length' < ${FILE}) == 0 )); then break; fi; (while read UUID NAME; do echo "Deleting: ${NAME}"; ibmcloud cis dns-record-delete ${DNS_DOMAIN_ID} ${UUID}; done) < <(jq -r '.[] | select (.name|test("rdr-hamzy-openstack")) | "\(.id) \(.name)"' < ${FILE}); PAGE=$((PAGE+1)); done)`)
+	fmt.Printf("\n")
 
 	for _, server = range allServers {
 		if !strings.Contains(strings.ToLower(server.Name), strings.ToLower(serverSearch)) {
