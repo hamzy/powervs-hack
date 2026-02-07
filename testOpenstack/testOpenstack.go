@@ -36,6 +36,7 @@ import (
 	"github.com/gophercloud/gophercloud/v2/openstack"
 	"github.com/gophercloud/gophercloud/v2/openstack/blockstorage/v2/volumes"
 	"github.com/gophercloud/gophercloud/v2/openstack/compute/v2/servers"
+	"github.com/gophercloud/gophercloud/v2/openstack/objectstorage/v1/objects"
 	"github.com/gophercloud/gophercloud/v2/openstack/identity/v3/tokens"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/imagedata"
 	"github.com/gophercloud/gophercloud/v2/openstack/image/v2/images"
@@ -729,12 +730,13 @@ func createServer (ctx context.Context, cloud string) error {
 	serverCreateOpts = servers.CreateOpts{
 		Name:             "hamzy-test-rhcos",
 		// openstack --os-cloud=... image list --format csv
-		// "0cc93e4b-48c1-4167-b8af-64f218b25fb6","...","active"
-		ImageRef:         "0cc93e4b-48c1-4167-b8af-64f218b25fb6",
-		// openstack --os-cloud=powervc flavor list --format csv
+		// "6b6f0ad7-5382-49c0-9914-f446409087be","...","active"
+		ImageRef:         "6b6f0ad7-5382-49c0-9914-f446409087be",
+		// openstack --os-cloud=... flavor list --format csv
 		// "9b4818ba-edf7-41e3-a516-53ee08b760fe","...",16384,25,0,4,True
 		FlavorRef:        "9b4818ba-edf7-41e3-a516-53ee08b760fe",
-		AvailabilityZone: "e980",
+//		AvailabilityZone: "e980",
+		AvailabilityZone: "s1022",
 		Networks:         portList,
 		UserData:         userData,
 		// Additional properties are not allowed ('tags' was unexpected)
@@ -924,15 +926,9 @@ func dhcpdConf (ctx context.Context, cloud string, serverSearch string) error {
 	fmt.Printf("#  update-static-leases true;\n")
 	fmt.Printf("}\n")
 	fmt.Printf("\n")
-	fmt.Printf("host hamzy-test-centos {\n")
-	fmt.Printf("    hardware ethernet    fa:cd:76:47:3b:20;\n")
-	fmt.Printf("    fixed-address        10.20.176.157;\n")
-	fmt.Printf("    max-lease-time       84600;\n")
-	fmt.Printf("}\n")
-	fmt.Printf("\n")
 	fmt.Printf("host hamzy-test-rhcos {\n")
-	fmt.Printf("    hardware ethernet    fa:16:3e:11:90:1b;\n")
-	fmt.Printf("    fixed-address        10.20.176.158;\n")
+	fmt.Printf("    hardware ethernet    fa:16:3e:29:cb:54;\n")
+	fmt.Printf("    fixed-address        10.20.181.60;\n")
 	fmt.Printf("    max-lease-time       84600;\n")
 	fmt.Printf("}\n")
 	fmt.Printf("\n")
@@ -1316,7 +1312,7 @@ func dnsRecords (ctx context.Context, cloud string, serverSearch string, dnsDoma
 	return nil
 }
 
-func imageUploadCommand (imageUploadFlags *flag.FlagSet, args []string) error {
+func imageUploadCommand(imageUploadFlags *flag.FlagSet, args []string) error {
 	var (
 		ptrCloud            *string
 		ptrRhcosImage       *string
@@ -1420,6 +1416,179 @@ func bootstrapUploadCommand (bootstrapUploadFlags *flag.FlagSet, args []string) 
 	fmt.Printf("bootstrapIgnOut = %v\n", bootstrapIgnOut)
 
 	return err
+}
+
+func objectUploadCommand (objectUploadFlags *flag.FlagSet, args []string) error {
+	var (
+		ptrCloud            *string
+		ptrFilename         *string
+		ptrContainerName    *string
+		ptrObjectName       *string
+		ptrInfraID          *string
+
+		ctx                 context.Context
+		cancel              context.CancelFunc
+	)
+
+	ptrCloud = objectUploadFlags.String("cloud", "", "The cloud to use in clouds.yaml")
+	ptrFilename = objectUploadFlags.String("filename", "", "The filename to upload")
+	ptrContainerName = objectUploadFlags.String("containerName", "", "The container name to upload")
+	ptrObjectName = objectUploadFlags.String("objectName", "", "The object name to upload")
+	ptrInfraID = objectUploadFlags.String("infraID", "", "The infrastructure ID to tag with")
+
+	objectUploadFlags.Parse(args)
+
+	if ptrCloud == nil || *ptrCloud == "" {
+		fmt.Println("Error: --cloud not specified")
+		os.Exit(1)
+	}
+	if ptrFilename == nil || *ptrFilename == "" {
+		fmt.Println("Error: --filename not specified")
+		os.Exit(1)
+	}
+	if ptrContainerName == nil || *ptrContainerName == "" {
+		fmt.Println("Error: --containerName not specified")
+		os.Exit(1)
+	}
+	if ptrObjectName == nil || *ptrObjectName == "" {
+		fmt.Println("Error: --objectName not specified")
+		os.Exit(1)
+	}
+	if ptrInfraID == nil || *ptrInfraID == "" {
+		fmt.Println("Error: --infraID not specified")
+		os.Exit(1)
+	}
+	if len(objectUploadFlags.Args()) != 0 {
+		fmt.Printf("Error: extra options specified: %v\n", objectUploadFlags.Args())
+		os.Exit(1)
+	}
+
+	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
+	defer cancel()
+
+	conn, err := NewServiceClient(ctx, "object-store", DefaultClientOpts(*ptrCloud))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("conn = %+v\n", conn)
+
+	f, err := os.Open(*ptrFilename)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Content            io.Reader
+	// Metadata           map[string]string
+	// NoETag             bool
+	// CacheControl       string `h:"Cache-Control"`
+	// ContentDisposition string `h:"Content-Disposition"`
+	// ContentEncoding    string `h:"Content-Encoding"`
+	// ContentLength      int64  `h:"Content-Length"`
+	// ContentType        string `h:"Content-Type"`
+	// CopyFrom           string `h:"X-Copy-From"`
+	// DeleteAfter        int64  `h:"X-Delete-After"`
+	// DeleteAt           int64  `h:"X-Delete-At"`
+	// DetectContentType  string `h:"X-Detect-Content-Type"`
+	// ETag               string `h:"ETag"`
+	// IfNoneMatch        string `h:"If-None-Match"`
+	// ObjectManifest     string `h:"X-Object-Manifest"`
+	// TransferEncoding   string `h:"Transfer-Encoding"`
+	// Expires            string `q:"expires"`
+	// MultipartManifest  string `q:"multipart-manifest"`
+	// Signature          string `q:"signature"`
+	//
+	// Content:     strings.NewReader(content),
+	// ContentType: "text/plain",
+	//
+	header, err := objects.Create(ctx,
+		conn,
+		*ptrContainerName,
+		*ptrObjectName,
+		objects.CreateOpts{
+			Content: f,
+		}).Extract()
+	fmt.Printf("header = %+v\n", header)
+	fmt.Printf("err = %+v\n", err)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func objectUrlCommand (objectUrlFlags *flag.FlagSet, args []string) error {
+	var (
+		ptrCloud            *string
+		ptrContainerName    *string
+		ptrObjectName       *string
+
+		ctx                 context.Context
+		cancel              context.CancelFunc
+	)
+
+	ptrCloud = objectUrlFlags.String("cloud", "", "The cloud to use in clouds.yaml")
+	ptrContainerName = objectUrlFlags.String("containerName", "", "The container name to upload")
+	ptrObjectName = objectUrlFlags.String("objectName", "", "The object name to upload")
+
+	objectUrlFlags.Parse(args)
+
+	if ptrCloud == nil || *ptrCloud == "" {
+		fmt.Println("Error: --cloud not specified")
+		os.Exit(1)
+	}
+	if ptrContainerName == nil || *ptrContainerName == "" {
+		fmt.Println("Error: --containerName not specified")
+		os.Exit(1)
+	}
+	if ptrObjectName == nil || *ptrObjectName == "" {
+		fmt.Println("Error: --objectName not specified")
+		os.Exit(1)
+	}
+	if len(objectUrlFlags.Args()) != 0 {
+		fmt.Printf("Error: extra options specified: %v\n", objectUrlFlags.Args())
+		os.Exit(1)
+	}
+
+	ctx, cancel = context.WithTimeout(context.TODO(), 15*time.Minute)
+	defer cancel()
+
+	conn, err := NewServiceClient(ctx, "object-store", DefaultClientOpts(*ptrCloud))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("conn = %+v\n", conn)
+
+	authResult := conn.GetAuthResult()
+	auth, ok := authResult.(tokens.CreateResult)
+	if !ok {
+		return fmt.Errorf("unable to extract auth result")
+	}
+	fmt.Printf("auth = %+v\n", auth)
+
+	serviceCatalog, err := auth.ExtractServiceCatalog()
+	if err != nil {
+		return err
+	}
+	fmt.Printf("serviceCatalog = %+v\n", serviceCatalog)
+
+	clientConfigCloud, err := clientconfig.GetCloudFromYAML(DefaultClientOpts(*ptrCloud))
+	if err != nil {
+		return err
+	}
+	fmt.Printf("clientConfigCloud = %+v\n", clientConfigCloud)
+
+	swiftPublicURL, err := openstack.V3EndpointURL(serviceCatalog, gophercloud.EndpointOpts{
+		Type:         "object-store",
+		Availability: gophercloud.AvailabilityPublic,
+		Region:       clientConfigCloud.RegionName,
+	})
+	if err != nil {
+		return fmt.Errorf("cannot retrieve Glance URL from the service catalog: %w", err)
+	}
+	fmt.Printf("swiftPublicURL = %+v\n", swiftPublicURL)
+
+	return nil
 }
 
 func volumeCreateCommand (volumeCreateFlags *flag.FlagSet, args []string) error {
@@ -1622,6 +1791,8 @@ func main () {
 	var (
 		imageUploadFlags      *flag.FlagSet
 		bootstrapUploadFlags  *flag.FlagSet
+		objectUploadFlags     *flag.FlagSet
+		objectUrlFlags        *flag.FlagSet
 		volumeCreateFlags     *flag.FlagSet
 		serverCreateFlags     *flag.FlagSet
 		serverFixFlags        *flag.FlagSet
@@ -1638,6 +1809,8 @@ func main () {
 
 	imageUploadFlags = flag.NewFlagSet("image-upload", flag.ExitOnError)
 	bootstrapUploadFlags = flag.NewFlagSet("bootstrap-upload", flag.ExitOnError)
+	objectUploadFlags = flag.NewFlagSet("object-upload", flag.ExitOnError)
+	objectUrlFlags = flag.NewFlagSet("object-url", flag.ExitOnError)
 	volumeCreateFlags = flag.NewFlagSet("volume-create", flag.ExitOnError)
 	serverCreateFlags = flag.NewFlagSet("server-create", flag.ExitOnError)
 	serverFixFlags = flag.NewFlagSet("server-fix", flag.ExitOnError)
@@ -1651,6 +1824,12 @@ func main () {
 
 	case "bootstrap-upload":
 		err = bootstrapUploadCommand(bootstrapUploadFlags, os.Args[2:])
+
+	case "object-upload":
+		err = objectUploadCommand(objectUploadFlags, os.Args[2:])
+
+	case "object-url":
+		err = objectUrlCommand(objectUrlFlags, os.Args[2:])
 
 	case "volume-create":
 		err = volumeCreateCommand(volumeCreateFlags, os.Args[2:])
