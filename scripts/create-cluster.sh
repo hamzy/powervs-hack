@@ -46,7 +46,7 @@ function init_ibmcloud()
 }
 
 declare -a ENV_VARS
-ENV_VARS=( "BASEDOMAIN" "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_OCCMICCC_API_KEY" "IBMCLOUD_OIOCCC_API_KEY" "IBMCLOUD_OCCDIPCCC_API_KEY" "IBMCLOUD_OMAPCC_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "RESOURCE_GROUP" "SERVICE_INSTANCE_GUID" "VPCREGION" )
+ENV_VARS=( "BASEDOMAIN" "CLUSTER_DIR" "CLUSTER_NAME" "IBMCLOUD_API_KEY" "IBMCLOUD_OCCMICCC_API_KEY" "IBMCLOUD_OIOCCC_API_KEY" "IBMCLOUD_OCCDIPCCC_API_KEY" "IBMCLOUD_OMAPCC_API_KEY" "IBMCLOUD_OCACIMBC_API_KEY" "IBMID" "POWERVS_REGION" "POWERVS_ZONE" "RESOURCE_GROUP" "SERVICE_INSTANCE_GUID" "VPCREGION" )
 
 for VAR in ${ENV_VARS[@]}
 do
@@ -77,13 +77,21 @@ set -euo pipefail
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.12.29-ppc64le"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.13.9-ppc64le"
 # registry.ci.openshift.org/ocp-multi/4.16-art-latest-multi:4.16.0-0.nightly-multi-2024-02-22-055830
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release-nightly@sha256:929563ce4e99bbb42661b74946ded25d753118c8203cedbc6c7bb48f7f2b5667"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.15.0-0.nightly-ppc64le-2024-02-17-002157"
-#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.16.0-0.nightly-ppc64le-2024-03-19-080310"
-export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.16.0-0.nightly-ppc64le-2024-03-23-105659"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.16.0-0.nightly-ppc64le-2024-05-23-051949"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.17.0-0.nightly-ppc64le-2025-09-13-101304"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.18.0-0.nightly-ppc64le-2025-09-10-135313"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.19.0-0.nightly-ppc64le-2025-09-03-074735"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.20.0-0.nightly-ppc64le-2025-08-16-003035"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.21.0-0.nightly-ppc64le-2025-09-02-000150"
+export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-ppc64le/release-ppc64le:4.23.0-0.nightly-ppc64le-2026-02-05-141659"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.17.2-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/openshift-release-dev/ocp-release:4.19.0-ec.1-ppc64le"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-multi/4.18-art-latest-multi:4.18.0-0.nightly-multi-2025-02-07-202441"
+#export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="registry.ci.openshift.org/ocp-multi/4.19-art-latest-multi:4.19.0-0.nightly-multi-2025-03-20-053422"
 #export OPENSHIFT_INSTALL_RELEASE_IMAGE_OVERRIDE="quay.io/hamzy/openshift-release:powervs-cluster-api"
 
 export PATH=${PATH}:$(pwd)/bin
+#export PATH=${PATH}:/tmp
 export BASE64_API_KEY=$(echo -n ${IBMCLOUD_API_KEY} | base64)
 export KUBECONFIG=${CLUSTER_DIR}/auth/kubeconfig
 export IC_API_KEY=${IBMCLOUD_API_KEY}
@@ -247,9 +255,6 @@ SSH_KEY=$(cat ~/.ssh/id_installer_rsa.pub)
 #
 PULL_SECRET=$(cat ~/.pullSecret)
 
-#openshift-install create install-config --dir ${CLUSTER_DIR} --log-level=debug
-#exit 0
-
 #
 # Create the openshift-installer's install configuration file
 #
@@ -278,7 +283,7 @@ compute:
 #     procType: "Dedicated"
 #     sysType: e980
   replicas: 3
-# replicas: 0
+# replicas: 1
 controlPlane:
   architecture: ppc64le
   hyperthreading: Enabled
@@ -300,8 +305,8 @@ controlPlane:
 #     processors: 6
 #     procType: "Dedicated"
 #     sysType: e980
-# replicas: 1
   replicas: 3
+# replicas: 1
 metadata:
   creationTimestamp: null
   name: "${CLUSTER_NAME}"
@@ -310,7 +315,7 @@ networking:
   - cidr: 10.128.0.0/14
     hostPrefix: 23
   machineNetwork:
-  - cidr: 192.168.220.0/24
+  - cidr: 192.168.195.0/24
 # networkType: OpenShiftSDN
   networkType: OVNKubernetes
   serviceNetwork:
@@ -320,7 +325,8 @@ platform:
     userID: ${IBMID}
     powervsResourceGroup: ${RESOURCE_GROUP}
     region: ${POWERVS_REGION}
-#   vpcName: rdr-hamzy-test-us-south-vpc
+#   vpcName: rdr-hamzy-test-lon06-vpc
+#   vpcName: r018-9c2c7627-f5f9-4804-a805-fd579d7b0266
 #   vpcRegion: ${VPCREGION}
 #   vpcSubnets:
 #     - subnet1
@@ -328,6 +334,13 @@ platform:
 #     - subnet3
     zone: ${POWERVS_ZONE}
     serviceInstanceGUID: ${SERVICE_INSTANCE_GUID}
+#   tgName: tg-rdr-hamzy-test-lon06
+#   tgName: 41111144-8696-4676-8b08-adf02f44eb3a
+#   serviceEndpoints:
+#   - name: dnsservices
+#     url: https://api.dns-svcs.cloud.ibm.com
+#   - name: cos
+#     url: https://s3.us-south.cloud-object-storage.appdomain.cloud
 featureSet: CustomNoUpgrade
 featureGates:
    - ClusterAPIInstall=true
@@ -350,7 +363,12 @@ sed -i '/credentialsMode/d' ${CLUSTER_DIR}/install-config.yaml
 sed -i '/^baseDomain:.*$/a credentialsMode: Manual' ${CLUSTER_DIR}/install-config.yaml
 
 date --utc +"%Y-%m-%dT%H:%M:%S%:z"
+#openshift-install create install-config --dir ${CLUSTER_DIR} --log-level=debug
+#exit 0
+
+date --utc +"%Y-%m-%dT%H:%M:%S%:z"
 #openshift-install create ignition-configs --dir ${CLUSTER_DIR} --log-level=debug
+#exit 0
 
 date --utc +"%Y-%m-%dT%H:%M:%S%:z"
 openshift-install create manifests --dir ${CLUSTER_DIR} --log-level=debug
@@ -434,11 +452,178 @@ stringData:
 type: Opaque
 ___EOF___
 
+cat << ___EOF___  > "${CLUSTER_DIR}/manifests/openshift-cluster-api-capi-ibmcloud-manager-bootstrap-credentials.yaml"
+apiVersion: v1
+kind: Secret
+metadata:
+  creationTimestamp: null
+  name: capi-ibmcloud-manager-bootstrap-credentials
+  namespace: openshift-cluster-api
+stringData:
+  ibm-credentials.env: |-
+    IBMCLOUD_AUTHTYPE=iam
+    IBMCLOUD_APIKEY=${IBMCLOUD_OCACIMBC_API_KEY}
+  ibmcloud_api_key: ${IBMCLOUD_OCACIMBC_API_KEY}
+type: Opaque
+___EOF___
+
+if false
+then
+cat << ___EOF___ > ${CLUSTER_DIR}/manifests/cluster-cloud-controller-manager-operator-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    infrastructure.openshift.io/cloud-controller-manager: PowerVS
+    k8s-app: powervs-cloud-controller-manager
+  name: powervs-cloud-controller-manager
+  namespace: openshift-cloud-controller-manager
+spec:
+  progressDeadlineSeconds: 600
+  replicas: 2
+  revisionHistoryLimit: 10
+  selector:
+    matchLabels:
+      infrastructure.openshift.io/cloud-controller-manager: PowerVS
+      k8s-app: powervs-cloud-controller-manager
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      annotations:
+        target.workload.openshift.io/management: '{"effect": "PreferredDuringScheduling"}'
+      labels:
+        infrastructure.openshift.io/cloud-controller-manager: PowerVS
+        k8s-app: powervs-cloud-controller-manager
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                infrastructure.openshift.io/cloud-controller-manager: PowerVS
+                k8s-app: powervs-cloud-controller-manager
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - command:
+        - /bin/bash
+        - -c
+        - |
+          #!/bin/bash
+          set -o allexport
+          if [[ -f /etc/kubernetes/apiserver-url.env ]]; then
+            source /etc/kubernetes/apiserver-url.env
+          fi
+          exec /bin/ibm-cloud-controller-manager \
+          --bind-address=0.0.0.0 \
+          --use-service-account-credentials=true \
+          --configure-cloud-routes=false \
+          --cloud-provider=ibm \
+          --cloud-config=/etc/ibm/cloud.conf \
+          --profiling=false \
+          --leader-elect=true \
+          --leader-elect-lease-duration=137s \
+          --leader-elect-renew-deadline=107s \
+          --leader-elect-retry-period=26s \
+          --leader-elect-resource-namespace=openshift-cloud-controller-manager \
+          --tls-cipher-suites=TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256,TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256,TLS_AES_128_GCM_SHA256,TLS_CHACHA20_POLY1305_SHA256,TLS_AES_256_GCM_SHA384 \
+          --v=2
+        env:
+        - name: VPCCTL_CLOUD_CONFIG
+          value: /etc/ibm/cloud.conf
+        - name: ENABLE_VPC_PUBLIC_ENDPOINT
+          value: "true"
+        image: quay.io/openshift-release-dev/ocp-v4.0-art-dev@sha256:37d43bfd2806b4733821f20e890b6782dc08a2f9e4dff3805a6ec6e7540332ef
+        imagePullPolicy: IfNotPresent
+        livenessProbe:
+          failureThreshold: 3
+          httpGet:
+            path: /healthz
+            port: 10258
+            scheme: HTTPS
+          initialDelaySeconds: 300
+          periodSeconds: 10
+          successThreshold: 1
+          timeoutSeconds: 160
+        name: cloud-controller-manager
+        ports:
+        - containerPort: 10258
+          name: https
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 75m
+            memory: 60Mi
+        terminationMessagePath: /dev/termination-log
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - mountPath: /etc/kubernetes
+          name: host-etc-kube
+          readOnly: true
+        - mountPath: /etc/ibm
+          name: cloud-conf
+        - mountPath: /etc/vpc
+          name: ibm-cloud-credentials
+        - mountPath: /etc/pki/ca-trust/extracted/pem
+          name: trusted-ca
+          readOnly: true
+      dnsPolicy: ClusterFirst
+      hostNetwork: true
+      nodeSelector:
+        node-role.kubernetes.io/master: ""
+      priorityClassName: system-cluster-critical
+      restartPolicy: Always
+      schedulerName: default-scheduler
+      securityContext: {}
+      serviceAccount: cloud-controller-manager
+      serviceAccountName: cloud-controller-manager
+      terminationGracePeriodSeconds: 90
+      tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/master
+        operator: Exists
+      - effect: NoExecute
+        key: node.kubernetes.io/unreachable
+        operator: Exists
+        tolerationSeconds: 120
+      - effect: NoExecute
+        key: node.kubernetes.io/not-ready
+        operator: Exists
+        tolerationSeconds: 120
+      - effect: NoSchedule
+        key: node.cloudprovider.kubernetes.io/uninitialized
+        operator: Exists
+      - effect: NoSchedule
+        key: node.kubernetes.io/not-ready
+        operator: Exists
+      volumes:
+      - configMap:
+          defaultMode: 420
+          items:
+          - key: ca-bundle.crt
+            path: tls-ca-bundle.pem
+          name: ccm-trusted-ca
+        name: trusted-ca
+      - hostPath:
+          path: /etc/kubernetes
+          type: Directory
+        name: host-etc-kube
+      - configMap:
+          defaultMode: 420
+          name: cloud-conf
+        name: cloud-conf
+      - name: ibm-cloud-credentials
+        secret:
+          defaultMode: 420
+          secretName: ibm-cloud-credentials
+___EOF___
+fi
+
+#exit 0
 DATE=$(date --utc +"%Y-%m-%dT%H:%M:%S%:z")
 echo "${DATE}"
 openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug # &
 #echo openshift-install create cluster --dir ${CLUSTER_DIR} --log-level=debug &
-exit 0
 PID_INSTALL=$!
 JOBS+=( "${PID_INSTALL}" )
 
