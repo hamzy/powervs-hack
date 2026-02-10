@@ -42,7 +42,8 @@ export RESOURCE_GROUP_ID="ba5e48e53192476092e188e0e0c6eb9e"
 
 # NOTE: Problem in ocp-ipi-ci-sao01
 # for SERVICE_INSTANCE in "ocp-ipi-ci-mon01" "ocp-ipi-ci-osa21" "ocp-ipi-ci-sao01" "ocp-ipi-ci-syd04" "ocp-ipi-ci-syd05" "ocp-ipi-ci-tok04" "ocp-ipi-ci-tor01"
-for SERVICE_INSTANCE in "ocp-ipi-ci-mon01" "ocp-ipi-ci-osa21" "ocp-ipi-ci-syd04" "ocp-ipi-ci-syd05" "ocp-ipi-ci-tok04" "ocp-ipi-ci-tor01"
+# for SERVICE_INSTANCE in "ocp-ipi-ci-mon01" "ocp-ipi-ci-osa21" "ocp-ipi-ci-syd04" "ocp-ipi-ci-syd05" "ocp-ipi-ci-tok04" "ocp-ipi-ci-tor01"
+for SERVICE_INSTANCE in "ocp-ipi-ci-tok04"
 do
 
 	case ${SERVICE_INSTANCE} in
@@ -90,8 +91,8 @@ do
 			;;
 	esac
 
-	export CLUSTER_NAME="rdr-maocp-${POWERVS_ZONE}"
-	#export CLUSTER_NAME="rdr-multiarch-${POWERVS_ZONE}"
+	#export CLUSTER_NAME="rdr-maocp-${POWERVS_ZONE}"
+	export CLUSTER_NAME="rdr-multiarch-${POWERVS_ZONE}"
 
 	ibmcloud logout
 	ibmcloud login --apikey "${IBMCLOUD_API_KEY}" -r "${POWERVS_REGION}"
